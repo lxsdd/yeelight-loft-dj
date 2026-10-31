@@ -442,7 +442,11 @@ class LoftController(context: Context) {
             " und ursprünglicher Zustand wiederhergestellt" else "") +
             ": $success/" + chosen.size + " Lampen"
         if (failed.isNotEmpty()) {
-            error(result + " · " + failed.size + " Fehler; erneuter Stopp möglich")
+            val first = outcomes.first { it.second != null }
+            val reason = first.second?.message ?: "Geräteantwort unbekannt"
+            error(result + " · " + failed.size + " Fehler, zuerst " +
+                first.first.substringAfterLast('.') + ": " + reason +
+                " · erneuter Stopp möglich")
         }
         return result
     }
