@@ -128,6 +128,9 @@ private fun LoftApp(controller: LoftController) {
         ) {
             item { Header() }
             item { Status(controller) }
+            if (controller.recoveryPending) {
+                item { RecoveryBanner(controller) }
+            }
             when (page) {
                 0 -> {
                     item { Hero(controller, onScene = { page = 1 }, onDevice = { page = 2 }) }
@@ -148,7 +151,7 @@ private fun LoftApp(controller: LoftController) {
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
                     item { CollapsibleSettings(controller) }
-                    item { StopButton(controller) }
+                    if (!controller.recoveryPending) item { StopButton(controller) }
                     item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Echte Musikreaktion findest du unter Musik.") }
                 }
                 2 -> {
@@ -189,7 +192,7 @@ private fun LoftApp(controller: LoftController) {
                                     Text(if (orderMode) "Sortierung schließen" else "Lichtweg anordnen")
                                 }
                                 if (orderMode && !controller.canOrganizeLamps) {
-                                    Text("Bitte die Lichtshow zuerst vollständig stoppen.",
+                                    Text("Identifizieren und Sortieren sind bis zum Abschluss der Lichtshow gesperrt. Stopp und Wiederherstellung findest du oben.",
                                         color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                                 }
                             }
@@ -318,6 +321,30 @@ private fun Header() {
         }
         Spacer(Modifier.weight(1f))
         Text("PREVIEW", color = lavender, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun RecoveryBanner(controller: LoftController) {
+    Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF2C293B)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Identifizieren vorübergehend gesperrt",
+                color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(controller.recoveryExplanation, color = Color(0xFFE1D7F6), fontSize = 12.sp)
+            OutlinedButton(
+                onClick = controller::stop,
+                enabled = controller.canRetryRecovery,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Rounded.Stop, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Lichtshow stoppen & Licht wiederherstellen")
+            }
+            Text("Nicht erreichte Lampen bleiben zur sicheren Wiederholung vorgemerkt. " +
+                "Andere Lichtzustände werden nicht ungeprüft überschrieben.",
+                color = muted, fontSize = 11.sp)
+        }
     }
 }
 

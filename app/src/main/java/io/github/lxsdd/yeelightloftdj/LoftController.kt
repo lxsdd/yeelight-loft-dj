@@ -229,9 +229,38 @@ class LoftController(context: Context) {
         }.thenBy { it.ip.split(".").lastOrNull()?.toIntOrNull() ?: 0 }.thenBy { it.id }
     )
 
-    /** No reorder or identification during a running (or still tracked) show. */
+    /**
+     * Never drop an unconfirmed previous lighting state. Android can be killed
+     * between committing a recovery snapshot and tracking the started IPs.
+     * A recovered music session must also not silently unlock manual edits.
+     */
+    val recoveryPending: Boolean
+        get() = LampOperationGate.needsRecovery(
+            activeScene, runningDeviceIps, recoveryJournal.keys, musicDeviceSession
+        )
+
+    val pendingRecoveryCount: Int
+        get() = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys).size
+
+    val canRetryRecovery: Boolean
+        get() = !busy && !musicStopPending && !musicSending
+
+    val recoveryExplanation: String
+        get() = when {
+            musicStopPending -> "Musiklicht wird bereits gestoppt und wiederhergestellt."
+            pendingRecoveryCount > 0 ->
+                "$pendingRecoveryCount Lampen aus einer Lichtshow sind noch nicht sicher " +
+                    "gestoppt oder wiederhergestellt. Bitte die Wiederherstellung erneut ausführen."
+            musicDeviceSession -> "Frühere Musiklicht-Sitzung benötigt eine Wiederherstellung."
+            activeScene != null -> "Eine Lichtshow ist aktiv. Vor dem Identifizieren bitte stoppen."
+            else -> ""
+        }
+
+    /** No reorder or identification during a running or unconfirmed session. */
     val canOrganizeLamps: Boolean
-        get() = !busy && activeScene == null && runningDeviceIps.isEmpty()
+        get() = LampOperationGate.canIdentify(
+            busy, activeScene, runningDeviceIps, recoveryJournal.keys, musicDeviceSession
+        )
 
     /** Position is zero-based, all changes are committed before updating the UI. */
     fun placeLampAt(device: YeelightDevice, position: Int): Boolean {
@@ -557,8 +586,9 @@ class LoftController(context: Context) {
         }
 
     fun identifyLamp(device: YeelightDevice) {
-        if (activeScene != null || runningDeviceIps.isNotEmpty()) {
-            status = "Lichtshow zuerst stoppen, um den Lampenzustand nicht zu verändern"
+        if (!canOrganizeLamps) {
+            status = if (busy) "Bitte den laufenden Vorgang abschließen"
+                else "Identifizieren gesperrt: Lichtshow zuerst stoppen und wiederherstellen"
             return
         }
         task("Identifiziere " + displayName(device) + " …") {
@@ -616,8 +646,14 @@ class LoftController(context: Context) {
      * Unconfirmed operations stay in the recovery journal for an explicit retry.
      */
     private suspend fun haltRunning(allowTargetFallback: Boolean): String {
-        val chosen = if (runningDeviceIps.isNotEmpty()) {
-            devices.filter { it.ip in runningDeviceIps }
+        // A saved recovery journal may outlive its running-IP marker (crash).
+        // Recreate missing tracked devices by private IP rather than trapping
+        // the user behind an impossible-to-clear global disabled state.
+        val pendingIps = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        val chosen = if (pendingIps.isNotEmpty()) {
+            pendingIps.map { ip ->
+                devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
+            }
         } else if (allowTargetFallback) selected() else emptyList()
         if (chosen.isEmpty()) return "Keine Lampen zum Stoppen ausgewählt"
         val outcomes = withContext(Dispatchers.IO) {
@@ -722,8 +758,16 @@ class LoftController(context: Context) {
         }
     }
 
-    fun stop() = task("Stoppe Lichtshow und stelle bei Bedarf den vorherigen Zustand wieder her …") {
-        haltRunning(true)
+    fun stop() {
+        // Live microphone lighting can still have in-flight RGB writes.
+        // Disarm and wait for them before restoring original lamp states.
+        if (musicLightArmed || musicDeviceSession) {
+            disarmMusicLights()
+            return
+        }
+        task("Stoppe Lichtshow und stelle bei Bedarf den vorherigen Zustand wieder her …") {
+            haltRunning(true)
+        }
     }
 
     /** Only run after Android runtime permission is granted by the Activity. */
