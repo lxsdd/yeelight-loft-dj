@@ -139,7 +139,7 @@ fun MusicScreen(controller: LoftController) {
                 Text("Sicherheitsgrenze: maximal ein RGB-Befehl alle 1,5 Sekunden je Lampe. " +
                     "Keine Stroboskop-Effekte, kein unkontrolliertes Dauerfeuer.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
-                if (!controller.musicLightArmed) {
+                if (!controller.musicLightArmed && controller.runningDeviceIps.isEmpty()) {
                     Button(
                         onClick = controller::armMusicLights,
                         enabled = controller.microphoneRunning && !controller.busy &&
