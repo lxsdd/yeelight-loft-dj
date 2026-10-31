@@ -226,7 +226,7 @@ object YeelightLan {
     /** Each JSON command ends in CRLF. We check explicit device errors. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
-        require(method in setOf("set_power", "start_cf", "stop_cf"))
+        require(method in setOf("set_power", "start_cf", "stop_cf", "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
         val id = seq.getAndIncrement()
         val payload = JSONObject().put("id", id).put("method", method)
             .put("params", JSONArray(params)).toString() + "\r\n"
@@ -241,6 +241,72 @@ object YeelightLan {
             if (result.has("error")) error(result.getJSONObject("error").optString("message", "Yeelight-Fehler"))
             if (result.optInt("id", -1) != id) error("Ungültige Geräteantwort")
         }
+    }
+
+
+    /** One status read over a fresh TCP connection; no fabricated device states. */
+    fun readStatus(device: YeelightDevice): LampSnapshot {
+        require(isLocalIp(device.ip))
+        val requestId = seq.getAndIncrement()
+        val params = JSONArray(LampSnapshot.properties)
+        val payload = JSONObject().put("id", requestId).put("method", "get_prop")
+            .put("params", params).toString() + "\r\n"
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
+            socket.soTimeout = 1800
+            socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
+            socket.getOutputStream().flush()
+            val line = socket.getInputStream().bufferedReader().readLine()
+                ?: error("Keine Statusantwort")
+            val answer = JSONObject(line)
+            if (answer.optInt("id", -1) != requestId) error("Falsche Statusantwort")
+            if (answer.has("error")) error(answer.getJSONObject("error").optString("message", "Statusfehler"))
+            val values = answer.optJSONArray("result") ?: error("Statusdaten fehlen")
+            return LampSnapshot.fromValues((0 until values.length()).map { values.optString(it) })
+                ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
+        }
+    }
+
+    /** Only explicitly requested commands can reach the local lamp. */
+    fun manualControl(device: YeelightDevice, command: LampCommand) {
+        require(command.method in setOf("set_power", "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
+        if (device.methods.isNotEmpty() && command.method !in device.methods) {
+            error(device.model + " meldet keine Unterstützung für " + command.method)
+        }
+        send(device, command.method, command.params)
+    }
+
+    /**
+     * Blink once and restore the previously read static state.
+     * Refuse unknown ON color modes rather than leave a lamp permanently recolored.
+     * The controller must prevent identification while a scene is active.
+     */
+    fun identify(device: YeelightDevice): LampSnapshot {
+        val before = readStatus(device)
+        if (before.isOn && (before.colorMode !in 1..3 || before.restoreCommands().size < 2)) {
+            error("Farbzustand nicht vollständig lesbar; Identifikation abgebrochen")
+        }
+        var touched = false
+        var failure: Exception? = null
+        try {
+            touched = true
+            manualControl(device, LampCommands.power(true))
+            manualControl(device, LampCommands.rgb(0xAA77FF))
+            manualControl(device, LampCommands.brightness(65))
+            Thread.sleep(650)
+        } catch (e: Exception) {
+            failure = e
+        } finally {
+            if (touched) {
+                // Attempt all restoration steps even if the first one fails.
+                before.restoreCommands().forEach { command ->
+                    try { manualControl(device, command) }
+                    catch (e: Exception) { if (failure == null) failure = e else failure?.addSuppressed(e) }
+                }
+            }
+        }
+        if (failure != null) throw failure!!
+        return before
     }
 
     fun play(device: YeelightDevice, expression: String) {
