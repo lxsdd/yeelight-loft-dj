@@ -262,6 +262,10 @@ class LoftController(context: Context) {
     }
 
     fun forget(device: YeelightDevice) {
+        if (device.ip in runningDeviceIps) {
+            status = "Bitte zuerst den Lichtlauf auf dieser Lampe stoppen"
+            return
+        }
         devices = devices.filterNot { it.id == device.id }
         assignments = assignments - device.id
         lastSeenIps = lastSeenIps - device.ip
@@ -317,6 +321,19 @@ class LoftController(context: Context) {
             return
         }
         task(if (on) "Schalte Zielbereich ein …" else "Schalte Zielbereich aus …") {
+            val currentlyRunning = devices.filter { it.ip in runningDeviceIps }
+            if (currentlyRunning.isNotEmpty()) {
+                val failedStops = withContext(Dispatchers.IO) {
+                    currentlyRunning.map { device -> async {
+                        try { YeelightLan.stop(device); null }
+                        catch (_: Exception) { device.ip }
+                    } }.awaitAll().filterNotNull().toSet()
+                }
+                runningDeviceIps = failedStops
+                if (failedStops.isNotEmpty()) {
+                    error("Laufende Lichtshow konnte nicht vollständig beendet werden")
+                }
+            }
             val errors = withContext(Dispatchers.IO) {
                 chosen.map { device -> async {
                     try { YeelightLan.manualControl(device, LampCommands.power(on)); null }
