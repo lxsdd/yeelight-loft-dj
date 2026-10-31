@@ -390,14 +390,60 @@ private fun SceneCard(scene: LoftScene, enabled: Boolean, active: Boolean, onPla
 
 @Composable
 private fun TargetSelector(controller: LoftController) {
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text("Zielbereich · " + controller.target + " (" + controller.selectedCount() + ")", color = Color.White, fontWeight = FontWeight.Medium)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Test (1)", "Loft", "Alle").forEach { value ->
-                FilterChip(selected = controller.target == value, onClick = { controller.chooseTarget(value) }, label = { Text(value) })
+    var showSingles by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Ziel · " + controller.targetLabel(controller.target) +
+            " (" + controller.selectedCount() + " Lampen)", color = Color.White,
+            fontWeight = FontWeight.Medium)
+        Row(Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            controller.targetOptions()
+                .filterNot { it.startsWith("Lampe:") }
+                .forEach { value ->
+                    FilterChip(
+                        selected = controller.target == value,
+                        onClick = { controller.chooseTarget(value) },
+                        label = { Text(controller.targetLabel(value)) }
+                    )
+                }
+        }
+        TextButton(onClick = { showSingles = !showSingles }) {
+            Text(if (showSingles) "Einzellampen schließen" else "Bestimmte Einzellampe wählen")
+        }
+        if (showSingles) {
+            Row(Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                controller.orderedDevices().forEach { device ->
+                    val value = "Lampe:" + device.id
+                    FilterChip(
+                        selected = controller.target == value,
+                        onClick = { controller.chooseTarget(value) },
+                        label = { Text(controller.displayName(device)) }
+                    )
+                }
             }
         }
-        Text("Zum sicheren Test zuerst nur eine Lampe wählen. Loft benötigt die Raumzuordnung unter Geräte.", color = muted, fontSize = 12.sp)
+        if (controller.target == "Auswahl") {
+            Text("Eigene Mehrfachauswahl", color = muted, fontSize = 12.sp)
+            controller.orderedDevices().forEach { device ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = device.id in controller.customSelectedIds,
+                        onCheckedChange = { controller.setCustomSelection(device.id, it) }
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
+                        Text(device.ip, color = muted, fontSize = 10.sp)
+                    }
+                    TextButton(
+                        onClick = { controller.identifyLamp(device) },
+                        enabled = controller.canOrganizeLamps
+                    ) { Text("Identifizieren", fontSize = 11.sp) }
+                }
+            }
+        }
+        Text("Test (1) nutzt die erste Lampe im Lichtweg. Für gezielte Shows Räume, " +
+            "Einzellampen oder eine eigene Auswahl verwenden.", color = muted, fontSize = 11.sp)
     }
 }
 
@@ -412,6 +458,28 @@ private fun StopButton(controller: LoftController) {
         Spacer(Modifier.width(7.dp))
         Text("Alle laufenden Lichtshows stoppen")
     }
+}
+
+@Composable
+private fun CollapsibleSettings(controller: LoftController) {
+    var showChase by remember { mutableStateOf(false) }
+    var showTransfer by remember { mutableStateOf(false) }
+    Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Szenenwerkstatt", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
+            Text("Lichtshows starten oder gezielt die erweiterten Werkzeuge öffnen.",
+                fontSize = 12.sp, color = muted)
+            OutlinedButton(onClick = { showChase = !showChase }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showChase) "Lichtlauf-Editor schließen" else "Lichtlauf-Editor öffnen")
+            }
+            OutlinedButton(onClick = { showTransfer = !showTransfer }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showTransfer) "Import/Export schließen" else "Szenen importieren / exportieren")
+            }
+        }
+    }
+    if (showChase) ChasePanel(controller)
+    if (showTransfer) SceneExchangePanel(controller)
 }
 
 @Composable
@@ -677,8 +745,9 @@ private fun ChasePanel(controller: LoftController) {
             }
             Text("Zielbereich", color = Color.White, fontWeight = FontWeight.SemiBold)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf("Test (1)", "Loft", "Alle").forEach { value ->
-                    FilterChip(selected = choice == value, onClick = { choice = value }, label = { Text(value) })
+                controller.targetOptions().forEach { value ->
+                    FilterChip(selected = choice == value, onClick = { choice = value },
+                        label = { Text(controller.targetLabel(value)) })
                 }
             }
             Text(
