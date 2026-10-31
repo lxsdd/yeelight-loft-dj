@@ -36,3 +36,21 @@ The PR must pass Android CI and be reviewed before merge. PR builds deliberately
 
 Current project requirements: [PRODUCT_SPEC_DE.md](docs/PRODUCT_SPEC_DE.md) ·
 Network diagnostics: [NETWORK_DISCOVERY_DIAGNOSTICS_DE.md](docs/NETWORK_DISCOVERY_DIAGNOSTICS_DE.md)
+
+
+## v0.1.3 – Music/DJ microphone MVP (feature PR)
+
+A new **Musik** screen uses explicit, foreground-only Android microphone
+permission to analyze real 16-kHz PCM. A pure Kotlin FFT powers a six-band
+spectrum, RMS meter, adaptive bass transients and cautious BPM estimate.
+Audio is neither stored nor uploaded. No fake music visualization exists.
+
+The user can separately opt in to **music-reactive lamp control** for the
+selected Test (1)/Loft/Alle target. Per-lamp command intervals are no shorter
+than 1.5 seconds, with restoration of each lamp's original state recorded
+locally before any light changes. Read [MUSIC_MVP_DE.md](docs/MUSIC_MVP_DE.md)
+for privacy, protocol-rate limits and test steps.
+
+Feature-branch PR CI compiles/tests but intentionally does not produce a
+permanently signed installable APK; owner approval and trusted `main` build
+are required. The signed 0.1.2 already on `main` remains unaffected.
