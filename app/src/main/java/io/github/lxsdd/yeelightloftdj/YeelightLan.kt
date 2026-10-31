@@ -408,7 +408,7 @@ object YeelightLan {
             manualControl(device, LampCommands.power(true))
             manualControl(device, LampCommands.rgb(0xAA77FF))
             manualControl(device, LampCommands.brightness(65))
-            Thread.sleep(650)
+            Thread.sleep(2500)
         } catch (e: Exception) {
             failure = e
         } finally {
