@@ -89,16 +89,36 @@ class LoftController(context: Context) {
         }.thenBy { it.ip.split(".").lastOrNull()?.toIntOrNull() ?: 0 }.thenBy { it.id }
     )
 
+    /** No reorder or identification during a running (or still tracked) show. */
+    val canOrganizeLamps: Boolean
+        get() = !busy && activeScene == null && runningDeviceIps.isEmpty()
+
+    /** Position is zero-based, all changes are committed before updating the UI. */
+    fun placeLampAt(device: YeelightDevice, position: Int): Boolean {
+        if (!canOrganizeLamps) {
+            status = "Zum Sortieren zuerst die laufende Lichtshow stoppen"
+            return false
+        }
+        val current = orderedDevices().map { it.id }
+        if (device.id !in current || position !in current.indices) {
+            status = "Lampe oder Position nicht mehr vorhanden – Geräte neu prüfen"
+            return false
+        }
+        val updated = LampOrder.relocate(current, device.id, position)
+        if (!prefs.edit().putString("lamp-order", JSONArray(updated).toString()).commit()) {
+            status = "Lauflicht-Reihenfolge konnte nicht gespeichert werden"
+            return false
+        }
+        lampOrder = updated
+        status = displayName(device) + " ist jetzt auf Lauflicht-Platz " + (position + 1)
+        return true
+    }
+
     fun moveLamp(device: YeelightDevice, delta: Int) {
-        if (busy || delta !in listOf(-1, 1)) return
-        val ordered = orderedDevices().map { it.id }.toMutableList()
-        val index = ordered.indexOf(device.id)
-        val destination = index + delta
-        if (index < 0 || destination !in ordered.indices) return
-        java.util.Collections.swap(ordered, index, destination)
-        lampOrder = ordered
-        prefs.edit().putString("lamp-order", JSONArray(ordered).toString()).apply()
-        status = "Lauflicht-Reihenfolge aktualisiert"
+        if (delta !in listOf(-1, 1)) return
+        val index = orderedDevices().indexOfFirst { it.id == device.id }
+        if (index < 0) return
+        placeLampAt(device, index + delta)
     }
 
     fun allScenes(): List<LoftScene> = SceneLibrary.scenes + importedFlows
