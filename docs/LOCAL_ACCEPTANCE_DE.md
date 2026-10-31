@@ -22,3 +22,10 @@ Nach erfolgreich abgeschlossenem CI-Lauf die debug APK aus dem Actions-Artefakt 
 - Falls nicht alle Geräte gefunden werden: zuerst WLAN und Gästnetz/Client-Isolation prüfen, danach Intensivsuche, zuletzt IP aus der FRITZ!Box ergänzen.
 - **Achtung:** Diese App-Version enthält noch keine stabile Update-Signatur. Eine von einem anderen GitHub-Runner gebaute Preview kann eine Deinstallation der alten Test-APK erfordern.
 - Ziel für das Loft sind voraussichtlich zehn 1S-Birnen (2 Wohnzimmer, 3 Esszimmer, 5 Hobbyraum), plus LED-Streifen mit separat zu prüfender LAN-Unterstützung. Nicht alle im Yeelight-Konto gezeigten Geräte sind zwingend im WLAN online.
+
+## Praxisrückmeldung: Einzelgerät erfolgreich
+
+- **PASS (Nutzerbericht, 31.10.2026):** Farbverläufe in der Android-App mit Ziel **Test (1)** funktionieren auf einer realen Yeelight-Leuchte.
+- Damit ist der grundsätzliche Steuerpfad Smartphone → Yeelight-LAN → Farbverlauf für mindestens ein Gerät bestätigt.
+- **Noch nicht bestätigt:** Stop-Befehl, Stabilität auf mehreren Geräten gleichzeitig, vollständige Geräteerkennung und LED-Streifen-Unterstützung.
+- **Separater Befund:** SSDP-Multicast findet lediglich fünf Geräte; direkte LAN-Intensivsuche erreicht nach Nutzerangabe vermutlich alle. Die Ursache des Multicast-Unterschieds ist noch offen.

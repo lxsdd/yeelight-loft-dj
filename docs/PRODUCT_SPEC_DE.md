@@ -17,7 +17,8 @@
 - [x] Yeelight-LAN-Suche, lokale IP-Fallback-Steuerung, vier Farbanimationen.
 - [x] Lokal gespeicherte Raumzuordnung, erste visuelle Oberfläche.
 - [ ] GitHub-CI erfolgreich abgeschlossen und APK-Artefakt geprüft.
-- [ ] Praxistest am Pixel und Yeelight-Geräten erfolgreich.
+- [x] Erste Farbverläufe auf einer echten Yeelight im Modus **Test (1)** erfolgreich (Nutzerbericht, 31.10.2026).
+- [ ] Vollständige Hardware-Abnahme inklusive Gerätesuche, mehrerer Lampen, Stop-Befehl und LED-Streifen.
 
 ## Weiterer Ausbau
 1. Mikrofonaufnahme und Echtzeit-Spektrumanalyse mit nutzerkontrollierter Berechtigung.
