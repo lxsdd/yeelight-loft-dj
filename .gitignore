@@ -8,3 +8,11 @@ local.properties
 *.jks
 *.keystore
 .DS_Store
+*.p12
+*.pfx
+*.pem
+*.key
+*.env
+.env.*
+*Signing-Backup*.zip
+*Signing-Setup.txt
