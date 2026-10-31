@@ -129,3 +129,23 @@ ist **kein** geometrisches Abbild des tatsächlichen Grundrisses.
   keine Behauptung permanenter Synchronisation mit Yeelight oder Google Home.
 - Das Projekt bleibt ein nicht abgenommenes Preview; reale Einzel- und Gruppen-
   Hardwaretests folgen nach signiertem `main`-Build.
+
+## Zusammenhängender Funktionsblock: Lichtlauf-Studio und portable Szenen (v0.1.2, PR)
+
+- Szenenbereich erhält konfigurierbaren Lichtlauf über Test (1), Loft oder **alle**
+  gespeicherten Lampen (derzeit 15 direkte LAN-Treffer, fünf Multicast-Treffer).
+- Presets: Regenbogenschweif, Sternschnuppe/Meteor, räumliche Farbwelle.
+- Einstellbar: frei definierbare 1–16 Hexfarben, Tempo, Schweif, Helligkeit,
+  Vorwärts/Rückwärts, Pingpong, selbst festgelegte Lampenreihenfolge und
+  schrittweise Vorschau als Simulation.
+- Native Yeelight-`start_cf`-Ausführung auf jeder Lampe mit versetzter
+  Sequenz statt wiederkehrender TCP-Farbkommandos pro Animationsschritt.
+- Bestehende und eigene Lichtshows werden als lokale, versionierte JSON-Datei
+  exportiert und importiert (Android-Systemdateidialog, Größen-/Wertelimits,
+  keine IPs oder Grundrisse). Gespeicherte Lichtläufe überdauern Neustarts.
+- Der Stopp richtet sich gegen die wirklich gestarteten Lampen, unabhängig
+  vom zwischenzeitlich gewählten Zielbereich.
+- Erst nach CI und Hardwaretest auf dem Privatnetz abgenommen; vor Freigabe
+  wird weder automatisch nach `main` gemerged noch ein Release veröffentlicht.
+
+Details: [docs/CHASE_SCENES_DE.md](CHASE_SCENES_DE.md).
