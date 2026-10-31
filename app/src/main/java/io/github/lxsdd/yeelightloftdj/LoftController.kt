@@ -484,6 +484,16 @@ class LoftController(context: Context) {
         }
     }
 
+    fun diagnoseDeskLamp(ip: String) {
+        if (!YeelightLan.isLocalIp(ip.trim())) {
+            status = "Für Mi Desk Lamp 1S bitte die lokale IP aus der FRITZ!Box eintragen"
+            return
+        }
+        task("Prüfe Desk Lamp 1S über Yeelight und Xiaomi MiIO, nur lesend …") {
+            withContext(Dispatchers.IO) { MiDeskLampDiagnostics.diagnostic(ip.trim()) }
+        }
+    }
+
     fun deepDiscover() = task("Intensivsuche: prüfe lokale WLAN-Adressen …") {
         val found = withContext(Dispatchers.IO) { YeelightLan.deepDiscover() }
         lastDirectIps = found.map { it.ip }.toSet()
