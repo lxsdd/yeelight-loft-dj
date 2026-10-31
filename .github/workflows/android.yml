@@ -48,10 +48,10 @@ jobs:
           set -euo pipefail
           digest="dc5fce6c385279a97e35f74d0b659a95ff960cc7d6be912cba3016bcfbb7dbca"
           for prefix in "Signer #1" "V2 Signer" "V3.0 Signer"; do
-            output="$(printf '%s certificate SHA-256 digest: %s\\n' "$prefix" "$digest" | bash .github/scripts/extract-apk-cert-sha256.sh)"
+            output="$(printf '%s certificate SHA-256 digest: %s\n' "$prefix" "$digest" | bash .github/scripts/extract-apk-cert-sha256.sh)"
             test "$output" = "$digest"
           done
-          invalid="$(printf 'Signer #1 public key SHA-256 digest: %s\\n' "$digest" | bash .github/scripts/extract-apk-cert-sha256.sh)"
+          invalid="$(printf 'Signer #1 public key SHA-256 digest: %s\n' "$digest" | bash .github/scripts/extract-apk-cert-sha256.sh)"
           test -z "$invalid"
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
