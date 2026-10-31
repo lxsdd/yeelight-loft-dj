@@ -2,6 +2,7 @@ package io.github.lxsdd.yeelightloftdj
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.json.JSONObject
 
 class YeelightLanTest {
     private val response = """
@@ -120,6 +121,15 @@ class YeelightLanTest {
         assertNull(YeelightLan.flowStateFromValue(""))
         assertNull(YeelightLan.flowStateFromValue("unsupported"))
         assertNull(YeelightLan.flowStateFromValue(null))
+    }
+
+    @Test fun unsolicitedPropertiesAreNotTreatedAsCommandResponse() {
+        val notification = JSONObject("""{"method":"props","params":{"power":"on"}}""")
+        val staleReply = JSONObject("""{"id":41,"result":["ok"]}""")
+        val expectedReply = JSONObject("""{"id":42,"result":["ok"]}""")
+        assertFalse(YeelightLan.matchesReplyId(notification, 42))
+        assertFalse(YeelightLan.matchesReplyId(staleReply, 42))
+        assertTrue(YeelightLan.matchesReplyId(expectedReply, 42))
     }
 
 }
