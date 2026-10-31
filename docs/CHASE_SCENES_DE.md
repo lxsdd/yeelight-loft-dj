@@ -81,3 +81,40 @@ importierte Farbverläufe und vom Nutzer **gespeicherte** Lichtläufe.
 Alle neuen Funktionen sind erst mit erfolgreichem CI-Check **kompilierungs- und
 Unit-testverifiziert**. Ein echter Hardwaretest kann ausschließlich
 am privaten LAN durchgeführt werden.
+
+
+## Neue Bedienoptionen (Einzel-Import/Export und Zurücksetzen)
+
+- **Alle Szenen exportieren** erstellt wie bisher eine vollständige JSON-Datei.
+- Unter **Einzeln exportieren** besitzt jeder Farbverlauf und jeder gespeicherte
+  Lichtlauf einen eigenen Export. Das erzeugt dieselbe unterstützte Dateistruktur,
+  jedoch mit genau **einer** Szene.
+- Beim Import einer Einzeldatei wird eine Szene zur Auswahl angezeigt.
+  Bei umfangreichen JSON-Sammlungen erscheint ein Auswahldialog mit
+  Checkbox je Farbverlauf/Lichtlauf: nur markierte Szenen werden importiert.
+  Bestehende Szenen bleiben erhalten; identische werden übersprungen.
+- Neue Einstellung **Nach Stopp vorheriges Licht wiederherstellen**:
+  vor Szenenbeginn jede betroffene Lampe über LAN lesen, bestätigten
+  Ein-/Aus-Zustand, Farbmodus, Farbwert und Helligkeit lokal sichern.
+  Ist dieser Zustand nicht sicher wiederherstellbar, startet die Szene nicht.
+  Nach ausdrücklichem **Stopp** wird ein erneutes Lesen/Schreiben nicht
+  simuliert, sondern per Yeelight-LAN echte Wiederherstellungsbefehle gesendet.
+- Das Wiederherstellungsjournal wird **vor** jedem verändernden Befehl
+  lokal persistiert; nach Neustart kann der Nutzer den Stopp erneut auslösen.
+  Nicht bestätigte Wiederherstellungen bleiben für einen erneuten Versuch.
+  Keine automatische Endzeit, weil die Yeelight-Flowloops endlos laufen.
+  Schlägt die Wiederherstellung fehl, keine Erfolgsbehauptung.
+- Die Recovery-Datei enthält private Geräte-IP und alten Lichtzustand nur
+  in Android-App-Speicher; sie wird **niemals** in die Szenen-JSON exportiert.
+
+### Hardwaretests zur optionalen Wiederherstellung
+
+1. Eine ausgeschaltete und eine farbig eingeschaltete Lampe mit Option
+   aktiv starten/stoppen: ursprüngliches Power/RGB/Helligkeit wiederherstellen.
+2. Weiße Lampe im Farbtemperatur-Modus: Kelvin und Helligkeit zurücksetzen.
+3. Während der Show Zielbereich wechseln, dann Stopp: **alle gestarteten**
+   Lampen erreichen und ursprüngliche Werte wiederherstellen.
+4. App bei aktivem Lichtlauf schließen, erneut öffnen, Stopp betätigen:
+   aus privatem Wiederherstellungsjournal rekonstruieren.
+5. Gerät vor Szene unlesbar/offline: bei aktivierter Option darf **keine**
+   Leuchte der Zielgruppe verändert werden.
