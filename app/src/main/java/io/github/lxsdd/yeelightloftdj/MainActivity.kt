@@ -398,19 +398,19 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                 Text("Aktualisieren")
             }
         }
-        if (controller.activeScene != null) {
+        if (controller.runningDeviceIps.isNotEmpty()) {
             Text("Lichtshow zuerst stoppen, bevor du einzelne Farben oder Helligkeit änderst.",
                 color = muted, fontSize = 11.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { controller.controlLamp(device, LampCommands.power(true), "Einschalten") },
-                enabled = !controller.busy && controller.activeScene == null,
+                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
                 modifier = Modifier.weight(1f)
             ) { Text("Ein") }
             OutlinedButton(
                 onClick = { controller.controlLamp(device, LampCommands.power(false), "Ausschalten") },
-                enabled = !controller.busy && controller.activeScene == null,
+                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
                 modifier = Modifier.weight(1f)
             ) { Text("Aus") }
         }
@@ -425,7 +425,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                 controller.controlLamp(device, LampCommands.brightness(brightness.roundToInt()), "Helligkeit")
             },
             valueRange = 1f..100f,
-            enabled = !controller.busy && controller.activeScene == null,
+            enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
         )
         val colors = listOf(
             Triple("Warm", 0xFFAE62, Color(0xFFFFAE62)),
@@ -440,7 +440,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                     FilterChip(
                         selected = live?.colorMode == 1 && live.rgb == rgb,
                         onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
-                        enabled = !controller.busy && controller.activeScene == null,
+                        enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
                         label = { Text(name) },
                         leadingIcon = {
                             Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
@@ -461,12 +461,12 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                     controller.controlLamp(device, LampCommands.temperature(kelvin.roundToInt()), "Weißtemperatur")
                 },
                 valueRange = 1700f..6500f,
-                enabled = !controller.busy && controller.activeScene == null,
+                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
             )
         }
         OutlinedButton(
             onClick = { controller.identifyLamp(device) },
-            enabled = !controller.busy && controller.activeScene == null,
+            enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
             modifier = Modifier.fillMaxWidth()
         ) { Text("Diese Lampe kurz identifizieren") }
         Text(
