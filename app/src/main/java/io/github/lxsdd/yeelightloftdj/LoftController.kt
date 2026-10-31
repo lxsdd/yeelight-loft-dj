@@ -43,6 +43,8 @@ class LoftController(context: Context) {
         private set
     var searchDiagnostics by mutableStateOf("Noch keine vergleichende Suche durchgeführt")
         private set
+    var directedUdpDiagnostics by mutableStateOf("")
+        private set
     var aliases by mutableStateOf<Map<String, String>>(emptyMap())
         private set
     private val initialSavedScenes = loadSceneArchive()
@@ -254,6 +256,7 @@ class LoftController(context: Context) {
             val tcp = try { YeelightLan.deepDiscover() } catch (_: Exception) { emptyList() }
             Pair(udp, tcp)
         }
+        directedUdpDiagnostics = ""
         lastMulticastIps = multicast.map { it.ip }.toSet()
         lastDirectIps = direct.map { it.ip }.toSet()
         val both = lastMulticastIps.intersect(lastDirectIps)
@@ -269,6 +272,27 @@ class LoftController(context: Context) {
             " · Absender-/Location-Abweichungen: " + YeelightLan.lastSearchSourceMismatches
         val merged = YeelightLan.mergeDevices(multicast, direct)
         mergeFound(merged, "Kombinierte Suche")
+    }
+
+    fun missingMulticastCount(): Int =
+        (lastDirectIps - lastMulticastIps).size
+
+    fun compareDirectedUdp() {
+        val missing = devices.filter {
+            it.ip in lastDirectIps && it.ip !in lastMulticastIps
+        }
+        if (missing.isEmpty()) {
+            status = "Erst eine kombinierte Suche mit Direkt-LAN-Treffern durchführen"
+            return
+        }
+        task("Experimentelle UDP-Gegenprobe bei " + missing.size + " Lampen …") {
+            val replied = withContext(Dispatchers.IO) { YeelightLan.directedUdpProbe(missing) }
+            directedUdpDiagnostics = "Gezielte UDP-Gegenprobe: " + replied.size + "/" +
+                missing.size + " antworten · " +
+                if (replied.isEmpty()) "Kein eindeutiger Rückschluss möglich (Multicast ist das Standardverfahren)"
+                else "Mindestens eine Lampe beantwortet direktes UDP, aber nicht Multicast"
+            directedUdpDiagnostics
+        }
     }
 
     fun deepDiscover() = task("Intensivsuche: prüfe lokale WLAN-Adressen …") {
