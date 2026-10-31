@@ -72,6 +72,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun LoftApp(controller: LoftController) {
     var page by remember { mutableIntStateOf(0) }
+    var orderMode by remember { mutableStateOf(false) }
+    var nextPosition by remember { mutableIntStateOf(0) }
+    var positionedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     Scaffold(
         containerColor = night,
         bottomBar = {
@@ -123,8 +126,60 @@ private fun LoftApp(controller: LoftController) {
                 }
                 else -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
-                    item { DeviceTools(controller) }
-                    items(controller.orderedDevices(), key = { it.id }) { device -> DeviceCard(device, controller) }
+                    item {
+                        Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Lauflicht-Reihenfolge", color = Color.White,
+                                    fontWeight = FontWeight.SemiBold)
+                                Text(if (orderMode)
+                                    "Je Lampe auf Identifizieren tippen und dann als nächste Position übernehmen."
+                                else "Lampen direkt an ihrer Position identifizieren oder im Sortiermodus nacheinander zuordnen.",
+                                    color = muted, fontSize = 12.sp)
+                                OutlinedButton(
+                                    onClick = {
+                                        orderMode = !orderMode
+                                        nextPosition = 0
+                                        positionedIds = emptySet()
+                                    },
+                                    enabled = controller.devices.isNotEmpty(),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text(if (orderMode) "Sortiermodus schließen" else "Lauflicht sortieren") }
+                                if (orderMode) {
+                                    Text(if (nextPosition >= controller.devices.size)
+                                        "Fertig: ${controller.devices.size} Lampen zugeordnet. Reihenfolge gespeichert."
+                                    else "Als Nächstes: Platz ${nextPosition + 1} von ${controller.devices.size}",
+                                        color = Color.White, fontWeight = FontWeight.Medium)
+                                    TextButton(onClick = {
+                                        nextPosition = 0
+                                        positionedIds = emptySet()
+                                    }, enabled = controller.canOrganizeLamps) {
+                                        Text("Zuordnung neu beginnen")
+                                    }
+                                    if (!controller.canOrganizeLamps) {
+                                        Text("Lichtshow zuerst vollständig stoppen. Währenddessen sind Identifikation und Sortierung gesperrt.",
+                                            color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (orderMode) {
+                        items(controller.orderedDevices(), key = { it.id }) { device ->
+                            LampSortCard(device, controller, nextPosition,
+                                device.id in positionedIds) {
+                                if (controller.placeLampAt(device, nextPosition)) {
+                                    positionedIds = positionedIds + device.id
+                                    nextPosition++
+                                }
+                            }
+                        }
+                    } else {
+                        item { DeviceTools(controller) }
+                        items(controller.orderedDevices(), key = { it.id }) { device ->
+                            DeviceCard(device, controller)
+                        }
+                    }
                     if (controller.devices.isEmpty()) {
                         item { Note("Noch keine Geräte gefunden. Suche im WLAN oder füge eine lokale IP hinzu. LAN-Steuerung muss in Yeelight aktiviert sein.") }
                     }
@@ -324,13 +379,20 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                 else -> "Bei diesem Suchlauf nicht bestätigt"
             }
             Text("Erkennung: " + discoveryMethod, color = muted, fontSize = 11.sp)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Reihenfolge im Lauflicht", fontSize = 12.sp, color = muted, modifier = Modifier.weight(1f))
-                val position = controller.orderedDevices().indexOfFirst { it.id == device.id }
+            val position = controller.orderedDevices().indexOfFirst { it.id == device.id }
+            Text("Reihenfolge im Lauflicht · Platz ${position + 1}",
+                fontSize = 12.sp, color = muted)
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                OutlinedButton(
+                    onClick = { controller.identifyLamp(device) },
+                    enabled = controller.canOrganizeLamps,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Identifizieren") }
                 OutlinedButton(onClick = { controller.moveLamp(device, -1) },
-                    enabled = !controller.busy && position > 0) { Text("↑") }
+                    enabled = controller.canOrganizeLamps && position > 0) { Text("↑") }
                 OutlinedButton(onClick = { controller.moveLamp(device, 1) },
-                    enabled = !controller.busy && position < controller.devices.lastIndex) { Text("↓") }
+                    enabled = controller.canOrganizeLamps && position < controller.devices.lastIndex) { Text("↓") }
             }
             LampManualPanel(device, controller)
             TextButton(onClick = { controller.forget(device) }, enabled = !controller.busy) { Text("Aus dieser App entfernen") }
@@ -349,6 +411,51 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
     }
 }
 
+
+@Composable
+private fun LampSortCard(
+    device: YeelightDevice,
+    controller: LoftController,
+    nextPosition: Int,
+    assigned: Boolean,
+    onAssign: () -> Unit,
+) {
+    val place = controller.orderedDevices().indexOfFirst { it.id == device.id } + 1
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF35304E)), contentAlignment = Alignment.Center) {
+                    Text(place.toString(), color = lavender, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontWeight = FontWeight.SemiBold)
+                    Text("Platz $place · " + (if (device.ip in controller.lastSeenIps)
+                        "Zuletzt erreichbar" else "Nicht erneut bestätigt"),
+                        color = muted, fontSize = 11.sp)
+                }
+                if (assigned) Text("✓", color = Color(0xFF80D9C6),
+                    fontWeight = FontWeight.Bold)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { controller.identifyLamp(device) },
+                    enabled = controller.canOrganizeLamps,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Identifizieren") }
+                Button(
+                    onClick = onAssign,
+                    enabled = controller.canOrganizeLamps && !assigned &&
+                        nextPosition < controller.devices.size,
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (assigned) "Zugeordnet" else "Als Nr. ${nextPosition + 1}") }
+            }
+        }
+    }
+}
 
 @Composable
 private fun TargetPowerControls(controller: LoftController) {
