@@ -485,12 +485,17 @@ private fun CollapsibleSettings(controller: LoftController) {
 @Composable
 private fun DeviceTools(controller: LoftController) {
     var ip by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = controller::discover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Rounded.Search, null)
             Spacer(Modifier.width(7.dp))
             Text("Alle Lampen suchen")
         }
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "Netzwerkdetails schließen" else "Erweiterte Suche und Netzwerkdiagnose")
+        }
+        if (expanded) {
         OutlinedButton(onClick = controller::deepDiscover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Text("Intensivsuche im WLAN")
         }
@@ -523,71 +528,104 @@ private fun DeviceTools(controller: LoftController) {
         OutlinedButton(onClick = { controller.addManual(ip); ip = "" }, modifier = Modifier.fillMaxWidth()) {
             Text("Gerät manuell hinzufügen")
         }
+        }
     }
 }
 
 @Composable
 private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
+    var expanded by remember(device.id) { mutableStateOf(false) }
     var localAlias by remember(device.id) { mutableStateOf(controller.aliasFor(device)) }
+    var showRemoveConfirm by remember(device.id) { mutableStateOf(false) }
+    val discovered = device.ip in controller.lastSeenIps
     Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
-        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Lightbulb, null, tint = lavender)
-                Spacer(Modifier.width(9.dp))
-                Column {
-                    Text(controller.displayName(device), fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(if (YeelightLan.isSpecificModel(device.model)) "Modell: " + device.model
-                        else "Modell über LAN nicht ermittelbar", color = muted, fontSize = 12.sp)
-                    Text(device.ip + ":" + device.port, fontSize = 12.sp, color = muted)
-                }
-            }
-            OutlinedTextField(
-                value = localAlias, onValueChange = { localAlias = it.take(50) },
-                label = { Text("Eigener Anzeigename (nur in dieser App)") },
-                placeholder = { Text("z. B. Billardtisch links") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            TextButton(onClick = { controller.setAlias(device, localAlias) }) {
-                Text("Anzeigenamen speichern")
-            }
-            Text(if (device.ip in controller.lastSeenIps) "Bei letzter Suche bestätigt" else "Gespeichert · aktuell nicht überprüft",
-                color = if (device.ip in controller.lastSeenIps) Color(0xFF80D9C6) else muted, fontSize = 12.sp)
-            val discoveryMethod = when {
-                device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps -> "Multicast + Direkt-LAN"
-                device.ip in controller.lastMulticastIps -> "Multicast"
-                device.ip in controller.lastDirectIps -> "Nur Direkt-LAN"
-                else -> "Bei diesem Suchlauf nicht bestätigt"
-            }
-            Text("Erkennung: " + discoveryMethod, color = muted, fontSize = 11.sp)
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { controller.identifyLamp(device) },
-                    enabled = controller.canOrganizeLamps,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Lampe identifizieren · 2,5 s") }
-                Icon(Icons.Rounded.DragHandle,
-                    contentDescription = "Im Sortiermodus per Drag-and-drop anordnen",
-                    tint = muted)
-            }
-            LampManualPanel(device, controller)
-            TextButton(onClick = { controller.forget(device) }, enabled = !controller.busy) { Text("Aus dieser App entfernen") }
-            if (!device.canFlow) Note("Dieses Gerät meldet keine Unterstützung für start_cf.")
-            Text("Raum: " + controller.roomFor(device), color = Color.White, fontSize = 12.sp)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                rooms.forEach { room ->
-                    FilterChip(
-                        selected = controller.roomFor(device) == room,
-                        onClick = { controller.assign(device, room) },
-                        label = { Text(room) }
-                    )
+                Icon(Icons.Rounded.Lightbulb,
+                    contentDescription = null, tint = if (discovered) Color(0xFF80D9C6) else lavender)
+                Column(Modifier.weight(1f)) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(device.ip, color = muted, fontSize = 10.sp)
+                    Text(controller.roomFor(device) + " · " +
+                        (if (discovered) "Erkannt" else "Gespeichert"),
+                        color = muted, fontSize = 11.sp)
                 }
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    enabled = !controller.busy
+                ) { Text(if (expanded) "Weniger" else "Details", fontSize = 12.sp) }
+            }
+            OutlinedButton(
+                onClick = { controller.identifyLamp(device) },
+                enabled = controller.canOrganizeLamps,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Identifizieren · 2,5 s") }
+            if (expanded) {
+                HorizontalDivider(color = Color(0xFF384057))
+                Text("Geräteverwaltung", color = Color.White, fontWeight = FontWeight.Medium)
+                Text("Modell: " + (if (YeelightLan.isSpecificModel(device.model))
+                    device.model else "über LAN unbekannt") +
+                    " · Port " + device.port, color = muted, fontSize = 11.sp)
+                Text("Erkannt durch: " + when {
+                    device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps ->
+                        "Multicast + TCP"
+                    device.ip in controller.lastDirectIps -> "TCP-Direktsuche"
+                    device.ip in controller.lastMulticastIps -> "Multicast"
+                    else -> "Zuletzt nicht überprüft"
+                }, color = muted, fontSize = 11.sp)
+                OutlinedTextField(
+                    value = localAlias,
+                    onValueChange = { localAlias = it.take(50) },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("Individueller Name") }
+                )
+                OutlinedButton(
+                    enabled = !controller.busy,
+                    onClick = { controller.setAlias(device, localAlias) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Namen speichern") }
+                Text("Raumzuordnung", color = Color.White, fontWeight = FontWeight.Medium)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    controller.roomNames.forEach { room ->
+                        FilterChip(
+                            selected = controller.roomFor(device) == room,
+                            onClick = { controller.assign(device, room) },
+                            label = { Text(room) },
+                            enabled = controller.canOrganizeLamps
+                        )
+                    }
+                }
+                LampManualPanel(device, controller)
+                if (!device.canFlow) {
+                    Note("Dieses Gerät meldet kein Yeelight start_cf – nicht in Farbfluss einbeziehen.")
+                }
+                TextButton(
+                    onClick = { showRemoveConfirm = true },
+                    enabled = controller.canOrganizeLamps,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Gerät aus dieser App entfernen") }
             }
         }
     }
+    if (showRemoveConfirm) AlertDialog(
+        onDismissRequest = { showRemoveConfirm = false },
+        title = { Text("Gerät entfernen?") },
+        text = { Text(controller.displayName(device) + " bleibt in Yeelight/Google Home erhalten.") },
+        confirmButton = {
+            TextButton(onClick = {
+                controller.forget(device)
+                showRemoveConfirm = false
+            }) { Text("Entfernen") }
+        },
+        dismissButton = {
+            TextButton(onClick = { showRemoveConfirm = false }) { Text("Abbrechen") }
+        }
+    )
 }
-
 
 @Composable
 private fun TargetPowerControls(controller: LoftController) {
