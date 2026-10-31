@@ -42,6 +42,17 @@ class MusicAnalyzerTest {
         assertNull(silence.estimatedBpm)
     }
 
+    @Test fun stableMeasuredBassPulsesYieldBpmInsteadOfGuessedTempo() {
+        val analyzer = MusicAnalyzer()
+        var last: MusicFrame? = null
+        repeat(4) { i ->
+            analyzer.analyze(quiet, 1000L + i * 500L - 128L)
+            last = analyzer.analyze(tone(78.125), 1000L + i * 500L)
+            assertTrue("Real synthetic transient should trigger", last!!.beat)
+        }
+        assertEquals(120, last!!.estimatedBpm)
+    }
+
     @Test fun rejectsNonPowerOfTwoBuffersAndWrongLength() {
         assertThrows(IllegalArgumentException::class.java) { MusicAnalyzer(16000, 1000) }
         assertThrows(IllegalArgumentException::class.java) {
