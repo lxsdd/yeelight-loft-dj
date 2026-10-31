@@ -149,3 +149,25 @@ ist **kein** geometrisches Abbild des tatsächlichen Grundrisses.
   wird weder automatisch nach `main` gemerged noch ein Release veröffentlicht.
 
 Details: [docs/CHASE_SCENES_DE.md](CHASE_SCENES_DE.md).
+
+
+## Verbindliche Ergänzungen – Einzel-Szenen, Rückkehr und Ursachenanalyse
+
+- Individueller JSON-Export **jeder** Szene sowie Import mit Wahl
+  einzelner Szenen aus einer vollständigen Archivdatei.
+- Einstellbare Option, nach manuellem Stopp einer Szene ursprüngliche
+  Einstellungen **aller** gestarteten Lampen zu restaurieren;
+  Farbmodus/RGB/Kelvin/HSV, Helligkeit, Ein-/Aus und Persistenz über App-Neustart.
+  Kein unbemerktes oder vorgetäuschtes Zurücksetzen bei fehlenden Daten.
+- Yeelight Discovery ist **SSDP-ähnliches UDP-Multicast, nicht mDNS**;
+  die Ursachenanalyse der konstant nur fünf Antworter gegenüber
+  15 per TCP erkannten Lampen hat hohe Priorität. Festgestellte einheitliche
+  Gerätekonfiguration berücksichtigen; keine spekulative Firmwareerklärung.
+- Der **interaktive 2D/3D-Raumgrundrisseditor ist weiterhin nicht implementiert**.
+  Seine Anforderungen bleiben unverändert bindend und im Ausbau hoch priorisiert.
+- **Musik ist ein eigenständiger Entwicklungsstrang mit höchster Priorität**;
+  nächster Schritt Android-Mikrofon, echte Live-Spektralanzeige,
+  Beat/Bass-Erkennung und räumliche Effekte, danach erlaubtes internes Audio,
+  Cast-Fallback und eigener Player.
+- Die daraus entstehende priorisierte Produktdifferenzierung ist in
+  [UNIQUE_FEATURE_VISION_DE.md](UNIQUE_FEATURE_VISION_DE.md) dokumentiert.
