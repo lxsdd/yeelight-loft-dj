@@ -125,13 +125,17 @@ class LoftController(context: Context) {
     }.getOrDefault(emptySet())
 
     private fun setRunningIps(ips: Set<String>) {
+        check(prefs.edit().putString("running-flow-ips", JSONArray(ips.toList()).toString()).commit()) {
+            "Aktiven Lichtlauf konnte nicht lokal gesichert werden"
+        }
         runningDeviceIps = ips
-        prefs.edit().putString("running-flow-ips", JSONArray(ips.toList()).toString()).commit()
     }
 
     private fun setRecoveryJournal(entries: Map<String, LampSnapshot>) {
+        check(prefs.edit().putString("pending-scene-recovery", SceneRecovery.encode(entries)).commit()) {
+            "Wiederherstellungsdaten konnten nicht lokal gesichert werden"
+        }
         recoveryJournal = entries
-        prefs.edit().putString("pending-scene-recovery", SceneRecovery.encode(entries)).commit()
     }
 
     fun saveChase(name: String, config: ChaseConfig) {
