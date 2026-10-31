@@ -61,7 +61,7 @@ object ChaseCompiler {
             }
             val palette = config.palette
             val rgb = when (config.style) {
-                ChaseStyle.METEOR -> palette[(step / max(1, lampCount)) % palette.size]
+                ChaseStyle.METEOR -> palette[step % palette.size]
                 ChaseStyle.RAINBOW_TAIL -> palette[Math.floorMod(step - travel, palette.size)]
                 ChaseStyle.COLOR_WAVE -> palette[Math.floorMod(step + lampIndex, palette.size)]
             }
