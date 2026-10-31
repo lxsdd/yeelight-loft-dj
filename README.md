@@ -12,7 +12,7 @@ The long-term goal is **everyday local lighting control and DJ/music-reactive sp
 
 ## Proposed next milestone (draft PR)
 
-**v0.1.2 / versionCode 3** adds optional manual controls to individual device cards: real status query (not a simulated live state), power, brightness, RGB and white temperature, safe deliberate bulb identification, and target-group on/off actions.
+**v0.1.2 / versionCode 3** adds optional manual controls to individual device cards: real status query (not a simulated live state), power, brightness, RGB and white temperature, safe deliberate bulb identification, and target-group on/off actions. **Lichtlauf-Studio** also adds native cross-bulb meteor, rainbow-tail and color-wave effects, editable lamp order, preview, tempo/palette/trail/brightness/direction/pingpong, saved presets, and versioned scene JSON import/export. See [chase scene acceptance](docs/CHASE_SCENES_DE.md).
 
 The PR must pass Android CI and be reviewed before merge. PR builds deliberately cannot access private signing secrets and do not supply updateable signed APKs. The next stable update is produced **only by trusted `main` CI after an approved merge**.
 
