@@ -263,7 +263,7 @@ private fun DeviceTools(controller: LoftController) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("Netzwerk-Diagnose", color = Color.White, fontWeight = FontWeight.SemiBold)
                 Text(controller.searchDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
-                Text("Multicast = Geräteantwort auf Suchruf; Direkt-LAN = gezielte Statusabfrage. Gleiche Lampe kann bei beiden erscheinen.", color = muted, fontSize = 11.sp)
+                Text("Yeelight nutzt SSDP-ähnliches UDP-Multicast (nicht mDNS). Antworten kommen einzeln per Unicast; Direkt-LAN prüft unabhängig davon TCP 55443. Je Suchrunde werden unterschiedliche Lampen gezählt.", color = muted, fontSize = 11.sp)
             }
         }
         Text("Gespeicherte Geräte bleiben bei erneuter Suche erhalten. Nicht bestätigte Geräte können inzwischen offline sein.", color = muted, fontSize = 12.sp)
