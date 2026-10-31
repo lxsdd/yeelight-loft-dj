@@ -114,6 +114,28 @@ class LoftController(context: Context) {
         return true
     }
 
+    /** Commit a complete drag-and-drop order only after the drag finishes. */
+    fun saveDraggedOrder(orderedIds: List<String>): Boolean {
+        if (!canOrganizeLamps) {
+            status = "Lichtshow zuerst stoppen, bevor die Reihenfolge verändert wird"
+            return false
+        }
+        val current = orderedDevices().map { it.id }
+        if (orderedIds.size != current.size || orderedIds.toSet() != current.toSet() ||
+            orderedIds.distinct().size != orderedIds.size
+        ) {
+            status = "Geräteliste hat sich geändert – Sortierung erneut öffnen"
+            return false
+        }
+        if (!prefs.edit().putString("lamp-order", JSONArray(orderedIds).toString()).commit()) {
+            status = "Reihenfolge konnte nicht dauerhaft gespeichert werden"
+            return false
+        }
+        lampOrder = orderedIds
+        status = "Lauflicht-Reihenfolge gespeichert"
+        return true
+    }
+
     fun moveLamp(device: YeelightDevice, delta: Int) {
         if (delta !in listOf(-1, 1)) return
         val index = orderedDevices().indexOfFirst { it.id == device.id }
