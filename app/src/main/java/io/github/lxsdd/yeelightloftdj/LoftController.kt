@@ -229,8 +229,8 @@ class LoftController(context: Context) {
             activeScene = null
             val successful = chosen.size - errors.size
             successful.toString() + "/" + chosen.size + " Lampen " +
-                if (on) "eingeschaltet" else "ausgeschaltet" +
-                if (errors.isEmpty()) "" else " · " + errors.first()
+                (if (on) "eingeschaltet" else "ausgeschaltet") +
+                (if (errors.isEmpty()) "" else " · " + errors.first())
         }
     }
 
