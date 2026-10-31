@@ -357,6 +357,7 @@ class LoftController(context: Context) {
         else -> emptyList()
     }
     fun selectedCount() = selected().size
+    fun previewCount(choice: String): Int = chooseDevices(choice).size
 
 
     /**
