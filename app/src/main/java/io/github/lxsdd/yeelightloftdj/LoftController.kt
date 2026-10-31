@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -706,6 +707,19 @@ class LoftController(context: Context) {
     }
     fun close() {
         microphone?.stop()
-        scope.cancel()
+        if (musicDeviceSession) {
+            // Activity may be destroyed immediately after ON_STOP.
+            // Allow a short bounded network cleanup to finish; a power loss
+            // still leaves the durable journal for explicit retry next launch.
+            if (!musicStopPending) disarmMusicLights()
+            scope.launch {
+                withTimeoutOrNull(12_000L) {
+                    while (musicStopPending) delay(50)
+                }
+                scope.cancel()
+            }
+        } else {
+            scope.cancel()
+        }
     }
 }
