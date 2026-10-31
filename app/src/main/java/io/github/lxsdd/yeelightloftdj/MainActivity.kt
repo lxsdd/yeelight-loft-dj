@@ -74,6 +74,10 @@ class MainActivity : ComponentActivity() {
             )) { LoftApp(controller) }
         }
     }
+    override fun onStop() {
+        controller.stopMicrophone()
+        super.onStop()
+    }
     override fun onDestroy() {
         controller.close()
         super.onDestroy()
@@ -103,8 +107,8 @@ private fun LoftApp(controller: LoftController) {
         containerColor = night,
         bottomBar = {
             NavigationBar(containerColor = panel) {
-                val pages = listOf("Home", "Szenen", "Geräte")
-                val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices)
+                val pages = listOf("Home", "Szenen", "Geräte", "Musik")
+                val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices, Icons.Rounded.GraphicEq)
                 pages.forEachIndexed { index, label ->
                     NavigationBarItem(
                         selected = page == index,
@@ -143,13 +147,11 @@ private fun LoftApp(controller: LoftController) {
                     items(controller.allScenes(), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
-                    item { Heading("Lichtlauf-Studio", "Alle Leuchten in Bewegung – ohne Kommandoflut") }
-                    item { ChasePanel(controller) }
-                    item { SceneExchangePanel(controller) }
+                    item { CollapsibleSettings(controller) }
                     item { StopButton(controller) }
-                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Musikreaktion folgt später.") }
+                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Echte Musikreaktion findest du unter Musik.") }
                 }
-                else -> {
+                2 -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
                     item {
                         Surface(color = panel, shape = RoundedCornerShape(24.dp)) {
@@ -267,23 +269,21 @@ private fun LoftApp(controller: LoftController) {
                                         Column(Modifier.weight(1f)) {
                                             Text(controller.displayName(device), color = Color.White,
                                                 fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                            Text(if (device.ip in controller.lastSeenIps)
-                                                "Im WLAN erkannt" else "Zuletzt nicht bestätigt",
-                                                color = muted, fontSize = 11.sp)
+                                            Text(device.ip + " · " +
+                                                 (if (device.ip in controller.lastSeenIps)
+                                                     "Erkannt" else "Nicht bestätigt"),
+                                                 color = muted, fontSize = 10.sp)
                                         }
-                                        IconButton(
-                                            onClick = { controller.identifyLamp(device) },
-                                            enabled = controller.canOrganizeLamps,
-                                        ) {
-                                            Icon(Icons.Rounded.Lightbulb,
-                                                contentDescription = "Diese Lampe 2,5 Sekunden identifizieren",
-                                                tint = Color(0xFF80D9C6))
-                                        }
+                                        TextButton(
+                                             onClick = { controller.identifyLamp(device) },
+                                             enabled = controller.canOrganizeLamps,
+                                         ) { Text("Identifizieren", fontSize = 11.sp) }
                                     }
                                 }
                             }
                         }
                     } else {
+                        item { RoomAssignmentEditor(controller) }
                         item { DeviceTools(controller) }
                         items(controller.orderedDevices(), key = { it.id }) { device ->
                             DeviceCard(device, controller)
@@ -292,6 +292,10 @@ private fun LoftApp(controller: LoftController) {
                     if (controller.devices.isEmpty()) {
                         item { Note("Noch keine Geräte gefunden. Suche im WLAN oder füge eine lokale IP hinzu. LAN-Steuerung muss in Yeelight aktiviert sein.") }
                     }
+                }
+                else -> {
+                    item { TargetSelector(controller) }
+                    item { MusicScreen(controller) }
                 }
             }
             item { Footer() }
