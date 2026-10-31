@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 
 private val night = Color(0xFF0D101A)
 private val panel = Color(0xFF1D2232)
@@ -94,6 +96,7 @@ private fun LoftApp(controller: LoftController) {
                     item { Hero(controller, onScene = { page = 1 }, onDevice = { page = 2 }) }
                     item { Heading("Deine Lichtwelten", "Ein Tipp – und dein Loft verwandelt sich.") }
                     item { TargetSelector(controller) }
+                    item { TargetPowerControls(controller) }
                     items(SceneLibrary.scenes.take(2), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
@@ -301,7 +304,8 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                 else -> "Bei diesem Suchlauf nicht bestätigt"
             }
             Text("Erkennung: " + discoveryMethod, color = muted, fontSize = 11.sp)
-            TextButton(onClick = { controller.forget(device) }) { Text("Aus dieser App entfernen") }
+            LampManualPanel(device, controller)
+            TextButton(onClick = { controller.forget(device) }, enabled = !controller.busy) { Text("Aus dieser App entfernen") }
             if (!device.canFlow) Note("Dieses Gerät meldet keine Unterstützung für start_cf.")
             Text("Raum: " + controller.roomFor(device), color = Color.White, fontSize = 12.sp)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -314,6 +318,129 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun TargetPowerControls(controller: LoftController) {
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Schnellsteuerung", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("Für ${controller.target} · ${controller.selectedCount()} Lampen. Farbverläufe werden durch manuelles Schalten beendet.", color = muted, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Button(
+                    onClick = { controller.powerTarget(true) },
+                    enabled = !controller.busy && controller.selectedCount() > 0,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Einschalten") }
+                OutlinedButton(
+                    onClick = { controller.powerTarget(false) },
+                    enabled = !controller.busy && controller.selectedCount() > 0,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Ausschalten") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LampManualPanel(device: YeelightDevice, controller: LoftController) {
+    var expanded by remember(device.ip) { mutableStateOf(false) }
+    val live = controller.snapshotFor(device)
+    OutlinedButton(
+        onClick = { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth()
+    ) { Text(if (expanded) "Lichtsteuerung schließen" else "Lichtsteuerung öffnen") }
+    if (!expanded) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    live == null -> "Status noch nicht abgerufen"
+                    live.isOn -> "Eingeschaltet · ${live.brightness} %"
+                    else -> "Ausgeschaltet"
+                },
+                color = if (live?.isOn == true) Color(0xFF80D9C6) else muted,
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { controller.refreshLamp(device) }, enabled = !controller.busy) {
+                Text("Aktualisieren")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { controller.controlLamp(device, LampCommands.power(true), "Einschalten") },
+                enabled = !controller.busy,
+                modifier = Modifier.weight(1f)
+            ) { Text("Ein") }
+            OutlinedButton(
+                onClick = { controller.controlLamp(device, LampCommands.power(false), "Ausschalten") },
+                enabled = !controller.busy,
+                modifier = Modifier.weight(1f)
+            ) { Text("Aus") }
+        }
+        var brightness by remember(device.ip, live?.brightness) {
+            mutableFloatStateOf((live?.brightness ?: 60).toFloat())
+        }
+        Text("Helligkeit · ${brightness.roundToInt()} %", color = Color.White, fontSize = 12.sp)
+        Slider(
+            value = brightness,
+            onValueChange = { brightness = it },
+            onValueChangeFinished = {
+                controller.controlLamp(device, LampCommands.brightness(brightness.roundToInt()), "Helligkeit")
+            },
+            valueRange = 1f..100f,
+            enabled = !controller.busy,
+        )
+        val colors = listOf(
+            Triple("Warm", 0xFFAE62, Color(0xFFFFAE62)),
+            Triple("Türkis", 0x23D7D0, Color(0xFF23D7D0)),
+            Triple("Violett", 0xA47BFF, Color(0xFFA47BFF)),
+            Triple("Pink", 0xFF55B4, Color(0xFFFF55B4)),
+        )
+        if (device.methods.isEmpty() || "set_rgb" in device.methods) {
+            Text("Direktfarben", color = Color.White, fontSize = 12.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                colors.forEach { (name, rgb, tint) ->
+                    FilterChip(
+                        selected = live?.colorMode == 1 && live.rgb == rgb,
+                        onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
+                        enabled = !controller.busy,
+                        label = { Text(name) },
+                        leadingIcon = {
+                            Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
+                        },
+                    )
+                }
+            }
+        }
+        if (device.methods.isEmpty() || "set_ct_abx" in device.methods) {
+            var kelvin by remember(device.ip, live?.temperature) {
+                mutableFloatStateOf((live?.temperature ?: 3500).toFloat())
+            }
+            Text("Weißtemperatur · ${kelvin.roundToInt()} K", color = Color.White, fontSize = 12.sp)
+            Slider(
+                value = kelvin,
+                onValueChange = { kelvin = it },
+                onValueChangeFinished = {
+                    controller.controlLamp(device, LampCommands.temperature(kelvin.roundToInt()), "Weißtemperatur")
+                },
+                valueRange = 1700f..6500f,
+                enabled = !controller.busy,
+            )
+        }
+        OutlinedButton(
+            onClick = { controller.identifyLamp(device) },
+            enabled = !controller.busy && controller.activeScene == null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Diese Lampe kurz identifizieren") }
+        Text(
+            "Identifikation nur ohne laufende Lichtshow. Vorherigen Zustand lesen und anschließend wiederherstellen. Bei unvollständig lesbarem Farbzustand wird kein Testsignal gesendet.",
+            color = muted, fontSize = 11.sp
+        )
     }
 }
 
