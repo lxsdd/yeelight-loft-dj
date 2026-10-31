@@ -113,7 +113,7 @@ class LoftController(context: Context) {
     fun exportSingleChase(preset: ChasePreset): String =
         SceneArchive.encode(SceneArchiveData(emptyList(), listOf(preset)))
 
-    fun setRestoreAfterStop(enabled: Boolean) {
+    fun configureRestoreAfterStop(enabled: Boolean) {
         // The choice is frozen for the full duration of a running scene.
         if (busy || runningDeviceIps.isNotEmpty()) return
         restoreAfterStop = enabled
