@@ -36,6 +36,12 @@ object YeelightLan {
         private set
     @Volatile var lastSearchInvalidPackets: Int = 0
         private set
+    @Volatile var lastSearchRoundUnique: List<Int> = emptyList()
+        private set
+    @Volatile var lastSearchSourceAddress: String = "unbekannt"
+        private set
+    @Volatile var lastSearchSourceMismatches: Int = 0
+        private set
     private val ipv4 = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}")
     private val search = (
         "M-SEARCH * HTTP/1.1\r\n" +
@@ -86,12 +92,20 @@ object YeelightLan {
         val found = linkedMapOf<String, YeelightDevice>()
         var packets = 0
         var invalid = 0
+        var mismatches = 0
+        val roundUnique = mutableListOf<Int>()
+        val source = wifiIpv4Address()
+            ?: error("Keine lokale WLAN-IPv4-Adresse erkannt; Multicast nicht auf Mobilfunk umleiten")
         try {
             lock.acquire()
-            DatagramSocket().use { socket ->
+            // Bind explicitly to the Wi-Fi IP so Android/VPN routing cannot
+            // accidentally send M-SEARCH via a different active interface.
+            DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+                lastSearchSourceAddress = socket.localAddress.hostAddress ?: "unbekannt"
                 socket.soTimeout = 220
                 val packet = DatagramPacket(search, search.size, InetAddress.getByName(HOST), PORT)
                 repeat(5) {
+                    val round = mutableSetOf<String>()
                     socket.send(packet)
                     val deadline = System.nanoTime() + 1_150_000_000L
                     while (System.nanoTime() < deadline) {
@@ -101,16 +115,23 @@ object YeelightLan {
                             socket.receive(received)
                             packets++
                             val parsed = parseAnnouncement(String(received.data, received.offset, received.length, Charsets.UTF_8))
-                            if (parsed == null) invalid++ else found[parsed.ip] = parsed
+                            if (parsed == null) invalid++ else {
+                                round.add(parsed.ip)
+                                if (received.address.hostAddress != parsed.ip) mismatches++
+                                found[parsed.ip] = parsed
+                            }
                         } catch (_: SocketTimeoutException) {
                             // Do not break: a bulb may reply after a quiet period.
                         }
                     }
+                    roundUnique.add(round.size)
                 }
             }
         } finally {
             lastSearchPackets = packets
             lastSearchInvalidPackets = invalid
+            lastSearchRoundUnique = roundUnique.toList()
+            lastSearchSourceMismatches = mismatches
             if (lock.isHeld) lock.release()
         }
         return found.values.sortedWith(compareBy({ it.model }, { it.ip }))
@@ -125,8 +146,9 @@ object YeelightLan {
         return (1..254).map { prefix + "." + it }.filterNot { it == ip }
     }
 
-    fun wifiSubnetCandidates(): List<String> {
-        val nets = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+    /** Prefer the actual Wi-Fi interface to Android's generic default network. */
+    fun wifiIpv4Address(): String? {
+        val nets = NetworkInterface.getNetworkInterfaces() ?: return null
         while (nets.hasMoreElements()) {
             val net = nets.nextElement()
             if (!net.isUp || (!net.name.startsWith("wlan") && !net.name.startsWith("wifi"))) continue
@@ -134,12 +156,15 @@ object YeelightLan {
             while (addresses.hasMoreElements()) {
                 val address = addresses.nextElement()
                 if (address is Inet4Address && isLocalIp(address.hostAddress ?: "")) {
-                    return subnetCandidates(address.hostAddress ?: "")
+                    return address.hostAddress
                 }
             }
         }
-        return emptyList()
+        return null
     }
+
+    fun wifiSubnetCandidates(): List<String> =
+        wifiIpv4Address()?.let(::subnetCandidates) ?: emptyList()
 
     /**
      * Read-only direct TCP probe for a Yeelight on port 55443.
