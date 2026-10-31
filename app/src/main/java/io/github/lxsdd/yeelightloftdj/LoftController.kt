@@ -34,7 +34,7 @@ class LoftController(context: Context) {
     var activeScene by mutableStateOf<String?>(null)
         private set
 
-    fun setTarget(value: String) { if (value in setOf("Test (1)", "Loft", "Alle")) target = value }
+    fun chooseTarget(value: String) { if (value in setOf("Test (1)", "Loft", "Alle")) target = value }
     fun roomFor(device: YeelightDevice): String = assignments[device.id] ?: "Nicht zugeordnet"
     fun assign(device: YeelightDevice, room: String) {
         if (room !in rooms) return
