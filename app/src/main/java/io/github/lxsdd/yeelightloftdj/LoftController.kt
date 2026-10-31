@@ -37,6 +37,12 @@ class LoftController(context: Context) {
         private set
     var lastSeenIps by mutableStateOf<Set<String>>(emptySet())
         private set
+    var lastMulticastIps by mutableStateOf<Set<String>>(emptySet())
+        private set
+    var lastDirectIps by mutableStateOf<Set<String>>(emptySet())
+        private set
+    var searchDiagnostics by mutableStateOf("Noch keine vergleichende Suche durchgeführt")
+        private set
     var aliases by mutableStateOf<Map<String, String>>(emptyMap())
         private set
 
@@ -113,18 +119,29 @@ class LoftController(context: Context) {
     }
 
     fun discover() = task("Suche Yeelights automatisch (WLAN + LAN) …") {
-        val found = withContext(Dispatchers.IO) {
-            val multicast = YeelightLan.discover(app)
-            // SSDP replies are frequently incomplete in real Wi-Fi networks.
-            // Merge direct TCP results so a normal scan is comprehensive.
-            val direct = try { YeelightLan.deepDiscover() } catch (_: Exception) { emptyList() }
-            YeelightLan.mergeDevices(multicast, direct)
+        val (multicast, direct) = withContext(Dispatchers.IO) {
+            val udp = YeelightLan.discover(app)
+            // Keep the two discovery results separate for diagnosis.
+            val tcp = try { YeelightLan.deepDiscover() } catch (_: Exception) { emptyList() }
+            Pair(udp, tcp)
         }
-        mergeFound(found, "Kombinierte Suche")
+        lastMulticastIps = multicast.map { it.ip }.toSet()
+        lastDirectIps = direct.map { it.ip }.toSet()
+        val both = lastMulticastIps.intersect(lastDirectIps)
+        val directOnly = lastDirectIps - lastMulticastIps
+        searchDiagnostics = "Multicast: " + lastMulticastIps.size +
+            " · Direkt-LAN: " + lastDirectIps.size +
+            " · Beide: " + both.size +
+            " · Nur direkt: " + directOnly.size
+        val merged = YeelightLan.mergeDevices(multicast, direct)
+        mergeFound(merged, "Kombinierte Suche")
     }
 
     fun deepDiscover() = task("Intensivsuche: prüfe lokale WLAN-Adressen …") {
         val found = withContext(Dispatchers.IO) { YeelightLan.deepDiscover() }
+        lastDirectIps = found.map { it.ip }.toSet()
+        searchDiagnostics = "Intensivsuche: " + lastDirectIps.size +
+            " über TCP bestätigt · Multicast zuletzt: " + lastMulticastIps.size
         mergeFound(found, "Intensivsuche")
     }
 
@@ -147,6 +164,8 @@ class LoftController(context: Context) {
         devices = devices.filterNot { it.id == device.id }
         assignments = assignments - device.id
         lastSeenIps = lastSeenIps - device.ip
+        lastMulticastIps = lastMulticastIps - device.ip
+        lastDirectIps = lastDirectIps - device.ip
         prefs.edit().remove("room." + device.id).remove("alias." + device.ip).apply()
         saveKnown()
         status = "Gerät aus dieser App entfernt"

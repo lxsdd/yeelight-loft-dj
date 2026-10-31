@@ -246,6 +246,13 @@ private fun DeviceTools(controller: LoftController) {
             Text("Intensivsuche im WLAN")
         }
         Text("Die Hauptsuche kombiniert Geräteankündigungen und direkte LAN-Prüfung. Die Intensivsuche ist als gezielter Wiederholungstest verfügbar.", color = muted, fontSize = 12.sp)
+        Surface(color = Color(0xFF252A3D), shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("Netzwerk-Diagnose", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(controller.searchDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
+                Text("Multicast = Geräteantwort auf Suchruf; Direkt-LAN = gezielte Statusabfrage. Gleiche Lampe kann bei beiden erscheinen.", color = muted, fontSize = 11.sp)
+            }
+        }
         Text("Gespeicherte Geräte bleiben bei erneuter Suche erhalten. Nicht bestätigte Geräte können inzwischen offline sein.", color = muted, fontSize = 12.sp)
         OutlinedTextField(
             value = ip,
@@ -287,6 +294,13 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
             }
             Text(if (device.ip in controller.lastSeenIps) "Bei letzter Suche bestätigt" else "Gespeichert · aktuell nicht überprüft",
                 color = if (device.ip in controller.lastSeenIps) Color(0xFF80D9C6) else muted, fontSize = 12.sp)
+            val discoveryMethod = when {
+                device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps -> "Multicast + Direkt-LAN"
+                device.ip in controller.lastMulticastIps -> "Multicast"
+                device.ip in controller.lastDirectIps -> "Nur Direkt-LAN"
+                else -> "Bei diesem Suchlauf nicht bestätigt"
+            }
+            Text("Erkennung: " + discoveryMethod, color = muted, fontSize = 11.sp)
             TextButton(onClick = { controller.forget(device) }) { Text("Aus dieser App entfernen") }
             if (!device.canFlow) Note("Dieses Gerät meldet keine Unterstützung für start_cf.")
             Text("Raum: " + controller.roomFor(device), color = Color.White, fontSize = 12.sp)
