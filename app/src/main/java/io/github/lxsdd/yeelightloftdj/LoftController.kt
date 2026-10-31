@@ -363,7 +363,7 @@ class LoftController(context: Context) {
         }
 
     fun identifyLamp(device: YeelightDevice) {
-        if (activeScene != null) {
+        if (activeScene != null || runningDeviceIps.isNotEmpty()) {
             status = "Lichtshow zuerst stoppen, um den Lampenzustand nicht zu verändern"
             return
         }
