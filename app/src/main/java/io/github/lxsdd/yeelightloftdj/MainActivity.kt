@@ -528,6 +528,17 @@ private fun DeviceTools(controller: LoftController) {
         OutlinedButton(onClick = { controller.addManual(ip); ip = "" }, modifier = Modifier.fillMaxWidth()) {
             Text("Gerät manuell hinzufügen")
         }
+        OutlinedButton(
+            enabled = !controller.busy && YeelightLan.isLocalIp(ip.trim()),
+            onClick = { controller.diagnoseDeskLamp(ip.trim()) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Mi Desk Lamp 1S an dieser IP prüfen") }
+        Text(
+            "Diagnose nur lesend: Yeelight-TCP 55443 und Xiaomi-MiIO-UDP 54321. " +
+                "Ein MiIO-Treffer bedeutet nicht automatisch Yeelight-LAN-Kompatibilität; " +
+                "ein separates autorisiertes Protokoll kann erforderlich sein.",
+            color = muted, fontSize = 11.sp
+        )
         }
     }
 }
@@ -1080,5 +1091,5 @@ private fun Note(message: String) {
 
 @Composable
 private fun Footer() {
-    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.1", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
+    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.6", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
 }
