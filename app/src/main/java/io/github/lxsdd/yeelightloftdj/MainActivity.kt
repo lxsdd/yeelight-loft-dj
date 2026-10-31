@@ -74,6 +74,10 @@ class MainActivity : ComponentActivity() {
             )) { LoftApp(controller) }
         }
     }
+    override fun onStop() {
+        controller.stopMicrophone()
+        super.onStop()
+    }
     override fun onDestroy() {
         controller.close()
         super.onDestroy()
@@ -103,8 +107,8 @@ private fun LoftApp(controller: LoftController) {
         containerColor = night,
         bottomBar = {
             NavigationBar(containerColor = panel) {
-                val pages = listOf("Home", "Szenen", "Geräte")
-                val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices)
+                val pages = listOf("Home", "Szenen", "Geräte", "Musik")
+                val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices, Icons.Rounded.GraphicEq)
                 pages.forEachIndexed { index, label ->
                     NavigationBarItem(
                         selected = page == index,
@@ -143,13 +147,11 @@ private fun LoftApp(controller: LoftController) {
                     items(controller.allScenes(), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
-                    item { Heading("Lichtlauf-Studio", "Alle Leuchten in Bewegung – ohne Kommandoflut") }
-                    item { ChasePanel(controller) }
-                    item { SceneExchangePanel(controller) }
+                    item { CollapsibleSettings(controller) }
                     item { StopButton(controller) }
-                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Musikreaktion folgt später.") }
+                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Echte Musikreaktion findest du unter Musik.") }
                 }
-                else -> {
+                2 -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
                     item {
                         Surface(color = panel, shape = RoundedCornerShape(24.dp)) {
@@ -267,23 +269,21 @@ private fun LoftApp(controller: LoftController) {
                                         Column(Modifier.weight(1f)) {
                                             Text(controller.displayName(device), color = Color.White,
                                                 fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                            Text(if (device.ip in controller.lastSeenIps)
-                                                "Im WLAN erkannt" else "Zuletzt nicht bestätigt",
-                                                color = muted, fontSize = 11.sp)
+                                            Text(device.ip + " · " +
+                                                 (if (device.ip in controller.lastSeenIps)
+                                                     "Erkannt" else "Nicht bestätigt"),
+                                                 color = muted, fontSize = 10.sp)
                                         }
-                                        IconButton(
-                                            onClick = { controller.identifyLamp(device) },
-                                            enabled = controller.canOrganizeLamps,
-                                        ) {
-                                            Icon(Icons.Rounded.Lightbulb,
-                                                contentDescription = "Diese Lampe 2,5 Sekunden identifizieren",
-                                                tint = Color(0xFF80D9C6))
-                                        }
+                                        TextButton(
+                                             onClick = { controller.identifyLamp(device) },
+                                             enabled = controller.canOrganizeLamps,
+                                         ) { Text("Identifizieren", fontSize = 11.sp) }
                                     }
                                 }
                             }
                         }
                     } else {
+                        item { RoomAssignmentEditor(controller) }
                         item { DeviceTools(controller) }
                         items(controller.orderedDevices(), key = { it.id }) { device ->
                             DeviceCard(device, controller)
@@ -292,6 +292,10 @@ private fun LoftApp(controller: LoftController) {
                     if (controller.devices.isEmpty()) {
                         item { Note("Noch keine Geräte gefunden. Suche im WLAN oder füge eine lokale IP hinzu. LAN-Steuerung muss in Yeelight aktiviert sein.") }
                     }
+                }
+                else -> {
+                    item { TargetSelector(controller) }
+                    item { MusicScreen(controller) }
                 }
             }
             item { Footer() }
@@ -386,14 +390,60 @@ private fun SceneCard(scene: LoftScene, enabled: Boolean, active: Boolean, onPla
 
 @Composable
 private fun TargetSelector(controller: LoftController) {
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text("Zielbereich · " + controller.target + " (" + controller.selectedCount() + ")", color = Color.White, fontWeight = FontWeight.Medium)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Test (1)", "Loft", "Alle").forEach { value ->
-                FilterChip(selected = controller.target == value, onClick = { controller.chooseTarget(value) }, label = { Text(value) })
+    var showSingles by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Ziel · " + controller.targetLabel(controller.target) +
+            " (" + controller.selectedCount() + " Lampen)", color = Color.White,
+            fontWeight = FontWeight.Medium)
+        Row(Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            controller.targetOptions()
+                .filterNot { it.startsWith("Lampe:") }
+                .forEach { value ->
+                    FilterChip(
+                        selected = controller.target == value,
+                        onClick = { controller.chooseTarget(value) },
+                        label = { Text(controller.targetLabel(value)) }
+                    )
+                }
+        }
+        TextButton(onClick = { showSingles = !showSingles }) {
+            Text(if (showSingles) "Einzellampen schließen" else "Bestimmte Einzellampe wählen")
+        }
+        if (showSingles) {
+            Row(Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                controller.orderedDevices().forEach { device ->
+                    val value = "Lampe:" + device.id
+                    FilterChip(
+                        selected = controller.target == value,
+                        onClick = { controller.chooseTarget(value) },
+                        label = { Text(controller.displayName(device)) }
+                    )
+                }
             }
         }
-        Text("Zum sicheren Test zuerst nur eine Lampe wählen. Loft benötigt die Raumzuordnung unter Geräte.", color = muted, fontSize = 12.sp)
+        if (controller.target == "Auswahl") {
+            Text("Eigene Mehrfachauswahl", color = muted, fontSize = 12.sp)
+            controller.orderedDevices().forEach { device ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = device.id in controller.customSelectedIds,
+                        onCheckedChange = { controller.setCustomSelection(device.id, it) }
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
+                        Text(device.ip, color = muted, fontSize = 10.sp)
+                    }
+                    TextButton(
+                        onClick = { controller.identifyLamp(device) },
+                        enabled = controller.canOrganizeLamps
+                    ) { Text("Identifizieren", fontSize = 11.sp) }
+                }
+            }
+        }
+        Text("Test (1) nutzt die erste Lampe im Lichtweg. Für gezielte Shows Räume, " +
+            "Einzellampen oder eine eigene Auswahl verwenden.", color = muted, fontSize = 11.sp)
     }
 }
 
@@ -411,14 +461,41 @@ private fun StopButton(controller: LoftController) {
 }
 
 @Composable
+private fun CollapsibleSettings(controller: LoftController) {
+    var showChase by remember { mutableStateOf(false) }
+    var showTransfer by remember { mutableStateOf(false) }
+    Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Szenenwerkstatt", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
+            Text("Lichtshows starten oder gezielt die erweiterten Werkzeuge öffnen.",
+                fontSize = 12.sp, color = muted)
+            OutlinedButton(onClick = { showChase = !showChase }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showChase) "Lichtlauf-Editor schließen" else "Lichtlauf-Editor öffnen")
+            }
+            OutlinedButton(onClick = { showTransfer = !showTransfer }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showTransfer) "Import/Export schließen" else "Szenen importieren / exportieren")
+            }
+        }
+    }
+    if (showChase) ChasePanel(controller)
+    if (showTransfer) SceneExchangePanel(controller)
+}
+
+@Composable
 private fun DeviceTools(controller: LoftController) {
     var ip by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = controller::discover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Rounded.Search, null)
             Spacer(Modifier.width(7.dp))
             Text("Alle Lampen suchen")
         }
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "Netzwerkdetails schließen" else "Erweiterte Suche und Netzwerkdiagnose")
+        }
+        if (expanded) {
         OutlinedButton(onClick = controller::deepDiscover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Text("Intensivsuche im WLAN")
         }
@@ -451,71 +528,115 @@ private fun DeviceTools(controller: LoftController) {
         OutlinedButton(onClick = { controller.addManual(ip); ip = "" }, modifier = Modifier.fillMaxWidth()) {
             Text("Gerät manuell hinzufügen")
         }
+        OutlinedButton(
+            enabled = !controller.busy && YeelightLan.isLocalIp(ip.trim()),
+            onClick = { controller.diagnoseDeskLamp(ip.trim()) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Mi Desk Lamp 1S an dieser IP prüfen") }
+        Text(
+            "Diagnose nur lesend: Yeelight-TCP 55443 und Xiaomi-MiIO-UDP 54321. " +
+                "Ein MiIO-Treffer bedeutet nicht automatisch Yeelight-LAN-Kompatibilität; " +
+                "ein separates autorisiertes Protokoll kann erforderlich sein.",
+            color = muted, fontSize = 11.sp
+        )
+        }
     }
 }
 
 @Composable
 private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
+    var expanded by remember(device.id) { mutableStateOf(false) }
     var localAlias by remember(device.id) { mutableStateOf(controller.aliasFor(device)) }
+    var showRemoveConfirm by remember(device.id) { mutableStateOf(false) }
+    val discovered = device.ip in controller.lastSeenIps
     Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
-        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Lightbulb, null, tint = lavender)
-                Spacer(Modifier.width(9.dp))
-                Column {
-                    Text(controller.displayName(device), fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(if (YeelightLan.isSpecificModel(device.model)) "Modell: " + device.model
-                        else "Modell über LAN nicht ermittelbar", color = muted, fontSize = 12.sp)
-                    Text(device.ip + ":" + device.port, fontSize = 12.sp, color = muted)
-                }
-            }
-            OutlinedTextField(
-                value = localAlias, onValueChange = { localAlias = it.take(50) },
-                label = { Text("Eigener Anzeigename (nur in dieser App)") },
-                placeholder = { Text("z. B. Billardtisch links") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            TextButton(onClick = { controller.setAlias(device, localAlias) }) {
-                Text("Anzeigenamen speichern")
-            }
-            Text(if (device.ip in controller.lastSeenIps) "Bei letzter Suche bestätigt" else "Gespeichert · aktuell nicht überprüft",
-                color = if (device.ip in controller.lastSeenIps) Color(0xFF80D9C6) else muted, fontSize = 12.sp)
-            val discoveryMethod = when {
-                device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps -> "Multicast + Direkt-LAN"
-                device.ip in controller.lastMulticastIps -> "Multicast"
-                device.ip in controller.lastDirectIps -> "Nur Direkt-LAN"
-                else -> "Bei diesem Suchlauf nicht bestätigt"
-            }
-            Text("Erkennung: " + discoveryMethod, color = muted, fontSize = 11.sp)
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { controller.identifyLamp(device) },
-                    enabled = controller.canOrganizeLamps,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Lampe identifizieren · 2,5 s") }
-                Icon(Icons.Rounded.DragHandle,
-                    contentDescription = "Im Sortiermodus per Drag-and-drop anordnen",
-                    tint = muted)
-            }
-            LampManualPanel(device, controller)
-            TextButton(onClick = { controller.forget(device) }, enabled = !controller.busy) { Text("Aus dieser App entfernen") }
-            if (!device.canFlow) Note("Dieses Gerät meldet keine Unterstützung für start_cf.")
-            Text("Raum: " + controller.roomFor(device), color = Color.White, fontSize = 12.sp)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                rooms.forEach { room ->
-                    FilterChip(
-                        selected = controller.roomFor(device) == room,
-                        onClick = { controller.assign(device, room) },
-                        label = { Text(room) }
-                    )
+                Icon(Icons.Rounded.Lightbulb,
+                    contentDescription = null, tint = if (discovered) Color(0xFF80D9C6) else lavender)
+                Column(Modifier.weight(1f)) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(device.ip, color = muted, fontSize = 10.sp)
+                    Text(controller.roomFor(device) + " · " +
+                        (if (discovered) "Erkannt" else "Gespeichert"),
+                        color = muted, fontSize = 11.sp)
                 }
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    enabled = !controller.busy
+                ) { Text(if (expanded) "Weniger" else "Details", fontSize = 12.sp) }
+            }
+            OutlinedButton(
+                onClick = { controller.identifyLamp(device) },
+                enabled = controller.canOrganizeLamps,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Identifizieren · 2,5 s") }
+            if (expanded) {
+                HorizontalDivider(color = Color(0xFF384057))
+                Text("Geräteverwaltung", color = Color.White, fontWeight = FontWeight.Medium)
+                Text("Modell: " + (if (YeelightLan.isSpecificModel(device.model))
+                    device.model else "über LAN unbekannt") +
+                    " · Port " + device.port, color = muted, fontSize = 11.sp)
+                Text("Erkannt durch: " + when {
+                    device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps ->
+                        "Multicast + TCP"
+                    device.ip in controller.lastDirectIps -> "TCP-Direktsuche"
+                    device.ip in controller.lastMulticastIps -> "Multicast"
+                    else -> "Zuletzt nicht überprüft"
+                }, color = muted, fontSize = 11.sp)
+                OutlinedTextField(
+                    value = localAlias,
+                    onValueChange = { localAlias = it.take(50) },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("Individueller Name") }
+                )
+                OutlinedButton(
+                    enabled = !controller.busy,
+                    onClick = { controller.setAlias(device, localAlias) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Namen speichern") }
+                Text("Raumzuordnung", color = Color.White, fontWeight = FontWeight.Medium)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    controller.roomNames.forEach { room ->
+                        FilterChip(
+                            selected = controller.roomFor(device) == room,
+                            onClick = { controller.assign(device, room) },
+                            label = { Text(room) },
+                            enabled = controller.canOrganizeLamps
+                        )
+                    }
+                }
+                LampManualPanel(device, controller)
+                if (!device.canFlow) {
+                    Note("Dieses Gerät meldet kein Yeelight start_cf – nicht in Farbfluss einbeziehen.")
+                }
+                TextButton(
+                    onClick = { showRemoveConfirm = true },
+                    enabled = controller.canOrganizeLamps,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Gerät aus dieser App entfernen") }
             }
         }
     }
+    if (showRemoveConfirm) AlertDialog(
+        onDismissRequest = { showRemoveConfirm = false },
+        title = { Text("Gerät entfernen?") },
+        text = { Text(controller.displayName(device) + " bleibt in Yeelight/Google Home erhalten.") },
+        confirmButton = {
+            TextButton(onClick = {
+                controller.forget(device)
+                showRemoveConfirm = false
+            }) { Text("Entfernen") }
+        },
+        dismissButton = {
+            TextButton(onClick = { showRemoveConfirm = false }) { Text("Abbrechen") }
+        }
+    )
 }
-
 
 @Composable
 private fun TargetPowerControls(controller: LoftController) {
@@ -673,8 +794,9 @@ private fun ChasePanel(controller: LoftController) {
             }
             Text("Zielbereich", color = Color.White, fontWeight = FontWeight.SemiBold)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf("Test (1)", "Loft", "Alle").forEach { value ->
-                    FilterChip(selected = choice == value, onClick = { choice = value }, label = { Text(value) })
+                controller.targetOptions().forEach { value ->
+                    FilterChip(selected = choice == value, onClick = { choice = value },
+                        label = { Text(controller.targetLabel(value)) })
                 }
             }
             Text(
@@ -969,5 +1091,5 @@ private fun Note(message: String) {
 
 @Composable
 private fun Footer() {
-    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.1", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
+    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.6", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
 }

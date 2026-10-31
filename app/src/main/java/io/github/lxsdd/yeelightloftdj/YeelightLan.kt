@@ -405,38 +405,27 @@ object YeelightLan {
     }
 
     /**
-     * Blink once and restore the previously read static state.
-     * Refuse unknown ON color modes rather than leave a lamp permanently recolored.
-     * The controller must prevent identification while a scene is active.
+     * Identify RGB and white-only desk lamps with a visible 2.5 second pulse.
+     * Switch to a colour only when we can restore the actual previous mode.
+     * All restoration is attempted even if flashing partially fails.
      */
     fun identify(device: YeelightDevice): LampSnapshot {
         val before = readStatus(device)
-        if (before.isOn && (before.colorMode !in 1..3 || before.restoreCommands().size < 2)) {
-            error("Farbzustand nicht vollständig lesbar; Identifikation abgebrochen")
-        }
-        // A known capability list must permit both the flash and every restore command.
-        // Otherwise even a readable snapshot could leave a lamp in the wrong color.
-        val required = setOf("set_power", "set_rgb", "set_bright") +
-            before.restoreCommands().map { it.method }
-        if (device.methods.isNotEmpty() && !device.methods.containsAll(required)) {
-            error("Gerät unterstützt nicht alle Befehle für eine sichere Identifikation")
-        }
+        val plan = LampIdentification.prepare(before, device.methods)
         var touched = false
         var failure: Exception? = null
         try {
             touched = true
-            manualControl(device, LampCommands.power(true))
-            manualControl(device, LampCommands.rgb(0xAA77FF))
-            manualControl(device, LampCommands.brightness(65))
+            plan.pulse.forEach { manualControl(device, it) }
             Thread.sleep(2500)
         } catch (e: Exception) {
             failure = e
         } finally {
-            if (touched) {
-                // Attempt all restoration steps even if the first one fails.
-                before.restoreCommands().forEach { command ->
-                    try { manualControl(device, command) }
-                    catch (e: Exception) { if (failure == null) failure = e else failure?.addSuppressed(e) }
+            if (touched) plan.restore.forEach { command ->
+                try { manualControl(device, command) }
+                catch (e: Exception) {
+                    if (failure == null) failure = e
+                    else failure?.addSuppressed(e)
                 }
             }
         }

@@ -10,6 +10,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -22,12 +24,36 @@ class LoftController(context: Context) {
     private val app = context.applicationContext
     private val prefs = app.getSharedPreferences("local-room-map", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
+    private var microphone: MicrophoneCapture? = null
+    private var musicSending = false
+    private var musicStopPending = false
+    private var lastMusicCommandAt = Long.MIN_VALUE / 2
+    private var musicDeviceSession = prefs.getBoolean("music-light-session", false)
+    private var musicColorBeat = 0L
+
 
     var devices by mutableStateOf(loadKnown())
         private set
     var assignments by mutableStateOf(devices.associate { it.id to (prefs.getString("room." + it.id, "Nicht zugeordnet") ?: "Nicht zugeordnet") })
         private set
+    var roomNames by mutableStateOf(loadRooms())
+        private set
+    var customSelectedIds by mutableStateOf(loadSelection())
+        private set
     var status by mutableStateOf("Bereit · lokales WLAN")
+        private set
+    var microphoneRunning by mutableStateOf(false)
+        private set
+    var musicFrame by mutableStateOf<MusicFrame?>(null)
+        private set
+    var musicBeatCount by mutableStateOf(0L)
+        private set
+    var musicLightArmed by mutableStateOf(false)
+        private set
+    var musicLightStatus by mutableStateOf(
+        if (musicDeviceSession) "Frühere Musiklicht-Sitzung erkannt · bitte Beleuchtung wiederherstellen"
+        else "Musik-Lichtsteuerung nicht aktiviert"
+    )
         private set
     var busy by mutableStateOf(false)
         private set
@@ -63,6 +89,120 @@ class LoftController(context: Context) {
     var lampSnapshots by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
         private set
 
+
+
+    private fun loadRooms(): List<String> =
+        runCatching {
+            val stored = prefs.getString("room-list", null)
+            if (stored == null) rooms
+            else {
+                val array = JSONArray(stored)
+                (listOf("Nicht zugeordnet") + (0 until array.length())
+                    .map { array.getString(it) }.filter { it != "Nicht zugeordnet" })
+                    .distinct().take(32)
+            }
+        }.getOrDefault(rooms)
+
+    private fun loadSelection(): Set<String> =
+        runCatching {
+            val array = JSONArray(prefs.getString("selected-lamp-ids", "[]") ?: "[]")
+            (0 until array.length()).map { array.getString(it) }.toSet()
+        }.getOrDefault(emptySet())
+
+    private fun persistRoomNames() {
+        check(prefs.edit().putString("room-list", JSONArray(roomNames).toString()).commit()) {
+            "Raumliste konnte nicht gespeichert werden"
+        }
+    }
+
+    fun addRoom(name: String): Boolean {
+        val clean = name.trim()
+        if (busy || runningDeviceIps.isNotEmpty() || clean.isEmpty() || clean.length > 40 ||
+            clean.any { it.isISOControl() } || roomNames.any { it.equals(clean, true) } ||
+            roomNames.size >= 32) {
+            status = "Raumname unzulässig, bereits vorhanden oder Lichtshow aktiv"
+            return false
+        }
+        roomNames = roomNames + clean
+        persistRoomNames()
+        status = "Raum hinzugefügt: " + clean
+        return true
+    }
+
+    fun renameRoom(old: String, fresh: String): Boolean {
+        val clean = fresh.trim()
+        if (busy || runningDeviceIps.isNotEmpty() || old == "Nicht zugeordnet" ||
+            old !in roomNames || clean.isEmpty() || clean.length > 40 ||
+            clean.any { it.isISOControl() } ||
+            roomNames.any { it != old && it.equals(clean, true) }) {
+            status = "Raum konnte nicht umbenannt werden"
+            return false
+        }
+        val editor = prefs.edit()
+        assignments.forEach { (id, room) ->
+            if (room == old) editor.putString("room." + id, clean)
+        }
+        val updated = roomNames.map { if (it == old) clean else it }
+        editor.putString("room-list", JSONArray(updated).toString())
+        check(editor.commit()) { "Raumänderungen konnten nicht gespeichert werden" }
+        assignments = assignments.mapValues { (_, v) -> if (v == old) clean else v }
+        roomNames = updated
+        status = "Raum umbenannt: " + clean
+        return true
+    }
+
+    fun deleteRoom(name: String): Boolean {
+        if (busy || runningDeviceIps.isNotEmpty() || name == "Nicht zugeordnet" ||
+            name !in roomNames) return false
+        val editor = prefs.edit()
+        assignments.forEach { (id, room) ->
+            if (room == name) editor.putString("room." + id, "Nicht zugeordnet")
+        }
+        val updated = roomNames - name
+        editor.putString("room-list", JSONArray(updated).toString())
+        check(editor.commit()) { "Raum konnte nicht entfernt werden" }
+        roomNames = updated
+        assignments = assignments.mapValues { (_, room) ->
+            if (room == name) "Nicht zugeordnet" else room
+        }
+        status = "Raum entfernt; betroffene Lampen sind nicht zugeordnet"
+        return true
+    }
+
+    fun assignMany(ids: Set<String>, room: String): Int {
+        if (busy || runningDeviceIps.isNotEmpty() || room !in roomNames) return 0
+        val eligible = devices.filter { it.id in ids }
+        val editor = prefs.edit()
+        eligible.forEach { editor.putString("room." + it.id, room) }
+        check(editor.commit()) { "Raumzuordnung konnte nicht gespeichert werden" }
+        assignments = assignments + eligible.associate { it.id to room }
+        status = eligible.size.toString() + " Lampen → " + room
+        return eligible.size
+    }
+
+    fun setCustomSelection(id: String, enabled: Boolean) {
+        if (id !in devices.map { it.id }) return
+        val updated = if (enabled) customSelectedIds + id else customSelectedIds - id
+        check(prefs.edit().putString("selected-lamp-ids", JSONArray(updated.toList()).toString()).commit()) {
+            "Auswahl konnte nicht gespeichert werden"
+        }
+        customSelectedIds = updated
+    }
+
+    fun targetOptions(): List<String> =
+        listOf("Test (1)", "Loft", "Alle", "Auswahl") +
+        roomNames.filter { it != "Nicht zugeordnet" }.map { "Raum:$it" } +
+        orderedDevices().map { "Lampe:" + it.id }
+
+    fun targetLabel(value: String): String = when {
+        value.startsWith("Raum:") -> value.removePrefix("Raum:")
+        value.startsWith("Lampe:") -> {
+            devices.firstOrNull { it.id == value.removePrefix("Lampe:") }
+                ?.let(::displayName) ?: "Nicht bekannte Lampe"
+        }
+        value == "Auswahl" -> "Eigene Lampenauswahl"
+        else -> value
+    }
 
     private fun loadSceneArchive(): SceneArchiveData =
         runCatching {
@@ -272,7 +412,9 @@ class LoftController(context: Context) {
         return method + ": " + found.size + " bestätigt · " + devices.size + " insgesamt gespeichert"
     }
 
-    fun chooseTarget(value: String) { if (value in setOf("Test (1)", "Loft", "Alle")) target = value }
+    fun chooseTarget(value: String) {
+        if (value in targetOptions()) target = value
+    }
     fun roomFor(device: YeelightDevice): String = assignments[device.id] ?: "Nicht zugeordnet"
     fun aliasFor(device: YeelightDevice): String =
         (aliases[device.ip] ?: prefs.getString("alias." + device.ip, "")).orEmpty().trim()
@@ -291,7 +433,7 @@ class LoftController(context: Context) {
     }
 
     fun assign(device: YeelightDevice, room: String) {
-        if (room !in rooms) return
+        if (room !in roomNames) return
         assignments = assignments + (device.id to room)
         prefs.edit().putString("room." + device.id, room).apply()
     }
@@ -339,6 +481,16 @@ class LoftController(context: Context) {
                 if (replied.isEmpty()) "Kein eindeutiger Rückschluss möglich (Multicast ist das Standardverfahren)"
                 else "Mindestens eine Lampe beantwortet direktes UDP, aber nicht Multicast"
             directedUdpDiagnostics
+        }
+    }
+
+    fun diagnoseDeskLamp(ip: String) {
+        if (!YeelightLan.isLocalIp(ip.trim())) {
+            status = "Für Mi Desk Lamp 1S bitte die lokale IP aus der FRITZ!Box eintragen"
+            return
+        }
+        task("Prüfe Desk Lamp 1S über Yeelight und Xiaomi MiIO, nur lesend …") {
+            withContext(Dispatchers.IO) { MiDeskLampDiagnostics.diagnostic(ip.trim()) }
         }
     }
 
@@ -442,10 +594,17 @@ class LoftController(context: Context) {
     }
 
     private fun selected() = chooseDevices(target)
-    private fun chooseDevices(choice: String): List<YeelightDevice> = when (choice) {
-        "Test (1)" -> orderedDevices().take(1)
-        "Alle" -> orderedDevices()
-        "Loft" -> orderedDevices().filter { roomFor(it) in loftRooms }
+    private fun chooseDevices(choice: String): List<YeelightDevice> = when {
+        choice == "Test (1)" -> orderedDevices().take(1)
+        choice == "Alle" -> orderedDevices()
+        choice == "Loft" -> orderedDevices().filter { roomFor(it) in loftRooms }
+        choice == "Auswahl" -> orderedDevices().filter { it.id in customSelectedIds }
+        choice.startsWith("Raum:") -> orderedDevices().filter {
+            roomFor(it) == choice.removePrefix("Raum:")
+        }
+        choice.startsWith("Lampe:") -> orderedDevices().filter {
+            it.id == choice.removePrefix("Lampe:")
+        }
         else -> emptyList()
     }
     fun selectedCount() = selected().size
@@ -464,7 +623,7 @@ class LoftController(context: Context) {
         val outcomes = withContext(Dispatchers.IO) {
             chosen.map { device -> async {
                 val issue = runCatching {
-                    YeelightLan.stop(device)
+                    if (!musicDeviceSession) YeelightLan.stop(device)
                     recoveryJournal[device.ip]?.let { snapshot ->
                         SceneRecovery.commands(snapshot).forEach { command ->
                             YeelightLan.manualControl(device, command)
@@ -478,7 +637,13 @@ class LoftController(context: Context) {
         val beforeCount = recoveryJournal.size
         setRunningIps(failed)
         setRecoveryJournal(recoveryJournal.filterKeys { it in failed })
-        if (failed.isEmpty()) activeScene = null
+        if (failed.isEmpty()) {
+            activeScene = null
+            musicDeviceSession = false
+            prefs.edit().putBoolean("music-light-session", false).commit()
+            musicLightArmed = false
+            musicLightStatus = "Musik-Lichtsteuerung nicht aktiviert"
+        }
         val success = chosen.size - failed.size
         val result = "Gestoppt" + (if (beforeCount > 0)
             " und ursprünglicher Zustand wiederhergestellt" else "") +
@@ -561,6 +726,160 @@ class LoftController(context: Context) {
         haltRunning(true)
     }
 
+    /** Only run after Android runtime permission is granted by the Activity. */
+    fun startMicrophone() {
+        if (microphoneRunning) return
+        microphone = MicrophoneCapture()
+        val capture = microphone ?: return
+        microphoneRunning = true
+        musicFrame = null
+        musicBeatCount = 0L
+        musicLightStatus = if (musicLightArmed) "Musik-Lichtsteuerung aktiv"
+            else "Mikrofon läuft nur im Vordergrund · kein Audio wird gespeichert"
+        scope.launch {
+            try {
+                capture.run { frame ->
+                    withContext(Dispatchers.Main.immediate) {
+                        if (microphoneRunning) {
+                            musicFrame = frame
+                            if (frame.beat) {
+                                musicBeatCount++
+                                onMusicBeat(frame)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                if (microphoneRunning) {
+                    status = "Mikrofon-Fehler: " + (e.message ?: e.javaClass.simpleName)
+                }
+            } finally {
+                microphoneRunning = false
+                microphone = null
+                musicFrame = null
+                if (musicLightArmed) disarmMusicLights()
+            }
+        }
+    }
+
+    fun stopMicrophone() {
+        microphoneRunning = false
+        microphone?.stop()
+        musicFrame = null
+        if (musicLightArmed) disarmMusicLights()
+    }
+
+    /**
+     * A second explicit user action arms actual bulbs. Capture every original
+     * state and commit recovery data BEFORE sending a single lighting command.
+     * User-selected Test (1) remains the safe default.
+     */
+    fun armMusicLights() {
+        if (!microphoneRunning || musicLightArmed) return
+        val chosen = selected()
+        if (chosen.isEmpty()) {
+            status = "Erst Lampen suchen und den Musik-Zielbereich wählen"
+            return
+        }
+        task("Lese vorherige Lampenzustände für musikreaktives Licht …") {
+            if (runningDeviceIps.isNotEmpty()) haltRunning(false)
+            val snapshots = withContext(Dispatchers.IO) {
+                chosen.map { device -> async {
+                    val snapshot = YeelightLan.readStatus(device)
+                    require(SceneRecovery.supported(snapshot)) {
+                        "Musiklicht abgebrochen: Farbzustand von " + displayName(device) + " nicht vollständig lesbar"
+                    }
+                    if (device.methods.isNotEmpty()) {
+                        val required = SceneRecovery.commands(snapshot).map { it.method }.toSet() +
+                            setOf("set_power", "set_rgb")
+                        require(device.methods.containsAll(required)) {
+                            "Musiklicht nicht von " + displayName(device) + " unterstützt"
+                        }
+                    }
+                    device.ip to snapshot
+                } }.awaitAll().toMap()
+            }
+            check(microphoneRunning) { "Mikrofon wurde vor der Lichtaktivierung gestoppt" }
+            setRecoveryJournal(snapshots)
+            setRunningIps(chosen.map { it.ip }.toSet())
+            check(prefs.edit().putBoolean("music-light-session", true).commit()) {
+                "Musikmodus konnte nicht sicher gesichert werden"
+            }
+            musicDeviceSession = true
+            activeScene = "music-live"
+            musicLightArmed = true
+            musicColorBeat = 0L
+            lastMusicCommandAt = Long.MIN_VALUE / 2
+            val failed = withContext(Dispatchers.IO) {
+                chosen.map { device -> async {
+                    runCatching { YeelightLan.manualControl(device, LampCommands.power(true)) }
+                        .exceptionOrNull()?.let { device.ip }
+                } }.awaitAll().filterNotNull()
+            }
+            musicLightStatus = chosen.size.toString() +
+                " Lampen gewählt · max. 1 Farbwechsel je 1,5 s / Lampe"
+            if (!microphoneRunning) {
+                val stopResult = haltRunning(false)
+                "Mikrofon beendet; Beleuchtung wiederhergestellt · " + stopResult
+            } else if (failed.isEmpty()) "Musiklicht aktiviert · vorheriger Zustand gesichert"
+            else "Musiklicht aktiviert · " + failed.size + " Lampen nicht einschaltbar; Stoppen zum Zurücksetzen"
+        }
+    }
+
+    private fun onMusicBeat(frame: MusicFrame) {
+        if (!musicLightArmed || busy || musicSending || runningDeviceIps.isEmpty()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!MusicLightPolicy.maySend(frame, lastMusicCommandAt, now)) return
+        val chosen = orderedDevices().filter { it.ip in runningDeviceIps }
+        if (chosen.isEmpty()) return
+        musicSending = true
+        lastMusicCommandAt = now
+        musicColorBeat++
+        val number = musicColorBeat
+        scope.launch {
+            try {
+                val problems = withContext(Dispatchers.IO) {
+                    chosen.mapIndexed { index, device -> async {
+                        runCatching {
+                            YeelightLan.manualControl(
+                                device,
+                                LampCommand("set_rgb", listOf(
+                                    MusicLightPolicy.color(frame, index, number), "smooth", 350
+                                ))
+                            )
+                        }.exceptionOrNull()?.let { device.ip }
+                    } }.awaitAll().filterNotNull()
+                }
+                musicLightStatus = if (problems.isEmpty()) {
+                    chosen.size.toString() + " Lampen · echter Bassimpuls · gedrosselte RGB-Farbwechsel"
+                } else {
+                    (chosen.size - problems.size).toString() + "/" + chosen.size +
+                        " Lampen reagieren · " + problems.size + " Fehler"
+                }
+            } finally {
+                musicSending = false
+            }
+        }
+    }
+
+    fun disarmMusicLights() {
+        if ((!musicLightArmed && !musicDeviceSession) || musicStopPending) return
+        // Stop new beat commands immediately, then await any already in flight
+        // before restoring. Otherwise a late RGB write could undo recovery.
+        musicLightArmed = false
+        musicStopPending = true
+        scope.launch {
+            while (busy || musicSending) delay(50)
+            task("Stoppe Musiklicht und stelle vorherige Beleuchtung wieder her …") {
+                try { haltRunning(false) }
+                finally { musicStopPending = false }
+            }
+        }
+    }
+
+
+
+
     private fun task(initial: String, operation: suspend () -> String) {
         if (busy) return
         busy = true
@@ -571,5 +890,21 @@ class LoftController(context: Context) {
             finally { busy = false }
         }
     }
-    fun close() = scope.cancel()
+    fun close() {
+        microphone?.stop()
+        if (musicDeviceSession) {
+            // Activity may be destroyed immediately after ON_STOP.
+            // Allow a short bounded network cleanup to finish; a power loss
+            // still leaves the durable journal for explicit retry next launch.
+            if (!musicStopPending) disarmMusicLights()
+            scope.launch {
+                withTimeoutOrNull(12_000L) {
+                    while (musicStopPending) delay(50)
+                }
+                scope.cancel()
+            }
+        } else {
+            scope.cancel()
+        }
+    }
 }
