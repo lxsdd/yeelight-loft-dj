@@ -36,6 +36,10 @@ class LoftController(context: Context) {
         private set
     var assignments by mutableStateOf(devices.associate { it.id to (prefs.getString("room." + it.id, "Nicht zugeordnet") ?: "Nicht zugeordnet") })
         private set
+    var roomNames by mutableStateOf(loadRooms())
+        private set
+    var customSelectedIds by mutableStateOf(loadSelection())
+        private set
     var status by mutableStateOf("Bereit · lokales WLAN")
         private set
     var microphoneRunning by mutableStateOf(false)
@@ -85,6 +89,120 @@ class LoftController(context: Context) {
     var lampSnapshots by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
         private set
 
+
+
+    private fun loadRooms(): List<String> =
+        runCatching {
+            val stored = prefs.getString("room-list", null)
+            if (stored == null) rooms
+            else {
+                val array = JSONArray(stored)
+                (listOf("Nicht zugeordnet") + (0 until array.length())
+                    .map { array.getString(it) }.filter { it != "Nicht zugeordnet" })
+                    .distinct().take(32)
+            }
+        }.getOrDefault(rooms)
+
+    private fun loadSelection(): Set<String> =
+        runCatching {
+            val array = JSONArray(prefs.getString("selected-lamp-ids", "[]") ?: "[]")
+            (0 until array.length()).map { array.getString(it) }.toSet()
+        }.getOrDefault(emptySet())
+
+    private fun persistRoomNames() {
+        check(prefs.edit().putString("room-list", JSONArray(roomNames).toString()).commit()) {
+            "Raumliste konnte nicht gespeichert werden"
+        }
+    }
+
+    fun addRoom(name: String): Boolean {
+        val clean = name.trim()
+        if (busy || runningDeviceIps.isNotEmpty() || clean.isEmpty() || clean.length > 40 ||
+            clean.any { it.isISOControl() } || roomNames.any { it.equals(clean, true) } ||
+            roomNames.size >= 32) {
+            status = "Raumname unzulässig, bereits vorhanden oder Lichtshow aktiv"
+            return false
+        }
+        roomNames = roomNames + clean
+        persistRoomNames()
+        status = "Raum hinzugefügt: " + clean
+        return true
+    }
+
+    fun renameRoom(old: String, fresh: String): Boolean {
+        val clean = fresh.trim()
+        if (busy || runningDeviceIps.isNotEmpty() || old == "Nicht zugeordnet" ||
+            old !in roomNames || clean.isEmpty() || clean.length > 40 ||
+            clean.any { it.isISOControl() } ||
+            roomNames.any { it != old && it.equals(clean, true) }) {
+            status = "Raum konnte nicht umbenannt werden"
+            return false
+        }
+        val editor = prefs.edit()
+        assignments.forEach { (id, room) ->
+            if (room == old) editor.putString("room." + id, clean)
+        }
+        val updated = roomNames.map { if (it == old) clean else it }
+        editor.putString("room-list", JSONArray(updated).toString())
+        check(editor.commit()) { "Raumänderungen konnten nicht gespeichert werden" }
+        assignments = assignments.mapValues { (_, v) -> if (v == old) clean else v }
+        roomNames = updated
+        status = "Raum umbenannt: " + clean
+        return true
+    }
+
+    fun deleteRoom(name: String): Boolean {
+        if (busy || runningDeviceIps.isNotEmpty() || name == "Nicht zugeordnet" ||
+            name !in roomNames) return false
+        val editor = prefs.edit()
+        assignments.forEach { (id, room) ->
+            if (room == name) editor.putString("room." + id, "Nicht zugeordnet")
+        }
+        val updated = roomNames - name
+        editor.putString("room-list", JSONArray(updated).toString())
+        check(editor.commit()) { "Raum konnte nicht entfernt werden" }
+        roomNames = updated
+        assignments = assignments.mapValues { (_, room) ->
+            if (room == name) "Nicht zugeordnet" else room
+        }
+        status = "Raum entfernt; betroffene Lampen sind nicht zugeordnet"
+        return true
+    }
+
+    fun assignMany(ids: Set<String>, room: String): Int {
+        if (busy || runningDeviceIps.isNotEmpty() || room !in roomNames) return 0
+        val eligible = devices.filter { it.id in ids }
+        val editor = prefs.edit()
+        eligible.forEach { editor.putString("room." + it.id, room) }
+        check(editor.commit()) { "Raumzuordnung konnte nicht gespeichert werden" }
+        assignments = assignments + eligible.associate { it.id to room }
+        status = eligible.size.toString() + " Lampen → " + room
+        return eligible.size
+    }
+
+    fun setCustomSelection(id: String, enabled: Boolean) {
+        if (id !in devices.map { it.id }) return
+        val updated = if (enabled) customSelectedIds + id else customSelectedIds - id
+        check(prefs.edit().putString("selected-lamp-ids", JSONArray(updated.toList()).toString()).commit()) {
+            "Auswahl konnte nicht gespeichert werden"
+        }
+        customSelectedIds = updated
+    }
+
+    fun targetOptions(): List<String> =
+        listOf("Test (1)", "Loft", "Alle", "Auswahl") +
+        roomNames.filter { it != "Nicht zugeordnet" }.map { "Raum:$it" } +
+        orderedDevices().map { "Lampe:" + it.id }
+
+    fun targetLabel(value: String): String = when {
+        value.startsWith("Raum:") -> value.removePrefix("Raum:")
+        value.startsWith("Lampe:") -> {
+            devices.firstOrNull { it.id == value.removePrefix("Lampe:") }
+                ?.let(::displayName) ?: "Nicht bekannte Lampe"
+        }
+        value == "Auswahl" -> "Eigene Lampenauswahl"
+        else -> value
+    }
 
     private fun loadSceneArchive(): SceneArchiveData =
         runCatching {
@@ -294,7 +412,9 @@ class LoftController(context: Context) {
         return method + ": " + found.size + " bestätigt · " + devices.size + " insgesamt gespeichert"
     }
 
-    fun chooseTarget(value: String) { if (value in setOf("Test (1)", "Loft", "Alle")) target = value }
+    fun chooseTarget(value: String) {
+        if (value in targetOptions()) target = value
+    }
     fun roomFor(device: YeelightDevice): String = assignments[device.id] ?: "Nicht zugeordnet"
     fun aliasFor(device: YeelightDevice): String =
         (aliases[device.ip] ?: prefs.getString("alias." + device.ip, "")).orEmpty().trim()
@@ -313,7 +433,7 @@ class LoftController(context: Context) {
     }
 
     fun assign(device: YeelightDevice, room: String) {
-        if (room !in rooms) return
+        if (room !in roomNames) return
         assignments = assignments + (device.id to room)
         prefs.edit().putString("room." + device.id, room).apply()
     }
@@ -464,10 +584,17 @@ class LoftController(context: Context) {
     }
 
     private fun selected() = chooseDevices(target)
-    private fun chooseDevices(choice: String): List<YeelightDevice> = when (choice) {
-        "Test (1)" -> orderedDevices().take(1)
-        "Alle" -> orderedDevices()
-        "Loft" -> orderedDevices().filter { roomFor(it) in loftRooms }
+    private fun chooseDevices(choice: String): List<YeelightDevice> = when {
+        choice == "Test (1)" -> orderedDevices().take(1)
+        choice == "Alle" -> orderedDevices()
+        choice == "Loft" -> orderedDevices().filter { roomFor(it) in loftRooms }
+        choice == "Auswahl" -> orderedDevices().filter { it.id in customSelectedIds }
+        choice.startsWith("Raum:") -> orderedDevices().filter {
+            roomFor(it) == choice.removePrefix("Raum:")
+        }
+        choice.startsWith("Lampe:") -> orderedDevices().filter {
+            it.id == choice.removePrefix("Lampe:")
+        }
         else -> emptyList()
     }
     fun selectedCount() = selected().size
