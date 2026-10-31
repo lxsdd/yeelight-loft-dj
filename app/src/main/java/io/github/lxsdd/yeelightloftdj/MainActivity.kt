@@ -266,6 +266,16 @@ private fun DeviceTools(controller: LoftController) {
                 Text("Yeelight nutzt SSDP-ähnliches UDP-Multicast (nicht mDNS). Antworten kommen einzeln per Unicast; Direkt-LAN prüft unabhängig davon TCP 55443. Je Suchrunde werden unterschiedliche Lampen gezählt.", color = muted, fontSize = 11.sp)
             }
         }
+        OutlinedButton(
+            onClick = controller::compareDirectedUdp,
+            enabled = !controller.busy && controller.missingMulticastCount() > 0,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("UDP-Gegenprobe für " + controller.missingMulticastCount() + " Nichtantworter") }
+        if (controller.directedUdpDiagnostics.isNotBlank()) {
+            Text(controller.directedUdpDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
+        }
+        Text("Die UDP-Gegenprobe ist experimentell und verändert keine Lampe. Nur positive Antworten sind aussagekräftig; negative Antworten beweisen keinen Defekt.",
+            color = muted, fontSize = 11.sp)
         Text("Gespeicherte Geräte bleiben bei erneuter Suche erhalten. Nicht bestätigte Geräte können inzwischen offline sein.", color = muted, fontSize = 12.sp)
         OutlinedTextField(
             value = ip,
