@@ -45,9 +45,101 @@ class LoftController(context: Context) {
         private set
     var aliases by mutableStateOf<Map<String, String>>(emptyMap())
         private set
+    private val initialSavedScenes = loadSceneArchive()
+    var importedFlows by mutableStateOf(initialSavedScenes.flows)
+        private set
+    var savedChases by mutableStateOf(initialSavedScenes.chases)
+        private set
+    var lampOrder by mutableStateOf(loadLampOrder())
+        private set
+    var runningDeviceIps by mutableStateOf<Set<String>>(emptySet())
+        private set
     // Live status is intentionally session-only; cached values from yesterday are not live data.
     var lampSnapshots by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
         private set
+
+
+    private fun loadSceneArchive(): SceneArchiveData =
+        runCatching {
+            val local = prefs.getString("custom-scene-archive", null)
+            if (local.isNullOrEmpty()) SceneArchiveData(emptyList(), emptyList())
+            else SceneArchive.decode(local)
+        }.getOrDefault(SceneArchiveData(emptyList(), emptyList()))
+
+    private fun persistSceneArchive() {
+        prefs.edit().putString("custom-scene-archive",
+            SceneArchive.encode(SceneArchiveData(importedFlows, savedChases))).apply()
+    }
+
+    private fun loadLampOrder(): List<String> =
+        runCatching {
+            val arr = JSONArray(prefs.getString("lamp-order", "[]") ?: "[]")
+            (0 until arr.length()).map { arr.getString(it) }
+        }.getOrDefault(emptyList())
+
+    fun orderedDevices(): List<YeelightDevice> = devices.sortedWith(
+        compareBy<YeelightDevice> {
+            val index = lampOrder.indexOf(it.id)
+            if (index >= 0) index else Int.MAX_VALUE
+        }.thenBy { it.ip.split(".").lastOrNull()?.toIntOrNull() ?: 0 }.thenBy { it.id }
+    )
+
+    fun moveLamp(device: YeelightDevice, delta: Int) {
+        if (busy || delta !in listOf(-1, 1)) return
+        val ordered = orderedDevices().map { it.id }.toMutableList()
+        val index = ordered.indexOf(device.id)
+        val destination = index + delta
+        if (index < 0 || destination !in ordered.indices) return
+        java.util.Collections.swap(ordered, index, destination)
+        lampOrder = ordered
+        prefs.edit().putString("lamp-order", JSONArray(ordered).toString()).apply()
+        status = "Lauflicht-Reihenfolge aktualisiert"
+    }
+
+    fun allScenes(): List<LoftScene> = SceneLibrary.scenes + importedFlows
+
+    fun exportSceneArchive(): String = SceneArchive.encode(
+        SceneArchiveData(allScenes(), savedChases)
+    )
+
+    fun saveChase(name: String, config: ChaseConfig) {
+        val clean = name.trim()
+        require(clean.isNotEmpty() && clean.length <= 64) { "Bitte einen Szenennamen mit bis zu 64 Zeichen eingeben" }
+        require(savedChases.size + importedFlows.size + SceneLibrary.scenes.size < 64) { "Maximal 64 Szenen" }
+        savedChases = savedChases + ChasePreset("user-" + java.util.UUID.randomUUID(), clean, config)
+        persistSceneArchive()
+        status = "Lichtlauf gespeichert: " + clean
+    }
+
+    fun deleteChase(preset: ChasePreset) {
+        savedChases = savedChases.filterNot { it.id == preset.id }
+        persistSceneArchive()
+        status = "Eigene Szene entfernt: " + preset.name
+    }
+
+    fun importSceneArchive(text: String): String {
+        val incoming = SceneArchive.decode(text)
+        val existingFlows = allScenes()
+        val newFlows = incoming.flows.filterNot { candidate ->
+            existingFlows.any { it.name == candidate.name && it.frames == candidate.frames }
+        }.distinctBy { it.name to it.frames }.map {
+            it.copy(id = "import-" + java.util.UUID.randomUUID())
+        }
+        val newChases = incoming.chases.filterNot { candidate ->
+            savedChases.any { it.name == candidate.name && it.config == candidate.config }
+        }.distinctBy { it.name to it.config }.map {
+            it.copy(id = "import-" + java.util.UUID.randomUUID())
+        }
+        require(existingFlows.size + savedChases.size + newFlows.size + newChases.size <= 64) {
+            "Die Szenensammlung würde 64 Szenen überschreiten"
+        }
+        importedFlows = importedFlows + newFlows
+        savedChases = savedChases + newChases
+        persistSceneArchive()
+        return "${newFlows.size} Farbverläufe und ${newChases.size} Lichtläufe importiert"
+    }
+
+    fun report(message: String) { status = message }
 
     private fun loadKnown(): List<YeelightDevice> = try {
         val array = JSONArray(prefs.getString("known-devices", "[]") ?: "[]")
@@ -82,6 +174,10 @@ class LoftController(context: Context) {
             val previous = prior.firstOrNull { it.id == discovered.id || it.ip == discovered.ip }
             val replacement = merged.firstOrNull { it.id == discovered.id || it.ip == discovered.ip }
             if (previous != null && replacement != null && previous.id != replacement.id) {
+                if (previous.id in lampOrder) {
+                    lampOrder = lampOrder.map { if (it == previous.id) replacement.id else it }.distinct()
+                    prefs.edit().putString("lamp-order", JSONArray(lampOrder).toString()).apply()
+                }
                 val room = updatedRooms[previous.id] ?: prefs.getString("room." + previous.id, null)
                 if (room != null) {
                     updatedRooms[replacement.id] = room
@@ -172,6 +268,8 @@ class LoftController(context: Context) {
         lastMulticastIps = lastMulticastIps - device.ip
         lastDirectIps = lastDirectIps - device.ip
         lampSnapshots = lampSnapshots - device.ip
+        lampOrder = lampOrder - device.id
+        prefs.edit().putString("lamp-order", JSONArray(lampOrder).toString()).apply()
         prefs.edit().remove("room." + device.id).remove("alias." + device.ip).apply()
         saveKnown()
         status = "Gerät aus dieser App entfernt"
@@ -234,45 +332,94 @@ class LoftController(context: Context) {
         }
     }
 
-    private fun selected() = when (target) {
-        "Test (1)" -> devices.take(1)
-        "Alle" -> devices
-        else -> devices.filter { roomFor(it) in loftRooms }
+    private fun selected() = chooseDevices(target)
+    private fun chooseDevices(choice: String): List<YeelightDevice> = when (choice) {
+        "Test (1)" -> orderedDevices().take(1)
+        "Alle" -> orderedDevices()
+        "Loft" -> orderedDevices().filter { roomFor(it) in loftRooms }
+        else -> emptyList()
     }
     fun selectedCount() = selected().size
 
-    fun play(scene: LoftScene) {
-        val selectedDevices = selected()
-        if (selectedDevices.isEmpty()) {
-            status = "Zuerst Geräte suchen und ggf. Räume zuordnen"
+
+    /**
+     * Keep all running bulbs tracked, even if target changes later. Starting a
+     * new scene always stops the old loop first. Each bulb gets one native flow.
+     */
+    private fun startFlow(
+        id: String,
+        name: String,
+        chosen: List<YeelightDevice>,
+        expression: (index: Int, count: Int) -> String,
+    ) {
+        if (chosen.isEmpty()) {
+            status = "Für diese Szene sind keine Lampen ausgewählt"
             return
         }
-        task("Starte " + scene.name + " …") {
-            val errors = withContext(Dispatchers.IO) {
-                selectedDevices.mapIndexed { i, device -> async {
-                    try { YeelightLan.play(device, scene.expression(i)); null }
-                    catch (ex: Exception) { device.ip + ": " + (ex.message ?: "Fehler") }
-                } }.awaitAll().filterNotNull()
+        task("Starte " + name + " auf " + chosen.size + " Lampen …") {
+            val previous = devices.filter { it.ip in runningDeviceIps }
+            if (previous.isNotEmpty()) {
+                val stopFailures = withContext(Dispatchers.IO) {
+                    previous.map { device -> async {
+                        try { YeelightLan.stop(device); null } catch (e: Exception) { device.ip }
+                    } }.awaitAll().filterNotNull()
+                }
+                if (stopFailures.isNotEmpty()) {
+                    runningDeviceIps = stopFailures.toSet()
+                    error("Laufende Szene konnte auf ${stopFailures.size} Lampen nicht beendet werden")
+                }
+                runningDeviceIps = emptySet()
+                activeScene = null
             }
-            activeScene = if (errors.size == selectedDevices.size) null else scene.id
-            if (errors.isEmpty()) scene.name + " läuft auf " + selectedDevices.size + " Geräten"
-            else (selectedDevices.size - errors.size).toString() + "/" + selectedDevices.size + " gestartet · " + errors.first()
+            val results = withContext(Dispatchers.IO) {
+                chosen.mapIndexed { i, device -> async {
+                    try { YeelightLan.play(device, expression(i, chosen.size)); device.ip to null }
+                    catch (ex: Exception) { device.ip to (ex.message ?: "Fehler") }
+                } }.awaitAll()
+            }
+            val successful = results.filter { it.second == null }.map { it.first }.toSet()
+            runningDeviceIps = successful
+            activeScene = if (successful.isNotEmpty()) id else null
+            val errors = results.filter { it.second != null }
+            if (errors.isEmpty()) name + " läuft auf " + successful.size + " Lampen"
+            else successful.size.toString() + "/" + chosen.size + " gestartet · " +
+                errors.first().first + ": " + errors.first().second
+        }
+    }
+
+    fun play(scene: LoftScene) =
+        startFlow(scene.id, scene.name, selected()) { index, _ -> scene.expression(index) }
+
+    fun playChase(config: ChaseConfig, choice: String, name: String = "Lichtlauf") {
+        val chosen = chooseDevices(choice)
+        if (chosen.size > 24) {
+            status = "Der Lichtlauf unterstützt derzeit bis zu 24 Lampen"
+            return
+        }
+        startFlow("chase", name, chosen) { index, count ->
+            ChaseCompiler.expression(config, index, count)
         }
     }
 
     fun stop() {
-        val selectedDevices = selected()
-        if (selectedDevices.isEmpty()) return
-        task("Stoppe Farbverläufe …") {
-            val failures = withContext(Dispatchers.IO) {
-                selectedDevices.map { device -> async {
-                    try { YeelightLan.stop(device); false }
-                    catch (_: Exception) { true }
-                } }.awaitAll().count { it }
-            }
+        val selectedDevices = devices.filter { it.ip in runningDeviceIps }
+        if (selectedDevices.isEmpty()) {
             activeScene = null
-            if (failures == 0) "Farbverläufe gestoppt"
-            else "Stopp erreicht " + (selectedDevices.size - failures) + "/" + selectedDevices.size + " Geräte"
+            status = "Keine gestartete Lichtshow bekannt"
+            return
+        }
+        task("Stoppe Farbverläufe auf " + selectedDevices.size + " Lampen …") {
+            val failed = withContext(Dispatchers.IO) {
+                selectedDevices.map { device -> async {
+                    try { YeelightLan.stop(device); null }
+                    catch (ex: Exception) { device.ip }
+                } }.awaitAll().filterNotNull().toSet()
+            }
+            runningDeviceIps = failed
+            if (failed.isEmpty()) activeScene = null
+            if (failed.isEmpty()) "Alle Farbverläufe gestoppt"
+            else "Stopp erreicht " + (selectedDevices.size - failed.size) + "/" +
+                selectedDevices.size + " · " + failed.size + " nicht bestätigt"
         }
     }
 
