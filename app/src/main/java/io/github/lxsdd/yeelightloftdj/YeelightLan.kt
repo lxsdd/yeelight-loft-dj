@@ -303,15 +303,21 @@ object YeelightLan {
             socket.soTimeout = 1800
             socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
             socket.getOutputStream().flush()
-            val line = socket.getInputStream().bufferedReader().readLine()
-                ?: error("Keine Antwort auf $method")
-            val answer = JSONObject(line)
-            if (answer.optInt("id", -1) != id) error("Ungültige Geräteantwort auf $method")
-            if (answer.has("error")) {
-                throw RejectedCommand("$method abgelehnt: " +
-                    answer.getJSONObject("error").optString("message", "Yeelight-Fehler"))
+            val reader = socket.getInputStream().bufferedReader()
+            var answer: JSONObject? = null
+            repeat(12) {
+                if (answer == null) {
+                    val line = reader.readLine() ?: error("Keine Antwort auf $method")
+                    val candidate = JSONObject(line)
+                    if (candidate.optInt("id", -1) == id) answer = candidate
+                }
             }
-            check(answer.optJSONArray("result")?.optString(0) == "ok") {
+            val reply = answer ?: error("Keine passende Geräteantwort auf $method")
+            if (reply.has("error")) {
+                throw RejectedCommand("$method abgelehnt: " +
+                    reply.getJSONObject("error").optString("message", "Yeelight-Fehler"))
+            }
+            check(reply.optJSONArray("result")?.optString(0) == "ok") {
                 "Keine OK-Bestätigung für $method"
             }
         }
