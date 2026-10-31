@@ -288,10 +288,13 @@ object YeelightLan {
     fun isSpecificModel(model: String): Boolean =
         model.isNotBlank() && model != "unknown" && model != "Yeelight" && model != "Yeelight (LAN)"
 
-    /** Each JSON command ends in CRLF. We check explicit device errors. */
+    private class RejectedCommand(message: String) : IllegalStateException(message)
+
+    /** Each command is CRLF-delimited and must return the matching explicit OK. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
-        require(method in setOf("set_power", "start_cf", "stop_cf", "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
+        require(method in setOf("set_power", "start_cf", "stop_cf", "set_scene",
+            "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
         val id = seq.getAndIncrement()
         val payload = JSONObject().put("id", id).put("method", method)
             .put("params", JSONArray(params)).toString() + "\r\n"
@@ -301,13 +304,53 @@ object YeelightLan {
             socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
             socket.getOutputStream().flush()
             val line = socket.getInputStream().bufferedReader().readLine()
-                ?: error("Keine Antwort des Geräts")
-            val result = JSONObject(line)
-            if (result.has("error")) error(result.getJSONObject("error").optString("message", "Yeelight-Fehler"))
-            if (result.optInt("id", -1) != id) error("Ungültige Geräteantwort")
+                ?: error("Keine Antwort auf $method")
+            val answer = JSONObject(line)
+            if (answer.optInt("id", -1) != id) error("Ungültige Geräteantwort auf $method")
+            if (answer.has("error")) {
+                throw RejectedCommand("$method abgelehnt: " +
+                    answer.getJSONObject("error").optString("message", "Yeelight-Fehler"))
+            }
+            check(answer.optJSONArray("result")?.optString(0) == "ok") {
+                "Keine OK-Bestätigung für $method"
+            }
         }
     }
 
+    internal fun flowStateFromValue(raw: String?): Boolean? = when (raw) {
+        "1" -> true
+        "0" -> false
+        else -> null
+    }
+
+    /**
+     * Report the actual firmware 'flowing' property. Never treat a command OK
+     * as evidence that the animation is still active.
+     */
+    fun readFlowing(device: YeelightDevice): Boolean? {
+        require(isLocalIp(device.ip))
+        val requestId = seq.getAndIncrement()
+        val payload = JSONObject().put("id", requestId).put("method", "get_prop")
+            .put("params", JSONArray(listOf("flowing"))).toString() + "\r\n"
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
+            socket.soTimeout = 1800
+            socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
+            socket.getOutputStream().flush()
+            val line = socket.getInputStream().bufferedReader().readLine()
+                ?: error("Keine Antwort auf flowing-Abfrage")
+            val answer = JSONObject(line)
+            if (answer.optInt("id", -1) != requestId) error("Falsche flowing-Antwort")
+            if (answer.has("error")) {
+                error("flowing-Abfrage: " +
+                    answer.getJSONObject("error").optString("message", "Gerätefehler"))
+            }
+            return flowStateFromValue(answer.optJSONArray("result")?.optString(0))
+        }
+    }
+
+    internal fun preferAtomicFlowStart(methods: Set<String>): Boolean =
+        methods.isEmpty() || "set_scene" in methods
 
     /** One status read over a fresh TCP connection; no fabricated device states. */
     fun readStatus(device: YeelightDevice): LampSnapshot {
@@ -381,11 +424,52 @@ object YeelightLan {
         return before
     }
 
+    /**
+     * Prefer the protocol's atomic set_scene("cf") command: it can start a
+     * color flow even when the bulb was off. This avoids the power-on race.
+     * For known older devices without set_scene, use a settled power-on.
+     */
     fun play(device: YeelightDevice, expression: String) {
         require(device.canFlow) { "start_cf wird von diesem Gerät nicht gemeldet" }
-        send(device, "set_power", listOf("on", "smooth", 300))
-        send(device, "start_cf", listOf(0, 1, expression))
+        fun legacyStart() {
+            send(device, "set_power", listOf("on", "smooth", 300))
+            Thread.sleep(350) // start_cf is only accepted after the bulb is ON
+            send(device, "start_cf", listOf(0, 1, expression))
+        }
+        if (preferAtomicFlowStart(device.methods)) {
+            try {
+                send(device, "set_scene", listOf("cf", 0, 1, expression))
+            } catch (rejection: RejectedCommand) {
+                // TCP-only discovery has no capability list. Only a definite
+                // command rejection permits a fallback; never retry timeouts
+                // as the bulb might already be running the requested scene.
+                if (device.methods.isNotEmpty()) throw rejection
+                legacyStart()
+            }
+        } else {
+            legacyStart()
+        }
+        Thread.sleep(150)
+        check(readFlowing(device) == true) {
+            "Animation nicht bestätigt (flowing ist nicht 1); " +
+                "Lampe bitte einzeln prüfen und gegebenenfalls stoppen"
+        }
     }
 
-    fun stop(device: YeelightDevice) = send(device, "stop_cf", emptyList())
+    fun stop(device: YeelightDevice) {
+        try {
+            send(device, "stop_cf", emptyList())
+        } catch (failure: Exception) {
+            // A no-longer-running flow is already safely stopped. Only clear
+            // the persisted stop marker when the bulb confirms flowing=0.
+            val flowing = runCatching { readFlowing(device) }.getOrNull()
+            if (flowing != false) {
+                throw IllegalStateException(
+                    "stop_cf fehlgeschlagen (flowing=" +
+                        (flowing?.toString() ?: "unbekannt") + "): " +
+                        (failure.message ?: failure.javaClass.simpleName), failure
+                )
+            }
+        }
+    }
 }
