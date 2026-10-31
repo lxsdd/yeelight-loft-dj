@@ -1,0 +1,73 @@
+name: Android CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      # Pull-request builds are untrusted and never receive signing credentials.
+      # Only main and explicit workflow_dispatch builds produce installable APKs.
+      - name: Configure stable signing (trusted builds only)
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        env:
+          STORE_B64: ${{ secrets.YEELIGHT_SIGNING_STORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.YEELIGHT_SIGNING_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -z "$STORE_B64" || -z "$STORE_PASSWORD" ]]; then
+            echo "::error::Missing stable signing secrets. Follow docs/SIGNING.md"
+            exit 1
+          fi
+          echo "::add-mask::$STORE_PASSWORD"
+          printf '%s' "$STORE_B64" | base64 --decode > "$RUNNER_TEMP/loft-dj.p12"
+          chmod 600 "$RUNNER_TEMP/loft-dj.p12"
+          keytool -list -storetype PKCS12 -keystore "$RUNNER_TEMP/loft-dj.p12" -alias loft-dj-app -storepass "$STORE_PASSWORD" >/dev/null
+          echo "YEELIGHT_SIGNING_STORE=$RUNNER_TEMP/loft-dj.p12" >> "$GITHUB_ENV"
+          echo "YEELIGHT_SIGNING_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+      - name: Unit tests and debug build
+        run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+      - name: Verify permanent APK signing certificate
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$apk"
+          sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+          signer="$(find "$sdk_dir/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
+          if [[ -z "$signer" ]]; then
+            echo "::error::Android apksigner not found"
+            exit 1
+          fi
+          "$signer" verify --verbose "$apk"
+          observed="$("$signer" verify --print-certs "$apk" | sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
+          expected="dc5fce6c385279a97e35f74d0b659a95ff960cc7d6be912cba3016bcfbb7dbca"
+          if [[ "$observed" != "$expected" ]]; then
+            echo "::error::Unexpected APK signing certificate; artifact blocked"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ success() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        with:
+          name: yeelight-loft-dj-stable-signed
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error
