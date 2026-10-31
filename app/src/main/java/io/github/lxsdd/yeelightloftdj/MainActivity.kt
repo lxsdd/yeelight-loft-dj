@@ -233,7 +233,7 @@ private fun TargetSelector(controller: LoftController) {
 @Composable
 private fun StopButton(controller: LoftController) {
     OutlinedButton(
-        enabled = !controller.busy && controller.runningDeviceIps.isNotEmpty(),
+        enabled = !controller.busy && (controller.runningDeviceIps.isNotEmpty() || controller.selectedCount() > 0),
         onClick = controller::stop,
         modifier = Modifier.fillMaxWidth()
     ) {
