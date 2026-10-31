@@ -84,3 +84,33 @@ gleichwertiges Unterscheidungsmerkmal und wird nicht gestrichen.
 
 **Hardware-Abnahme:** Erfolgreicher Farbverlaufs-Test einer echten Birne im
 Modus "Test (1)" ist bestätigt. Mehrlampen- und Langzeittest noch offen.
+
+### Nichtlinearer Wohnungsgrundriss und räumliche Lichtwege (verbindliche Präzisierung)
+
+Die Räume verlaufen **nicht** durchgehend linear hintereinander. Teilweise liegen sie
+nebeneinander, sind durch Wände getrennt und über Flure oder Türöffnungen
+verbunden. Die exemplarische Reihenfolge Wohnzimmer → Esszimmer → Hobbyraum
+ist **kein** geometrisches Abbild des tatsächlichen Grundrisses.
+
+- **Grundriss als editierbare 2D-Zeichenfläche**, auf Wunsch mit einem importierten
+  Foto, Bild oder PDF-Grundriss als Hintergrund. Zeichnen von Raumkonturen,
+  Wänden, Türen/Durchgängen und optional Möbeln/Zonen.
+- Jede Lampe besitzt **x/y-Koordinaten innerhalb eines Raums** und optional eine
+  **z-Höhe** (wichtig für unterschiedlich hoch montierte Esstisch-Lampen).
+- Ein **Verbindungsgraph** legt benachbarte Räume, Türen und Durchgänge fest,
+  damit Lichtwellen nicht unrealistisch durch geschlossene Wände springen.
+- **Drei unabhängig einstellbare Effektlogiken:**
+  1. Freie manuell definierte Lampenreihenfolge für Lauflichter.
+  2. Geometrische Wellenfront nach realer Distanz zu einem Startpunkt;
+     optionale Wände als Abschirmung.
+  3. Raum- und durchgangsbasierter Weg entlang des Verbindungsgraphen
+     für natürliche Übergänge um Ecken und durch Türen.
+- Gruppen und Effektpfade können unabhängig von der Raumzuordnung
+  zusammengestellt und gespeichert werden.
+- Grundrisseditor mit Drag-and-drop, Zoom/Pan, Snap und
+  Einzel-Lampen-Identifikation per Testsignal. Automatische
+  Lampenlokalisierung ohne zusätzliche Positionssensorik nicht behaupten:
+  assistiertes Einmessen statt vorgetäuschter Präzision.
+- Alles lokal speichern, exportieren und wieder importieren. Private
+  Grundrisse, räumliche Koordinaten und Netzwerk-IPs nicht ins
+  öffentliche GitHub-Repository hochladen.
