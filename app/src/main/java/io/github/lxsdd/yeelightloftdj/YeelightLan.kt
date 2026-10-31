@@ -288,6 +288,9 @@ object YeelightLan {
     fun isSpecificModel(model: String): Boolean =
         model.isNotBlank() && model != "unknown" && model != "Yeelight" && model != "Yeelight (LAN)"
 
+    internal fun matchesReplyId(response: JSONObject, id: Int): Boolean =
+        response.has("id") && response.optInt("id", -1) == id
+
     private class RejectedCommand(message: String) : IllegalStateException(message)
 
     /** Each command is CRLF-delimited and must return the matching explicit OK. */
@@ -309,7 +312,7 @@ object YeelightLan {
                 if (answer == null) {
                     val line = reader.readLine() ?: error("Keine Antwort auf $method")
                     val candidate = JSONObject(line)
-                    if (candidate.optInt("id", -1) == id) answer = candidate
+                    if (matchesReplyId(candidate, id)) answer = candidate
                 }
             }
             val reply = answer ?: error("Keine passende Geräteantwort auf $method")
@@ -349,7 +352,7 @@ object YeelightLan {
                 if (answer == null) {
                     val candidate = JSONObject(reader.readLine()
                         ?: error("Keine Antwort auf flowing-Abfrage"))
-                    if (candidate.optInt("id", -1) == requestId) answer = candidate
+                    if (matchesReplyId(candidate, requestId)) answer = candidate
                 }
             }
             val response = answer ?: error("Keine passende flowing-Antwort")
@@ -381,7 +384,7 @@ object YeelightLan {
             repeat(12) {
                 if (answer == null) {
                     val candidate = JSONObject(reader.readLine() ?: error("Keine Statusantwort"))
-                    if (candidate.optInt("id", -1) == requestId) answer = candidate
+                    if (matchesReplyId(candidate, requestId)) answer = candidate
                 }
             }
             val response = answer ?: error("Keine passende Statusantwort")
