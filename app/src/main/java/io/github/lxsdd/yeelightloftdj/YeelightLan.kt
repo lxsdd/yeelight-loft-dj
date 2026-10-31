@@ -23,6 +23,7 @@ data class YeelightDevice(
     val port: Int = 55443,
     val model: String = "unknown",
     val methods: Set<String> = emptySet(),
+    val lanName: String = "",
 ) {
     val canFlow: Boolean get() = methods.isEmpty() || "start_cf" in methods
 }
@@ -65,7 +66,8 @@ object YeelightLan {
             ip = address,
             port = port,
             model = headers["model"] ?: "unknown",
-            methods = headers["support"]?.split(Regex("\\s+"))?.toSet() ?: emptySet()
+            methods = headers["support"]?.split(Regex("\\s+"))?.filter { it.isNotBlank() }?.toSet() ?: emptySet(),
+            lanName = headers["name"]?.trim().orEmpty()
         )
     }
 
@@ -137,20 +139,33 @@ object YeelightLan {
      */
     fun probe(ip: String): YeelightDevice? {
         if (!isLocalIp(ip)) return null
-        return try {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(ip, 55443), 280)
-                socket.soTimeout = 500
-                val payload = """{"id":9341,"method":"get_prop","params":["power"]}""" + "\r\n"
-                socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
-                socket.getOutputStream().flush()
-                val line = socket.getInputStream().bufferedReader().readLine() ?: return null
-                val obj = JSONObject(line)
-                val values = obj.optJSONArray("result") ?: return null
-                if (obj.optInt("id", -1) != 9341 || values.length() != 1) return null
-                YeelightDevice(id = "ip-" + ip, ip = ip, model = "Yeelight (LAN)")
-            }
-        } catch (_: Exception) { null }
+        // Older Yeelight firmwares may reject "name". In that case retry
+        // with the established power-only probe, rather than lose the bulb.
+        for (properties in listOf(listOf("power", "name"), listOf("power"))) {
+            val result = try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(ip, 55443), 280)
+                    socket.soTimeout = 500
+                    val payload = JSONObject()
+                        .put("id", 9341)
+                        .put("method", "get_prop")
+                        .put("params", JSONArray(properties))
+                        .toString() + "\r\n"
+                    socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
+                    socket.getOutputStream().flush()
+                    val line = socket.getInputStream().bufferedReader().readLine()
+                        ?: return@use null
+                    val obj = JSONObject(line)
+                    val values = obj.optJSONArray("result") ?: return@use null
+                    if (obj.optInt("id", -1) != 9341 || values.length() < 1) return@use null
+                    val lanName = if (properties.size == 2) values.optString(1).trim() else ""
+                    YeelightDevice(id = "ip-" + ip, ip = ip,
+                        model = "unknown", lanName = lanName)
+                }
+            } catch (_: Exception) { null }
+            if (result != null) return result
+        }
+        return null
     }
 
     /**
@@ -169,19 +184,35 @@ object YeelightLan {
         }
     }
 
-    /** Merge scans by both device-id and IP; keep known devices when UDP misses replies. */
+    /** A direct TCP probe cannot report the bulb's model; preserve earlier SSDP metadata. */
     fun mergeDevices(previous: List<YeelightDevice>, incoming: List<YeelightDevice>): List<YeelightDevice> {
         val merged = previous.toMutableList()
-        incoming.forEach { device ->
-            val known = merged.firstOrNull { it.id == device.id || it.ip == device.ip }
-            merged.removeAll { it.id == device.id || it.ip == device.ip }
-            val resolved = if (known != null && device.id.startsWith("ip-") && !known.id.startsWith("ip-"))
-                device.copy(id = known.id, model = known.model, methods = known.methods)
-            else device
-            merged.add(resolved)
+        incoming.forEach { candidate ->
+            val known = merged.firstOrNull { it.id == candidate.id || it.ip == candidate.ip }
+            merged.removeAll { it.id == candidate.id || it.ip == candidate.ip }
+            val oldModel = known?.model.orEmpty()
+            val newModel = candidate.model
+            val chosenModel = when {
+                isSpecificModel(newModel) -> newModel
+                isSpecificModel(oldModel) -> oldModel
+                else -> "unknown"
+            }
+            val chosenId = when {
+                candidate.id.startsWith("ip-") && known != null && !known.id.startsWith("ip-") -> known.id
+                candidate.id.startsWith("manual-") && known != null -> known.id
+                else -> candidate.id
+            }
+            val chosenName = candidate.lanName.ifBlank { known?.lanName.orEmpty() }
+            val chosenMethods = candidate.methods.ifEmpty { known?.methods ?: emptySet() }
+            merged.add(candidate.copy(
+                id = chosenId, model = chosenModel, lanName = chosenName, methods = chosenMethods,
+            ))
         }
         return merged.sortedWith(compareBy({ it.model }, { it.ip }))
     }
+
+    fun isSpecificModel(model: String): Boolean =
+        model.isNotBlank() && model != "unknown" && model != "Yeelight" && model != "Yeelight (LAN)"
 
     /** Each JSON command ends in CRLF. We check explicit device errors. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {

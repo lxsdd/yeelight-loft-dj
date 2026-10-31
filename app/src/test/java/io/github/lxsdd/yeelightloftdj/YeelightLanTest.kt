@@ -70,4 +70,42 @@ class YeelightLanTest {
         assertFalse("192.168.179.1" in ips)
         assertEquals(emptyList<String>(), YeelightLan.subnetCandidates("8.8.8.8"))
     }
+    @Test fun discoveryReadsLocalNameButNotCloudAlias() {
+        val device = YeelightLan.parseAnnouncement(response + "\nname: Billard links\n")
+        assertNotNull(device)
+        assertEquals("Billard links", device!!.lanName)
+        assertEquals("color4", device.model)
+    }
+
+    @Test fun deepScanPreservesKnownModelAndLocalName() {
+        val ssdp = YeelightDevice("0x33", "192.168.178.60", model = "stripe",
+            methods = setOf("start_cf", "get_prop"), lanName = "Lichtstreifen")
+        val tcp = YeelightDevice("ip-192.168.178.60", "192.168.178.60",
+            model = "unknown", lanName = "")
+        val merged = YeelightLan.mergeDevices(listOf(ssdp), listOf(tcp))
+        assertEquals(1, merged.size)
+        assertEquals("0x33", merged.single().id)
+        assertEquals("stripe", merged.single().model)
+        assertEquals("Lichtstreifen", merged.single().lanName)
+        assertTrue(merged.single().canFlow)
+    }
+
+    @Test fun multicastUpgradesPreviouslyUnknownTcpDevice() {
+        val tcp = YeelightDevice("ip-192.168.178.61", "192.168.178.61", model = "unknown",
+            lanName = "Lampe lokal")
+        val udp = YeelightDevice("0x34", "192.168.178.61", model = "color4",
+            methods = setOf("start_cf"))
+        val merged = YeelightLan.mergeDevices(listOf(tcp), listOf(udp))
+        assertEquals(1, merged.size)
+        assertEquals("0x34", merged.single().id)
+        assertEquals("color4", merged.single().model)
+        assertEquals("Lampe lokal", merged.single().lanName)
+    }
+
+    @Test fun fallbackIsNotAProductModel() {
+        assertFalse(YeelightLan.isSpecificModel("Yeelight (LAN)"))
+        assertFalse(YeelightLan.isSpecificModel("unknown"))
+        assertTrue(YeelightLan.isSpecificModel("color4"))
+        assertTrue(YeelightLan.isSpecificModel("stripe"))
+    }
 }

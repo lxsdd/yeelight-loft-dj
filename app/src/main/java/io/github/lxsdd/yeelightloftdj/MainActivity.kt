@@ -240,12 +240,12 @@ private fun DeviceTools(controller: LoftController) {
         Button(onClick = controller::discover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Rounded.Search, null)
             Spacer(Modifier.width(7.dp))
-            Text("Geräte im WLAN suchen")
+            Text("Alle Lampen suchen")
         }
         OutlinedButton(onClick = controller::deepDiscover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Text("Intensivsuche im WLAN")
         }
-        Text("Sucht zusätzlich gezielt im lokalen WLAN nach Yeelights. Die Abfrage liest nur den Geräte-Status und verändert kein Licht.", color = muted, fontSize = 12.sp)
+        Text("Die Hauptsuche kombiniert Geräteankündigungen und direkte LAN-Prüfung. Die Intensivsuche ist als gezielter Wiederholungstest verfügbar.", color = muted, fontSize = 12.sp)
         Text("Gespeicherte Geräte bleiben bei erneuter Suche erhalten. Nicht bestätigte Geräte können inzwischen offline sein.", color = muted, fontSize = 12.sp)
         OutlinedTextField(
             value = ip,
@@ -262,15 +262,28 @@ private fun DeviceTools(controller: LoftController) {
 
 @Composable
 private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
+    var localAlias by remember(device.id) { mutableStateOf(controller.aliasFor(device)) }
     Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Lightbulb, null, tint = lavender)
                 Spacer(Modifier.width(9.dp))
                 Column {
-                    Text(device.model, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(controller.displayName(device), fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(if (YeelightLan.isSpecificModel(device.model)) "Modell: " + device.model
+                        else "Modell über LAN nicht ermittelbar", color = muted, fontSize = 12.sp)
                     Text(device.ip + ":" + device.port, fontSize = 12.sp, color = muted)
                 }
+            }
+            OutlinedTextField(
+                value = localAlias, onValueChange = { localAlias = it.take(50) },
+                label = { Text("Eigener Anzeigename (nur in dieser App)") },
+                placeholder = { Text("z. B. Billardtisch links") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            TextButton(onClick = { controller.setAlias(device, localAlias) }) {
+                Text("Anzeigenamen speichern")
             }
             Text(if (device.ip in controller.lastSeenIps) "Bei letzter Suche bestätigt" else "Gespeichert · aktuell nicht überprüft",
                 color = if (device.ip in controller.lastSeenIps) Color(0xFF80D9C6) else muted, fontSize = 12.sp)
@@ -299,5 +312,5 @@ private fun Note(message: String) {
 
 @Composable
 private fun Footer() {
-    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.0", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
+    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.1", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
 }
