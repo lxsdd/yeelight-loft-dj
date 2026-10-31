@@ -1,4 +1,4 @@
-# Lichtlauf-Studio, Szenen-Import/Export und Sortiermodus (Android v0.1.4)
+# Lichtlauf-Studio, Szenen-Import/Export und Sortiermodus (Android v0.1.5)
 
 ## Ziel und Abnahme
 
@@ -64,35 +64,43 @@ importierte Farbverläufe und vom Nutzer **gespeicherte** Lichtläufe.
 - **Nicht enthalten:** private IP-Adressen, Yeelight-ID, Räume,
   Grundrisse, Standortkoordinaten, Anmelde- oder Signierschlüssel.
 
-## Lauflicht-Reihenfolge: Visuelle Zuordnung im Gerätetab
+## Lauflicht-Reihenfolge: Modernes Drag-and-drop (v0.1.5)
 
-1. Unter **Geräte** oben **Lauflicht sortieren** öffnen. Die Geräte erscheinen
-   als kompakte, nummerierte Karten mit lokalem Anzeigenamen.
-2. Je Lampe auf **Identifizieren** tippen: ein kurzer violetter Impuls wird
-   nach vorheriger Statusabfrage ausgeführt und der ursprüngliche Zustand
-   anschließend wiederhergestellt. Unsicher lesbare Zustände führen zu einem
-   Fehler statt zu unkontrolliertem Schalten.
-3. Erkanntes Leuchtmittel mit **Als Nr. N** zur nächsten Wegposition zuweisen;
-   der Assistent springt zu Platz N+1. Jede Lampe kann pro Durchgang nur
-   einmal zugewiesen werden. Die Reihenfolge wird nach jedem Schritt
-   dauerhaft im lokalen App-Speicher gesichert.
-4. Für Korrekturen ohne Assistent stehen direkt **unter jeder Gerätekarte**
-   Identifizieren und ↑/↓ zur Verfügung. **Zuordnung neu beginnen** beginnt
-   eine neue Folge, ohne bereits gespeicherte Platzierungen zurückzusetzen.
-5. Identifizieren und Umsortieren sind während aktiver oder noch als aktiv
-   erfasster Lichtshows gesperrt. Zuerst zuverlässig stoppen.
+1. **Geräte → Lichtweg anordnen** öffnet eine kompakte, nummernfreie Liste.
+   Jedes Gerät hat einen farbigen **Drag-Griff** und eine **Identifizieren**-
+   Aktion (Glühbirnensymbol). Ein Gerät ist nicht auf IP-Endziffern als
+   Bediennamen angewiesen: bestehende Anzeigenamen bleiben sichtbar.
+2. Den Griff berühren und die Lampe per Drag-and-drop unmittelbar im
+   Lichtweg verschieben. Die Karten bewegen sich mit Animation,
+   bei Bedarf scrollt die Liste automatisch am Rand.
+3. Erst **beim Loslassen** wird die neue vollständige Reihenfolge mit
+   allen IDs in den lokalen App-Einstellungen dauerhaft gespeichert;
+   die gespeicherte Reihenfolge steuert auch die Lichtlauf-Sequenz.
+4. Die **Identifikation leuchtet 2,5 Sekunden** in Violett und stellt danach
+   den vorher gelesenen Ein-/Aus-Zustand, Farbmodus und die Helligkeit
+   wieder her. Bei unvollständigem Status wird nicht blind geschaltet.
+5. Bei aktiver bzw. noch gespeicherter Lichtshow ist Sortieren und
+   Identifizieren gesperrt. Die Reihenfolge kann für TalkBack auch mit
+   den Aktionen **Im Lichtweg nach oben/unten** geändert werden.
+6. Der Netzwerkstatus wird unabhängig davon angezeigt. Yeelight liefert
+   gelegentlich asynchrone Statusmeldungen auf einer TCP-Verbindung:
+   `set_power`, `get_prop` und `stop_cf` müssen die Antwort-ID abgleichen;
+   ein fremder `props`-Datensatz gilt nicht als Fehler/Erfolg.
 
-Die Sortierung ist eine räumliche Zuordnung und **kein Nachweis**, dass
-native Lampen-Animationen laufen oder exakt synchron starten. Ein weiterhin
-statischer Farbwechsel muss separat am Gerät diagnostiziert werden.
+Das Drag-and-drop verwendet die quelloffene Apache-2.0-Bibliothek
+`sh.calvin.reorderable:reorderable:3.1.0` und behält die bewährte
+lokale Speicherung ohne Server/Cloud. Keine automatische Lampenschaltung
+durch die Sortierung. Die physische Show-Synchronität bleibt separat
+hardwareseitig zu prüfen.
 
 ## Testplan am echten Loft
 
 1. Zunächst Szene `Test (1)` starten, Schweif und Stoppen prüfen.
-2. Unter Geräte den Sortiermodus starten, zwei Lampen identifizieren, per
-   **Als Nr. 1/2** zuordnen und danach mit ↑/↓ feinjustieren. Die App neu
-   öffnen und die persistierte Reihenfolge kontrollieren.
-   Erneut starten und Richtung kontrollieren.
+2. Unter Geräte den Lichtweg öffnen, zwei Lampen per längerem
+   Identifikationsimpuls erkennen und per Ziehen vertauschen. Die App
+   neu öffnen und die persistierte Reihenfolge kontrollieren. Bei
+   TalkBack alternativ die zugänglichen Verschiebeaktionen prüfen.
+   Danach Richtung und Synchronität des Lichtlaufs kontrollieren.
 3. Mit `Alle` den 15-Lampen-Lauf auf längerer Tempoeinstellung auslösen;
    auf fehlende Leuchten, ungeplante Blitze und Startversatz achten.
 4. Regenbogenschweif → Sternschnuppe → Pingpong → Farbwelle prüfen,
