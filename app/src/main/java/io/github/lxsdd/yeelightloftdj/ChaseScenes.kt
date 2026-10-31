@@ -47,7 +47,14 @@ object ChaseCompiler {
         val cycle = if (positions.size < 2) listOf(0, 0) else positions
         val length = config.tailLength.coerceAtMost(lampCount)
         return cycle.mapIndexed { step, head ->
-            val travel = if (config.direction == ChaseDirection.FORWARD) {
+            // In bounce mode the tail follows the current travel direction,
+            // not the initial one. Otherwise it would jump in front on return.
+            val forwardNow = when {
+                !config.bounce || lampCount < 3 -> config.direction == ChaseDirection.FORWARD
+                step == 0 -> config.direction == ChaseDirection.FORWARD
+                else -> head > cycle[step - 1]
+            }
+            val travel = if (forwardNow) {
                 (head - lampIndex + lampCount) % lampCount
             } else {
                 (lampIndex - head + lampCount) % lampCount
