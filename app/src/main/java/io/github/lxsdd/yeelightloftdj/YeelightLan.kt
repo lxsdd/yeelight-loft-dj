@@ -137,6 +137,46 @@ object YeelightLan {
         return found.values.sortedWith(compareBy({ it.model }, { it.ip }))
     }
 
+
+    /**
+     * Explicit, read-only experiment: send the Yeelight search payload as
+     * directed UDP to already confirmed local TCP bulbs. Some firmwares ignore
+     * unicast search by design: a positive reply is useful evidence, a missing
+     * reply is NOT evidence of a fault.
+     */
+    fun directedUdpProbe(targets: List<YeelightDevice>): Set<String> {
+        val source = wifiIpv4Address() ?: error("Kein WLAN aktiv")
+        val allowed = targets.asSequence()
+            .filter { isLocalIp(it.ip) }
+            .distinctBy { it.ip }
+            .take(24).toList()
+        val answered = mutableSetOf<String>()
+        DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+            socket.soTimeout = 100
+            allowed.forEach { device ->
+                val address = InetAddress.getByName(device.ip)
+                socket.send(DatagramPacket(search, search.size, address, PORT))
+                val deadline = System.nanoTime() + 360_000_000L
+                while (System.nanoTime() < deadline) {
+                    try {
+                        val buffer = ByteArray(4096)
+                        val reply = DatagramPacket(buffer, buffer.size)
+                        socket.receive(reply)
+                        val parsed = parseAnnouncement(
+                            String(reply.data, reply.offset, reply.length, Charsets.UTF_8)
+                        )
+                        if (parsed?.ip == device.ip && reply.address.hostAddress == device.ip) {
+                            answered.add(device.ip)
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        // Continue through the bounded deadline.
+                    }
+                }
+            }
+        }
+        return answered
+    }
+
     /** Safe fallback: one /24 block from the phone's Wi-Fi interface only. */
     fun subnetCandidates(ip: String): List<String> {
         if (!isLocalIp(ip)) return emptyList()
