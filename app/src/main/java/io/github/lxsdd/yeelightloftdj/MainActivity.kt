@@ -213,7 +213,7 @@ private fun TargetSelector(controller: LoftController) {
         Text("Zielbereich · " + controller.target + " (" + controller.selectedCount() + ")", color = Color.White, fontWeight = FontWeight.Medium)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Test (1)", "Loft", "Alle").forEach { value ->
-                FilterChip(selected = controller.target == value, onClick = { controller.setTarget(value) }, label = { Text(value) })
+                FilterChip(selected = controller.target == value, onClick = { controller.chooseTarget(value) }, label = { Text(value) })
             }
         }
         Text("Zum sicheren Test zuerst nur eine Lampe wählen. Loft benötigt die Raumzuordnung unter Geräte.", color = muted, fontSize = 12.sp)
