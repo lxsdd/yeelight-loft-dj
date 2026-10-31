@@ -114,7 +114,8 @@ class LoftController(context: Context) {
         SceneArchive.encode(SceneArchiveData(emptyList(), listOf(preset)))
 
     fun setRestoreAfterStop(enabled: Boolean) {
-        if (busy) return
+        // The choice is frozen for the full duration of a running scene.
+        if (busy || runningDeviceIps.isNotEmpty()) return
         restoreAfterStop = enabled
         prefs.edit().putBoolean("restore-after-stop", enabled).apply()
     }
