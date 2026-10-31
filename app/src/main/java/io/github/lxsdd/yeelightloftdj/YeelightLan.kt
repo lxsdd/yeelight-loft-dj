@@ -286,6 +286,13 @@ object YeelightLan {
         if (before.isOn && (before.colorMode !in 1..3 || before.restoreCommands().size < 2)) {
             error("Farbzustand nicht vollständig lesbar; Identifikation abgebrochen")
         }
+        // A known capability list must permit both the flash and every restore command.
+        // Otherwise even a readable snapshot could leave a lamp in the wrong color.
+        val required = setOf("set_power", "set_rgb", "set_bright") +
+            before.restoreCommands().map { it.method }
+        if (device.methods.isNotEmpty() && !device.methods.containsAll(required)) {
+            error("Gerät unterstützt nicht alle Befehle für eine sichere Identifikation")
+        }
         var touched = false
         var failure: Exception? = null
         try {
