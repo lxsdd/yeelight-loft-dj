@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -100,6 +101,7 @@ private fun LoftApp(controller: LoftController) {
                     item { Hero(controller, onScene = { page = 1 }, onDevice = { page = 2 }) }
                     item { Heading("Deine Lichtwelten", "Ein Tipp – und dein Loft verwandelt sich.") }
                     item { TargetSelector(controller) }
+                    item { SceneRestoreOption(controller) }
                     item { TargetPowerControls(controller) }
                     items(SceneLibrary.scenes.take(2), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
@@ -109,6 +111,7 @@ private fun LoftApp(controller: LoftController) {
                 1 -> {
                     item { Heading("Lichtshows", "Farbverläufe direkt auf den Lampen") }
                     item { TargetSelector(controller) }
+                    item { SceneRestoreOption(controller) }
                     items(controller.allScenes(), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
@@ -618,22 +621,53 @@ private fun ChasePanel(controller: LoftController) {
 }
 
 @Composable
+private fun SceneRestoreOption(controller: LoftController) {
+    Surface(color = panel, shape = RoundedCornerShape(17.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Nach Stopp vorheriges Licht wiederherstellen",
+                        color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text("Ein/Aus, Farbe und Helligkeit jeder Lampe werden vor der Szene erfasst.",
+                        color = muted, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = controller.restoreAfterStop,
+                    onCheckedChange = controller::setRestoreAfterStop,
+                    enabled = !controller.busy
+                )
+            }
+            Text(
+                "Wenn ein Zustand nicht sicher gelesen werden kann, startet die Szene nicht. Wiederherstellung erfolgt beim Stoppen, nicht automatisch nach einer festen Zeit.",
+                color = muted, fontSize = 11.sp
+            )
+        }
+    }
+}
+
+@Composable
 private fun SceneExchangePanel(controller: LoftController) {
     val context = LocalContext.current
+    var pendingExport by remember { mutableStateOf<String?>(null) }
+    var pendingImport by remember { mutableStateOf<SceneArchiveData?>(null) }
+    var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(SceneArchive.mimeType)
     ) { uri ->
-        if (uri != null) runCatching {
-            val bytes = controller.exportSceneArchive().toByteArray(StandardCharsets.UTF_8)
+        val payload = pendingExport
+        if (uri != null && payload != null) runCatching {
+            val bytes = payload.toByteArray(StandardCharsets.UTF_8)
             context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
                 stream.write(bytes)
                 stream.flush()
             } ?: error("Zieldatei nicht beschreibbar")
         }.onSuccess {
-            controller.report("Szenen als JSON exportiert")
+            controller.report("Szenen erfolgreich als JSON exportiert")
         }.onFailure {
             controller.report("Export fehlgeschlagen: " + it.message)
         }
+        pendingExport = null
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching {
@@ -648,22 +682,104 @@ private fun SceneExchangePanel(controller: LoftController) {
                 require(total <= SceneArchive.maxBytes) { "Importdatei ist zu groß" }
                 String(buffer, 0, total, StandardCharsets.UTF_8)
             } ?: error("Datei nicht lesbar")
-            controller.importSceneArchive(bytes)
-        }.onSuccess { controller.report(it) }
-            .onFailure { controller.report("Import fehlgeschlagen: " + it.message) }
+            SceneArchive.decode(bytes)
+        }.onSuccess { archive ->
+            pendingImport = archive
+            selected = archive.flows.map { "flow:" + it.id }.toSet() +
+                archive.chases.map { "chase:" + it.id }.toSet()
+        }.onFailure { controller.report("Import fehlgeschlagen: " + it.message) }
     }
+
     Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Szenen sichern und übertragen", color = Color.White, fontWeight = FontWeight.SemiBold)
-            Text("Exportiert alle Farbverläufe und gespeicherten Lichtläufe als JSON – ohne private IP-Adressen, Geräte-IDs oder Grundrissdaten.",
+            Text("Gesamte Sammlung oder einzelne Szenen – lokale JSON-Dateien ohne IP-Adressen, Geräte-IDs oder Grundrisse.",
                 color = muted, fontSize = 12.sp)
-            Button(onClick = { exportLauncher.launch(SceneArchive.fileName) },
-                modifier = Modifier.fillMaxWidth()) { Text("Alle Szenen exportieren") }
-            OutlinedButton(onClick = { importLauncher.launch(arrayOf(SceneArchive.mimeType, "text/plain")) },
-                modifier = Modifier.fillMaxWidth()) { Text("Szenen aus JSON importieren") }
-            Text("Bestehende Szenen bleiben erhalten. Bereits bekannte identische Szenen werden übersprungen.",
+            Button(onClick = {
+                pendingExport = controller.exportSceneArchive()
+                exportLauncher.launch(SceneArchive.fileName)
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("Alle Szenen exportieren")
+            }
+            OutlinedButton(onClick = {
+                importLauncher.launch(arrayOf(SceneArchive.mimeType, "text/plain"))
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("Szenen importieren · einzeln auswählen")
+            }
+            Text("Einzeln exportieren", color = Color.White, fontWeight = FontWeight.SemiBold)
+            controller.allScenes().forEach { scene ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(scene.name, color = Color.White, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        pendingExport = controller.exportSingleFlow(scene)
+                        exportLauncher.launch("yeelight-flow-" + scene.id + ".json")
+                    }) { Text("Export") }
+                }
+            }
+            controller.savedChases.forEach { preset ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(preset.name, color = Color.White, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        pendingExport = controller.exportSingleChase(preset)
+                        exportLauncher.launch("yeelight-chase-" + preset.id + ".json")
+                    }) { Text("Export") }
+                }
+            }
+            Text("Identische Szenen werden beim Import übersprungen; deine vorhandenen bleiben erhalten.",
                 color = muted, fontSize = 11.sp)
         }
+    }
+    pendingImport?.let { archive ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text("Szenen zum Import auswählen") },
+            text = {
+                Column(Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState())) {
+                    Text("Nur markierte Szenen werden übernommen.",
+                        fontSize = 12.sp)
+                    archive.flows.forEach { scene ->
+                        val key = "flow:" + scene.id
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = key in selected,
+                                onCheckedChange = { checked ->
+                                    selected = if (checked) selected + key else selected - key
+                                })
+                            Text(scene.name + " · Farbverlauf", fontSize = 12.sp)
+                        }
+                    }
+                    archive.chases.forEach { preset ->
+                        val key = "chase:" + preset.id
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = key in selected,
+                                onCheckedChange = { checked ->
+                                    selected = if (checked) selected + key else selected - key
+                                })
+                            Text(preset.name + " · Lichtlauf", fontSize = 12.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = selected.isNotEmpty(),
+                    onClick = {
+                        runCatching {
+                            val subset = SceneArchiveData(
+                                archive.flows.filter { "flow:" + it.id in selected },
+                                archive.chases.filter { "chase:" + it.id in selected }
+                            )
+                            controller.importSceneArchive(SceneArchive.encode(subset))
+                        }.onSuccess { controller.report(it); pendingImport = null }
+                            .onFailure { controller.report("Import fehlgeschlagen: " + it.message) }
+                    }
+                ) { Text("Auswahl importieren") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImport = null }) { Text("Abbrechen") }
+            }
+        )
     }
 }
 
