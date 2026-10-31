@@ -242,6 +242,11 @@ private fun DeviceTools(controller: LoftController) {
             Spacer(Modifier.width(7.dp))
             Text("Geräte im WLAN suchen")
         }
+        OutlinedButton(onClick = controller::deepDiscover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
+            Text("Intensivsuche im WLAN")
+        }
+        Text("Sucht zusätzlich gezielt im lokalen WLAN nach Yeelights. Die Abfrage liest nur den Geräte-Status und verändert kein Licht.", color = muted, fontSize = 12.sp)
+        Text("Gespeicherte Geräte bleiben bei erneuter Suche erhalten. Nicht bestätigte Geräte können inzwischen offline sein.", color = muted, fontSize = 12.sp)
         OutlinedTextField(
             value = ip,
             onValueChange = { ip = it },
@@ -267,6 +272,9 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                     Text(device.ip + ":" + device.port, fontSize = 12.sp, color = muted)
                 }
             }
+            Text(if (device.ip in controller.lastSeenIps) "Bei letzter Suche bestätigt" else "Gespeichert · aktuell nicht überprüft",
+                color = if (device.ip in controller.lastSeenIps) Color(0xFF80D9C6) else muted, fontSize = 12.sp)
+            TextButton(onClick = { controller.forget(device) }) { Text("Aus dieser App entfernen") }
             if (!device.canFlow) Note("Dieses Gerät meldet keine Unterstützung für start_cf.")
             Text("Raum: " + controller.roomFor(device), color = Color.White, fontSize = 12.sp)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {

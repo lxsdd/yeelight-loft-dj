@@ -12,6 +12,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 private val loftRooms = setOf("Wohnzimmer", "Esszimmer", "Hobbyraum")
 val rooms = listOf("Nicht zugeordnet", "Wohnzimmer", "Esszimmer", "Hobbyraum", "Schlafzimmer", "Masterbad", "Gästebad", "Flur", "Andere")
@@ -21,9 +23,9 @@ class LoftController(context: Context) {
     private val prefs = app.getSharedPreferences("local-room-map", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
 
-    var devices by mutableStateOf<List<YeelightDevice>>(emptyList())
+    var devices by mutableStateOf(loadKnown())
         private set
-    var assignments by mutableStateOf<Map<String, String>>(emptyMap())
+    var assignments by mutableStateOf(devices.associate { it.id to (prefs.getString("room." + it.id, "Nicht zugeordnet") ?: "Nicht zugeordnet") })
         private set
     var status by mutableStateOf("Bereit · lokales WLAN")
         private set
@@ -33,6 +35,49 @@ class LoftController(context: Context) {
         private set
     var activeScene by mutableStateOf<String?>(null)
         private set
+    var lastSeenIps by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    private fun loadKnown(): List<YeelightDevice> = try {
+        val array = JSONArray(prefs.getString("known-devices", "[]") ?: "[]")
+        (0 until array.length()).mapNotNull { i ->
+            val obj = array.optJSONObject(i) ?: return@mapNotNull null
+            val ip = obj.optString("ip")
+            if (!YeelightLan.isLocalIp(ip)) return@mapNotNull null
+            val id = obj.optString("id").ifBlank { "ip-" + ip }
+            val port = obj.optInt("port", 55443)
+            if (port !in 1..65535) return@mapNotNull null
+            YeelightDevice(id, ip, port, obj.optString("model", "Yeelight"))
+        }
+    } catch (_: Exception) { emptyList() }
+
+    private fun saveKnown() {
+        val array = JSONArray()
+        devices.forEach { device ->
+            array.put(JSONObject().put("id", device.id).put("ip", device.ip)
+                .put("port", device.port).put("model", device.model))
+        }
+        prefs.edit().putString("known-devices", array.toString()).apply()
+    }
+
+    private fun mergeFound(found: List<YeelightDevice>, method: String): String {
+        val prior = devices
+        val merged = YeelightLan.mergeDevices(prior, found)
+        val updatedRooms = assignments.toMutableMap()
+        found.forEach { discovered ->
+            val previous = prior.firstOrNull { it.id == discovered.id || it.ip == discovered.ip }
+            val replacement = merged.firstOrNull { it.id == discovered.id || it.ip == discovered.ip }
+            if (previous != null && replacement != null && previous.id != replacement.id) {
+                val room = updatedRooms[previous.id] ?: prefs.getString("room." + previous.id, null)
+                if (room != null) updatedRooms[replacement.id] = room
+            }
+        }
+        devices = merged
+        assignments = merged.associate { it.id to (updatedRooms[it.id] ?: prefs.getString("room." + it.id, "Nicht zugeordnet") ?: "Nicht zugeordnet") }
+        lastSeenIps = found.map { it.ip }.toSet()
+        saveKnown()
+        return method + ": " + found.size + " bestätigt · " + devices.size + " insgesamt gespeichert"
+    }
 
     fun chooseTarget(value: String) { if (value in setOf("Test (1)", "Loft", "Alle")) target = value }
     fun roomFor(device: YeelightDevice): String = assignments[device.id] ?: "Nicht zugeordnet"
@@ -42,12 +87,14 @@ class LoftController(context: Context) {
         prefs.edit().putString("room." + device.id, room).apply()
     }
 
-    fun discover() = task("Suche Yeelights im WLAN …") {
+    fun discover() = task("Suche Yeelights im WLAN (mehrere Durchgänge) …") {
         val found = withContext(Dispatchers.IO) { YeelightLan.discover(app) }
-        devices = found
-        assignments = found.associate { it.id to (prefs.getString("room." + it.id, "Nicht zugeordnet") ?: "Nicht zugeordnet") }
-        activeScene = null
-        found.size.toString() + " Geräte gefunden"
+        mergeFound(found, "WLAN-Suche")
+    }
+
+    fun deepDiscover() = task("Intensivsuche: prüfe lokale WLAN-Adressen …") {
+        val found = withContext(Dispatchers.IO) { YeelightLan.deepDiscover() }
+        mergeFound(found, "Intensivsuche")
     }
 
     fun addManual(ip: String) {
@@ -57,9 +104,21 @@ class LoftController(context: Context) {
             return
         }
         val device = YeelightLan.manual(address)
-        if (devices.none { it.ip == address }) devices = devices + device
-        assignments = assignments + (device.id to (prefs.getString("room." + device.id, "Nicht zugeordnet") ?: "Nicht zugeordnet"))
-        status = "Gerät hinzugefügt: " + address
+        if (devices.none { it.ip == address }) {
+            devices = YeelightLan.mergeDevices(devices, listOf(device))
+            assignments = assignments + (device.id to (prefs.getString("room." + device.id, "Nicht zugeordnet") ?: "Nicht zugeordnet"))
+            saveKnown()
+        }
+        status = "IP gespeichert (noch nicht geprüft): " + address
+    }
+
+    fun forget(device: YeelightDevice) {
+        devices = devices.filterNot { it.id == device.id }
+        assignments = assignments - device.id
+        lastSeenIps = lastSeenIps - device.ip
+        prefs.edit().remove("room." + device.id).apply()
+        saveKnown()
+        status = "Gerät aus dieser App entfernt"
     }
 
     private fun selected() = when (target) {
