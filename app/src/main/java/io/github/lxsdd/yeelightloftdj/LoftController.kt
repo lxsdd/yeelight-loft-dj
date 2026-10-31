@@ -263,7 +263,10 @@ class LoftController(context: Context) {
             " · Beide: " + both.size +
             " · Nur direkt: " + directOnly.size +
             "\nUDP-Antwortpakete: " + YeelightLan.lastSearchPackets +
-            " · davon nicht auswertbar: " + YeelightLan.lastSearchInvalidPackets
+            " · davon nicht auswertbar: " + YeelightLan.lastSearchInvalidPackets +
+            "\nWLAN-Sendeadresse: " + YeelightLan.lastSearchSourceAddress +
+            " · Treffer je Suchrunde: " + YeelightLan.lastSearchRoundUnique.joinToString("/") +
+            " · Absender-/Location-Abweichungen: " + YeelightLan.lastSearchSourceMismatches
         val merged = YeelightLan.mergeDevices(multicast, direct)
         mergeFound(merged, "Kombinierte Suche")
     }
