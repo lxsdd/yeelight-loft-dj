@@ -52,8 +52,11 @@ class LoftController(context: Context) {
         private set
     var lampOrder by mutableStateOf(loadLampOrder())
         private set
-    var runningDeviceIps by mutableStateOf<Set<String>>(emptySet())
+    var runningDeviceIps by mutableStateOf(loadRunningIps())
         private set
+    var restoreAfterStop by mutableStateOf(prefs.getBoolean("restore-after-stop", false))
+        private set
+    private var recoveryJournal = SceneRecovery.decode(prefs.getString("pending-scene-recovery", null))
     // Live status is intentionally session-only; cached values from yesterday are not live data.
     var lampSnapshots by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
         private set
@@ -101,6 +104,33 @@ class LoftController(context: Context) {
     fun exportSceneArchive(): String = SceneArchive.encode(
         SceneArchiveData(allScenes(), savedChases)
     )
+
+    fun exportSingleFlow(scene: LoftScene): String =
+        SceneArchive.encode(SceneArchiveData(listOf(scene), emptyList()))
+
+    fun exportSingleChase(preset: ChasePreset): String =
+        SceneArchive.encode(SceneArchiveData(emptyList(), listOf(preset)))
+
+    fun setRestoreAfterStop(enabled: Boolean) {
+        if (busy) return
+        restoreAfterStop = enabled
+        prefs.edit().putBoolean("restore-after-stop", enabled).apply()
+    }
+
+    private fun loadRunningIps(): Set<String> = runCatching {
+        val arr = JSONArray(prefs.getString("running-flow-ips", "[]") ?: "[]")
+        (0 until arr.length()).map { arr.getString(it) }.filter(YeelightLan::isLocalIp).toSet()
+    }.getOrDefault(emptySet())
+
+    private fun setRunningIps(ips: Set<String>) {
+        runningDeviceIps = ips
+        prefs.edit().putString("running-flow-ips", JSONArray(ips.toList()).toString()).commit()
+    }
+
+    private fun setRecoveryJournal(entries: Map<String, LampSnapshot>) {
+        recoveryJournal = entries
+        prefs.edit().putString("pending-scene-recovery", SceneRecovery.encode(entries)).commit()
+    }
 
     fun saveChase(name: String, config: ChaseConfig) {
         val clean = name.trim()
@@ -321,19 +351,7 @@ class LoftController(context: Context) {
             return
         }
         task(if (on) "Schalte Zielbereich ein …" else "Schalte Zielbereich aus …") {
-            val currentlyRunning = devices.filter { it.ip in runningDeviceIps }
-            if (currentlyRunning.isNotEmpty()) {
-                val failedStops = withContext(Dispatchers.IO) {
-                    currentlyRunning.map { device -> async {
-                        try { YeelightLan.stop(device); null }
-                        catch (_: Exception) { device.ip }
-                    } }.awaitAll().filterNotNull().toSet()
-                }
-                runningDeviceIps = failedStops
-                if (failedStops.isNotEmpty()) {
-                    error("Laufende Lichtshow konnte nicht vollständig beendet werden")
-                }
-            }
+            if (runningDeviceIps.isNotEmpty()) haltRunning(false)
             val errors = withContext(Dispatchers.IO) {
                 chosen.map { device -> async {
                     try { YeelightLan.manualControl(device, LampCommands.power(on)); null }
@@ -361,9 +379,42 @@ class LoftController(context: Context) {
 
 
     /**
-     * Keep all running bulbs tracked, even if target changes later. Starting a
-     * new scene always stops the old loop first. Each bulb gets one native flow.
+     * Stop every tracked lamp, then restore the previously captured static state.
+     * Unconfirmed operations stay in the recovery journal for an explicit retry.
      */
+    private suspend fun haltRunning(allowTargetFallback: Boolean): String {
+        val chosen = if (runningDeviceIps.isNotEmpty()) {
+            devices.filter { it.ip in runningDeviceIps }
+        } else if (allowTargetFallback) selected() else emptyList()
+        if (chosen.isEmpty()) return "Keine Lampen zum Stoppen ausgewählt"
+        val outcomes = withContext(Dispatchers.IO) {
+            chosen.map { device -> async {
+                val issue = runCatching {
+                    YeelightLan.stop(device)
+                    recoveryJournal[device.ip]?.let { snapshot ->
+                        SceneRecovery.commands(snapshot).forEach { command ->
+                            YeelightLan.manualControl(device, command)
+                        }
+                    }
+                }.exceptionOrNull()
+                device.ip to issue
+            } }.awaitAll()
+        }
+        val failed = outcomes.filter { it.second != null }.map { it.first }.toSet()
+        val beforeCount = recoveryJournal.size
+        setRunningIps(failed)
+        setRecoveryJournal(recoveryJournal.filterKeys { it in failed })
+        if (failed.isEmpty()) activeScene = null
+        val success = chosen.size - failed.size
+        val result = "Gestoppt" + (if (beforeCount > 0)
+            " und ursprünglicher Zustand wiederhergestellt" else "") +
+            ": $success/" + chosen.size + " Lampen"
+        if (failed.isNotEmpty()) {
+            error(result + " · " + failed.size + " Fehler; erneuter Stopp möglich")
+        }
+        return result
+    }
+
     private fun startFlow(
         id: String,
         name: String,
@@ -375,20 +426,28 @@ class LoftController(context: Context) {
             return
         }
         task("Starte " + name + " auf " + chosen.size + " Lampen …") {
-            val previous = devices.filter { it.ip in runningDeviceIps }
-            if (previous.isNotEmpty()) {
-                val stopFailures = withContext(Dispatchers.IO) {
-                    previous.map { device -> async {
-                        try { YeelightLan.stop(device); null } catch (e: Exception) { device.ip }
-                    } }.awaitAll().filterNotNull()
+            if (runningDeviceIps.isNotEmpty()) haltRunning(false)
+            if (restoreAfterStop) {
+                // A failed snapshot aborts BEFORE altering any bulb.
+                val captured = withContext(Dispatchers.IO) {
+                    chosen.map { device -> async {
+                        val snap = YeelightLan.readStatus(device)
+                        require(SceneRecovery.supported(snap)) {
+                            "Lichtzustand von " + device.ip + " ist nicht vollständig lesbar"
+                        }
+                        val commands = SceneRecovery.commands(snap)
+                        if (device.methods.isNotEmpty()) require(device.methods.containsAll(
+                            commands.map { it.method }
+                        )) { "Wiederherstellung nicht für " + device.ip + " unterstützt" }
+                        device.ip to snap
+                    } }.awaitAll().toMap()
                 }
-                if (stopFailures.isNotEmpty()) {
-                    runningDeviceIps = stopFailures.toSet()
-                    error("Laufende Szene konnte auf ${stopFailures.size} Lampen nicht beendet werden")
-                }
-                runningDeviceIps = emptySet()
-                activeScene = null
+                setRecoveryJournal(captured)
+            } else {
+                setRecoveryJournal(emptyMap())
             }
+            // Recovery information is written before the first light-changing command.
+            setRunningIps(chosen.map { it.ip }.toSet())
             val results = withContext(Dispatchers.IO) {
                 chosen.mapIndexed { i, device -> async {
                     try { YeelightLan.play(device, expression(i, chosen.size)); device.ip to null }
@@ -396,12 +455,13 @@ class LoftController(context: Context) {
                 } }.awaitAll()
             }
             val successful = results.filter { it.second == null }.map { it.first }.toSet()
-            runningDeviceIps = successful
             activeScene = if (successful.isNotEmpty()) id else null
             val errors = results.filter { it.second != null }
-            if (errors.isEmpty()) name + " läuft auf " + successful.size + " Lampen"
+            if (errors.isEmpty()) name + " läuft auf " + successful.size + " Lampen" +
+                (if (restoreAfterStop) " · Wiederherstellung beim Stopp aktiv" else "")
             else successful.size.toString() + "/" + chosen.size + " gestartet · " +
-                errors.first().first + ": " + errors.first().second
+                errors.first().first + ": " + errors.first().second +
+                " · für sicheren Stopp alle ausgewählten Lampen vorgemerkt"
         }
     }
 
@@ -419,30 +479,8 @@ class LoftController(context: Context) {
         }
     }
 
-    fun stop() {
-        // After an app restart, native Yeelight loops may still be running.
-        // Fall back to the explicit target selection when session tracking is empty.
-        val selectedDevices = if (runningDeviceIps.isNotEmpty()) {
-            devices.filter { it.ip in runningDeviceIps }
-        } else selected()
-        if (selectedDevices.isEmpty()) {
-            activeScene = null
-            status = "Keine Lampen zum Stoppen ausgewählt"
-            return
-        }
-        task("Stoppe Farbverläufe auf " + selectedDevices.size + " Lampen …") {
-            val failed = withContext(Dispatchers.IO) {
-                selectedDevices.map { device -> async {
-                    try { YeelightLan.stop(device); null }
-                    catch (ex: Exception) { device.ip }
-                } }.awaitAll().filterNotNull().toSet()
-            }
-            runningDeviceIps = failed
-            if (failed.isEmpty()) activeScene = null
-            if (failed.isEmpty()) "Alle Farbverläufe gestoppt"
-            else "Stopp erreicht " + (selectedDevices.size - failed.size) + "/" +
-                selectedDevices.size + " · " + failed.size + " nicht bestätigt"
-        }
+    fun stop() = task("Stoppe Lichtshow und stelle bei Bedarf den vorherigen Zustand wieder her …") {
+        haltRunning(true)
     }
 
     private fun task(initial: String, operation: suspend () -> String) {
