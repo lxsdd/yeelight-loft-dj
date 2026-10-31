@@ -48,6 +48,21 @@ class SceneArchiveTest {
         }
     }
 
+    @Test fun singleSceneFilesRoundTripIndependently() {
+        val oneFlow = SceneArchive.decode(
+            SceneArchive.encode(SceneArchiveData(listOf(SceneLibrary.scenes[0]), emptyList()))
+        )
+        assertEquals(1, oneFlow.flows.size)
+        assertEquals(0, oneFlow.chases.size)
+        assertEquals(SceneLibrary.scenes[0].frames, oneFlow.flows[0].frames)
+
+        val oneChase = SceneArchive.decode(
+            SceneArchive.encode(SceneArchiveData(emptyList(), listOf(chase)))
+        )
+        assertEquals(0, oneChase.flows.size)
+        assertEquals(listOf(chase), oneChase.chases)
+    }
+
     @Test fun emptyArchiveRoundTrips() {
         val data = SceneArchive.decode(SceneArchive.encode(SceneArchiveData(emptyList(), emptyList())))
         assertEquals(0, data.flows.size)
