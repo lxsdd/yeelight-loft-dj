@@ -79,3 +79,26 @@ Quellen:
 - https://www.yeelight.com/en_US/developer
 - https://home.yeelight.de/site/templates/downloads/yeelight_inter-operation-spec.pdf
 - https://www.home-assistant.io/integrations/yeelight/
+
+
+## Zusätzliche kontrollierte UDP-Gegenprobe
+
+Unter **Geräte** gibt es nach einer kombinierten Suche einen Knopf
+**UDP-Gegenprobe für N Nichtantworter**. Er richtet eine Yeelight-
+M-SEARCH-Nachricht **direkt und nur an per TCP verifizierte private Geräte-IPs**
+der nicht per Multicast antwortenden Lampen, maximal 24 Geräte, mit
+kurzem Empfangsfenster. Es werden keine Lichtbefehle gesendet.
+
+- **Mindestens eine positive direkte UDP-Antwort:** Dieses Gerät kann einen
+  Yeelight-Discovery-Request auf dem Rückweg beantworten, obwohl sein
+  Multicast-Response fehlt. Multicast-Zustellung auf dem Hinweg ist als
+  Ursache wahrscheinlicher; dennoch durch Paketmitschnitt absichern.
+- **Keine positive direkte UDP-Antwort:** **keine sichere Schlussfolgerung**.
+  Yeelight schreibt Multicast als Standardverfahren vor; Firmware kann
+  gerichtete M-SEARCH-Pakete vollständig ignorieren. Dies beweist keinen
+  Defekt und keine abweichende Gerätekonfiguration.
+- Per UDP-Antwort werden **Absender-IP und `Location`-IP** gegen die gezielte
+  Lampe abgeglichen. Die App exportiert keine einzelnen IPs.
+
+Die Gegenprobe ersetzt nicht die paketbasierte Bestätigung, falls die
+neue gebundene Multicast-Suche weiterhin genau fünf von 15 Lampen erreicht.
