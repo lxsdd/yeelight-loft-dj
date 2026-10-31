@@ -810,5 +810,5 @@ private fun Note(message: String) {
 
 @Composable
 private fun Footer() {
-    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.1", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
+    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.3", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
 }
