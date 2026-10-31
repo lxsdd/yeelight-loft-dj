@@ -475,6 +475,7 @@ private fun ChasePanel(controller: LoftController) {
     var tail by remember { mutableFloatStateOf(4f) }
     var intensity by remember { mutableFloatStateOf(75f) }
     var name by remember { mutableStateOf("Meine Sternschnuppe") }
+    var previewStep by remember { mutableFloatStateOf(0f) }
     val parsedPalette = remember(palette) { runCatching { ChaseCompiler.decodePalette(palette) } }
     val config = parsedPalette.getOrNull()?.let { colors ->
         ChaseConfig(style, colors, ms.roundToInt(), tail.roundToInt(),
@@ -518,6 +519,31 @@ private fun ChasePanel(controller: LoftController) {
                             .background(Color(0xFF000000L or rgb.toLong())))
                     }
                 }
+            }
+            if (config != null && controller.previewCount(choice) > 0) {
+                val lampCount = controller.previewCount(choice).coerceAtMost(24)
+                val count = ChaseCompiler.frames(config, 0, lampCount).size
+                val step = previewStep.roundToInt().coerceIn(0, count - 1)
+                Text("Effektvorschau · Schritt ${step + 1} von $count",
+                    color = Color.White, fontSize = 12.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    repeat(lampCount) { index ->
+                        val frame = ChaseCompiler.frames(config, index, lampCount)[step]
+                        val tinted = Color(0xFF000000L or frame.rgb.toLong())
+                        Box(
+                            Modifier.size(23.dp).clip(RoundedCornerShape(50))
+                                .background(tinted.copy(alpha = 0.2f + 0.8f * frame.brightness / 100f))
+                        )
+                    }
+                }
+                Slider(
+                    value = previewStep.coerceIn(0f, (count - 1).toFloat()),
+                    onValueChange = { previewStep = it },
+                    valueRange = 0f..(count - 1).toFloat()
+                )
+                Text("Simulation der Reihenfolge – keine Statusanzeige der echten Lampen.",
+                    color = muted, fontSize = 11.sp)
             }
             Text("Tempo · ${ms.roundToInt()} ms pro Lampe", color = Color.White, fontSize = 12.sp)
             Slider(value = ms, onValueChange = { ms = it }, valueRange = 180f..2500f)
