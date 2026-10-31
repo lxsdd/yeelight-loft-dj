@@ -114,3 +114,60 @@ ist **kein** geometrisches Abbild des tatsächlichen Grundrisses.
 - Alles lokal speichern, exportieren und wieder importieren. Private
   Grundrisse, räumliche Koordinaten und Netzwerk-IPs nicht ins
   öffentliche GitHub-Repository hochladen.
+
+## Nächster Entwicklungsblock: Manuelle Lichtsteuerung (v0.1.2, PR)
+
+- Aufklappbare Einzelgeräte-Steuerung: echter Gerätestatus per `get_prop`,
+  Ein/Aus, Helligkeit, feste RGB-Direktfarben und Weißtemperatur (modell-/methodenabhängig).
+- Helligkeits-/Kelvin-Schieberegler senden erst nach dem Loslassen einen Befehl,
+  damit mehrere Lampen und das WLAN nicht mit Echtzeitbefehlen überlastet werden.
+- Ein-/Ausschalten für das explizit gewählte Ziel `Test (1)`, `Loft` oder `Alle`.
+- Lampenidentifikation ausschließlich auf Knopfdruck, nur wenn keine Szene aktiv ist,
+  mit vorherigem Lesen und bestmöglichem Wiederherstellen des Zustands. Bei
+  nicht vollständig lesbarer aktiver Farbe wird das Testsignal verweigert.
+- Gerätestatus ist nur eine in der aktuellen Sitzung abgefragte Momentaufnahme;
+  keine Behauptung permanenter Synchronisation mit Yeelight oder Google Home.
+- Das Projekt bleibt ein nicht abgenommenes Preview; reale Einzel- und Gruppen-
+  Hardwaretests folgen nach signiertem `main`-Build.
+
+## Zusammenhängender Funktionsblock: Lichtlauf-Studio und portable Szenen (v0.1.2, PR)
+
+- Szenenbereich erhält konfigurierbaren Lichtlauf über Test (1), Loft oder **alle**
+  gespeicherten Lampen (derzeit 15 direkte LAN-Treffer, fünf Multicast-Treffer).
+- Presets: Regenbogenschweif, Sternschnuppe/Meteor, räumliche Farbwelle.
+- Einstellbar: frei definierbare 1–16 Hexfarben, Tempo, Schweif, Helligkeit,
+  Vorwärts/Rückwärts, Pingpong, selbst festgelegte Lampenreihenfolge und
+  schrittweise Vorschau als Simulation.
+- Native Yeelight-`start_cf`-Ausführung auf jeder Lampe mit versetzter
+  Sequenz statt wiederkehrender TCP-Farbkommandos pro Animationsschritt.
+- Bestehende und eigene Lichtshows werden als lokale, versionierte JSON-Datei
+  exportiert und importiert (Android-Systemdateidialog, Größen-/Wertelimits,
+  keine IPs oder Grundrisse). Gespeicherte Lichtläufe überdauern Neustarts.
+- Der Stopp richtet sich gegen die wirklich gestarteten Lampen, unabhängig
+  vom zwischenzeitlich gewählten Zielbereich.
+- Erst nach CI und Hardwaretest auf dem Privatnetz abgenommen; vor Freigabe
+  wird weder automatisch nach `main` gemerged noch ein Release veröffentlicht.
+
+Details: [docs/CHASE_SCENES_DE.md](CHASE_SCENES_DE.md).
+
+
+## Verbindliche Ergänzungen – Einzel-Szenen, Rückkehr und Ursachenanalyse
+
+- Individueller JSON-Export **jeder** Szene sowie Import mit Wahl
+  einzelner Szenen aus einer vollständigen Archivdatei.
+- Einstellbare Option, nach manuellem Stopp einer Szene ursprüngliche
+  Einstellungen **aller** gestarteten Lampen zu restaurieren;
+  Farbmodus/RGB/Kelvin/HSV, Helligkeit, Ein-/Aus und Persistenz über App-Neustart.
+  Kein unbemerktes oder vorgetäuschtes Zurücksetzen bei fehlenden Daten.
+- Yeelight Discovery ist **SSDP-ähnliches UDP-Multicast, nicht mDNS**;
+  die Ursachenanalyse der konstant nur fünf Antworter gegenüber
+  15 per TCP erkannten Lampen hat hohe Priorität. Festgestellte einheitliche
+  Gerätekonfiguration berücksichtigen; keine spekulative Firmwareerklärung.
+- Der **interaktive 2D/3D-Raumgrundrisseditor ist weiterhin nicht implementiert**.
+  Seine Anforderungen bleiben unverändert bindend und im Ausbau hoch priorisiert.
+- **Musik ist ein eigenständiger Entwicklungsstrang mit höchster Priorität**;
+  nächster Schritt Android-Mikrofon, echte Live-Spektralanzeige,
+  Beat/Bass-Erkennung und räumliche Effekte, danach erlaubtes internes Audio,
+  Cast-Fallback und eigener Player.
+- Die daraus entstehende priorisierte Produktdifferenzierung ist in
+  [UNIQUE_FEATURE_VISION_DE.md](UNIQUE_FEATURE_VISION_DE.md) dokumentiert.

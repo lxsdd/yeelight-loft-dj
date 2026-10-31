@@ -1,10 +1,13 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,11 +25,13 @@ import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -35,6 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
+import java.nio.charset.StandardCharsets
 
 private val night = Color(0xFF0D101A)
 private val panel = Color(0xFF1D2232)
@@ -94,6 +101,8 @@ private fun LoftApp(controller: LoftController) {
                     item { Hero(controller, onScene = { page = 1 }, onDevice = { page = 2 }) }
                     item { Heading("Deine Lichtwelten", "Ein Tipp – und dein Loft verwandelt sich.") }
                     item { TargetSelector(controller) }
+                    item { SceneRestoreOption(controller) }
+                    item { TargetPowerControls(controller) }
                     items(SceneLibrary.scenes.take(2), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
@@ -102,16 +111,20 @@ private fun LoftApp(controller: LoftController) {
                 1 -> {
                     item { Heading("Lichtshows", "Farbverläufe direkt auf den Lampen") }
                     item { TargetSelector(controller) }
-                    items(SceneLibrary.scenes, key = { it.id }) { scene ->
+                    item { SceneRestoreOption(controller) }
+                    items(controller.allScenes(), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
+                    item { Heading("Lichtlauf-Studio", "Alle Leuchten in Bewegung – ohne Kommandoflut") }
+                    item { ChasePanel(controller) }
+                    item { SceneExchangePanel(controller) }
                     item { StopButton(controller) }
-                    item { Note("Diese Version bietet lokale Farbverläufe. Musikreaktion, Beat-Erkennung und internes Audio folgen in späteren Versionen.") }
+                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Musikreaktion folgt später.") }
                 }
                 else -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
                     item { DeviceTools(controller) }
-                    items(controller.devices, key = { it.id }) { device -> DeviceCard(device, controller) }
+                    items(controller.orderedDevices(), key = { it.id }) { device -> DeviceCard(device, controller) }
                     if (controller.devices.isEmpty()) {
                         item { Note("Noch keine Geräte gefunden. Suche im WLAN oder füge eine lokale IP hinzu. LAN-Steuerung muss in Yeelight aktiviert sein.") }
                     }
@@ -223,13 +236,13 @@ private fun TargetSelector(controller: LoftController) {
 @Composable
 private fun StopButton(controller: LoftController) {
     OutlinedButton(
-        enabled = !controller.busy && controller.selectedCount() > 0,
+        enabled = !controller.busy && (controller.runningDeviceIps.isNotEmpty() || controller.selectedCount() > 0),
         onClick = controller::stop,
         modifier = Modifier.fillMaxWidth()
     ) {
         Icon(Icons.Rounded.Stop, null)
         Spacer(Modifier.width(7.dp))
-        Text("Aktuelle Farbverläufe stoppen")
+        Text("Alle laufenden Lichtshows stoppen")
     }
 }
 
@@ -250,9 +263,19 @@ private fun DeviceTools(controller: LoftController) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("Netzwerk-Diagnose", color = Color.White, fontWeight = FontWeight.SemiBold)
                 Text(controller.searchDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
-                Text("Multicast = Geräteantwort auf Suchruf; Direkt-LAN = gezielte Statusabfrage. Gleiche Lampe kann bei beiden erscheinen.", color = muted, fontSize = 11.sp)
+                Text("Yeelight nutzt SSDP-ähnliches UDP-Multicast (nicht mDNS). Antworten kommen einzeln per Unicast; Direkt-LAN prüft unabhängig davon TCP 55443. Je Suchrunde werden unterschiedliche Lampen gezählt.", color = muted, fontSize = 11.sp)
             }
         }
+        OutlinedButton(
+            onClick = controller::compareDirectedUdp,
+            enabled = !controller.busy && controller.missingMulticastCount() > 0,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("UDP-Gegenprobe für " + controller.missingMulticastCount() + " Nichtantworter") }
+        if (controller.directedUdpDiagnostics.isNotBlank()) {
+            Text(controller.directedUdpDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
+        }
+        Text("Die UDP-Gegenprobe ist experimentell und verändert keine Lampe. Nur positive Antworten sind aussagekräftig; negative Antworten beweisen keinen Defekt.",
+            color = muted, fontSize = 11.sp)
         Text("Gespeicherte Geräte bleiben bei erneuter Suche erhalten. Nicht bestätigte Geräte können inzwischen offline sein.", color = muted, fontSize = 12.sp)
         OutlinedTextField(
             value = ip,
@@ -301,7 +324,16 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                 else -> "Bei diesem Suchlauf nicht bestätigt"
             }
             Text("Erkennung: " + discoveryMethod, color = muted, fontSize = 11.sp)
-            TextButton(onClick = { controller.forget(device) }) { Text("Aus dieser App entfernen") }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Reihenfolge im Lauflicht", fontSize = 12.sp, color = muted, modifier = Modifier.weight(1f))
+                val position = controller.orderedDevices().indexOfFirst { it.id == device.id }
+                OutlinedButton(onClick = { controller.moveLamp(device, -1) },
+                    enabled = !controller.busy && position > 0) { Text("↑") }
+                OutlinedButton(onClick = { controller.moveLamp(device, 1) },
+                    enabled = !controller.busy && position < controller.devices.lastIndex) { Text("↓") }
+            }
+            LampManualPanel(device, controller)
+            TextButton(onClick = { controller.forget(device) }, enabled = !controller.busy) { Text("Aus dieser App entfernen") }
             if (!device.canFlow) Note("Dieses Gerät meldet keine Unterstützung für start_cf.")
             Text("Raum: " + controller.roomFor(device), color = Color.White, fontSize = 12.sp)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -314,6 +346,450 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun TargetPowerControls(controller: LoftController) {
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Schnellsteuerung", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("Für ${controller.target} · ${controller.selectedCount()} Lampen. Farbverläufe werden durch manuelles Schalten beendet.", color = muted, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Button(
+                    onClick = { controller.powerTarget(true) },
+                    enabled = !controller.busy && controller.selectedCount() > 0,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Einschalten") }
+                OutlinedButton(
+                    onClick = { controller.powerTarget(false) },
+                    enabled = !controller.busy && controller.selectedCount() > 0,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Ausschalten") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LampManualPanel(device: YeelightDevice, controller: LoftController) {
+    var expanded by remember(device.ip) { mutableStateOf(false) }
+    val live = controller.snapshotFor(device)
+    OutlinedButton(
+        onClick = { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth()
+    ) { Text(if (expanded) "Lichtsteuerung schließen" else "Lichtsteuerung öffnen") }
+    if (!expanded) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    live == null -> "Status noch nicht abgerufen"
+                    live.isOn -> "Eingeschaltet · ${live.brightness} %"
+                    else -> "Ausgeschaltet"
+                },
+                color = if (live?.isOn == true) Color(0xFF80D9C6) else muted,
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { controller.refreshLamp(device) }, enabled = !controller.busy) {
+                Text("Aktualisieren")
+            }
+        }
+        if (controller.runningDeviceIps.isNotEmpty()) {
+            Text("Lichtshow zuerst stoppen, bevor du einzelne Farben oder Helligkeit änderst.",
+                color = muted, fontSize = 11.sp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { controller.controlLamp(device, LampCommands.power(true), "Einschalten") },
+                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Text("Ein") }
+            OutlinedButton(
+                onClick = { controller.controlLamp(device, LampCommands.power(false), "Ausschalten") },
+                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Text("Aus") }
+        }
+        var brightness by remember(device.ip, live?.brightness) {
+            mutableFloatStateOf((live?.brightness ?: 60).toFloat())
+        }
+        Text("Helligkeit · ${brightness.roundToInt()} %", color = Color.White, fontSize = 12.sp)
+        Slider(
+            value = brightness,
+            onValueChange = { brightness = it },
+            onValueChangeFinished = {
+                controller.controlLamp(device, LampCommands.brightness(brightness.roundToInt()), "Helligkeit")
+            },
+            valueRange = 1f..100f,
+            enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+        )
+        val colors = listOf(
+            Triple("Warm", 0xFFAE62, Color(0xFFFFAE62)),
+            Triple("Türkis", 0x23D7D0, Color(0xFF23D7D0)),
+            Triple("Violett", 0xA47BFF, Color(0xFFA47BFF)),
+            Triple("Pink", 0xFF55B4, Color(0xFFFF55B4)),
+        )
+        if (device.methods.isEmpty() || "set_rgb" in device.methods) {
+            Text("Direktfarben", color = Color.White, fontSize = 12.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                colors.forEach { (name, rgb, tint) ->
+                    FilterChip(
+                        selected = live?.colorMode == 1 && live.rgb == rgb,
+                        onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
+                        enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+                        label = { Text(name) },
+                        leadingIcon = {
+                            Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
+                        },
+                    )
+                }
+            }
+        }
+        if (device.methods.isEmpty() || "set_ct_abx" in device.methods) {
+            var kelvin by remember(device.ip, live?.temperature) {
+                mutableFloatStateOf((live?.temperature ?: 3500).toFloat())
+            }
+            Text("Weißtemperatur · ${kelvin.roundToInt()} K", color = Color.White, fontSize = 12.sp)
+            Slider(
+                value = kelvin,
+                onValueChange = { kelvin = it },
+                onValueChangeFinished = {
+                    controller.controlLamp(device, LampCommands.temperature(kelvin.roundToInt()), "Weißtemperatur")
+                },
+                valueRange = 1700f..6500f,
+                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+            )
+        }
+        OutlinedButton(
+            onClick = { controller.identifyLamp(device) },
+            enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Diese Lampe kurz identifizieren") }
+        Text(
+            "Identifikation nur ohne laufende Lichtshow. Vorherigen Zustand lesen und anschließend wiederherstellen. Bei unvollständig lesbarem Farbzustand wird kein Testsignal gesendet.",
+            color = muted, fontSize = 11.sp
+        )
+    }
+}
+
+
+@Composable
+private fun ChasePanel(controller: LoftController) {
+    var style by remember { mutableStateOf(ChaseStyle.RAINBOW_TAIL) }
+    var choice by remember { mutableStateOf("Alle") }
+    var direction by remember { mutableStateOf(ChaseDirection.FORWARD) }
+    var bounce by remember { mutableStateOf(false) }
+    var palette by remember { mutableStateOf("#FF3ABF, #FFB12C, #5A4BFF, #25D9E6, #FFE474") }
+    var ms by remember { mutableFloatStateOf(450f) }
+    var tail by remember { mutableFloatStateOf(4f) }
+    var intensity by remember { mutableFloatStateOf(75f) }
+    var name by remember { mutableStateOf("Meine Sternschnuppe") }
+    var previewStep by remember { mutableFloatStateOf(0f) }
+    val parsedPalette = remember(palette) { runCatching { ChaseCompiler.decodePalette(palette) } }
+    val config = parsedPalette.getOrNull()?.let { colors ->
+        ChaseConfig(style, colors, ms.roundToInt(), tail.roundToInt(),
+            intensity.roundToInt(), direction, bounce)
+    }
+    Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Effekt", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf(ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
+                    ChaseStyle.METEOR to "Sternschnuppe", ChaseStyle.COLOR_WAVE to "Farbwelle")
+                    .forEach { (value, label) ->
+                        FilterChip(selected = style == value, onClick = { style = value }, label = { Text(label) })
+                    }
+            }
+            Text("Zielbereich", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf("Test (1)", "Loft", "Alle").forEach { value ->
+                    FilterChip(selected = choice == value, onClick = { choice = value }, label = { Text(value) })
+                }
+            }
+            Text(
+                "Die Laufrichtung folgt der Reihenfolge in Geräte. Bei „Alle“ werden alle gespeicherten Lampen berücksichtigt – auch eventuell offline befindliche.",
+                color = muted, fontSize = 11.sp
+            )
+            Text("Farbpalette · RGB-Hex, durch Komma getrennt", color = Color.White, fontSize = 12.sp)
+            OutlinedTextField(
+                value = palette,
+                onValueChange = { palette = it.take(180) },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                label = { Text("Farben (#RRGGBB)") },
+            )
+            if (parsedPalette.isFailure) {
+                Text(parsedPalette.exceptionOrNull()?.message ?: "Ungültige Farben",
+                    color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            } else {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    parsedPalette.getOrNull().orEmpty().forEach { rgb ->
+                        Box(Modifier.size(26.dp).clip(RoundedCornerShape(9.dp))
+                            .background(Color(0xFF000000L or rgb.toLong())))
+                    }
+                }
+            }
+            if (config != null && controller.previewCount(choice) > 0) {
+                val lampCount = controller.previewCount(choice).coerceAtMost(24)
+                val count = ChaseCompiler.frames(config, 0, lampCount).size
+                val step = previewStep.roundToInt().coerceIn(0, count - 1)
+                Text("Effektvorschau · Schritt ${step + 1} von $count",
+                    color = Color.White, fontSize = 12.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    repeat(lampCount) { index ->
+                        val frame = ChaseCompiler.frames(config, index, lampCount)[step]
+                        val tinted = Color(0xFF000000L or frame.rgb.toLong())
+                        Box(
+                            Modifier.size(23.dp).clip(RoundedCornerShape(50))
+                                .background(tinted.copy(alpha = 0.2f + 0.8f * frame.brightness / 100f))
+                        )
+                    }
+                }
+                Slider(
+                    value = previewStep.coerceIn(0f, (count - 1).toFloat()),
+                    onValueChange = { previewStep = it },
+                    valueRange = 0f..(count - 1).toFloat()
+                )
+                Text("Simulation der Reihenfolge – keine Statusanzeige der echten Lampen.",
+                    color = muted, fontSize = 11.sp)
+            }
+            Text("Tempo · ${ms.roundToInt()} ms pro Lampe", color = Color.White, fontSize = 12.sp)
+            Slider(value = ms, onValueChange = { ms = it }, valueRange = 180f..2500f)
+            Text("Schweiflänge · ${tail.roundToInt()} Lampen", color = Color.White, fontSize = 12.sp)
+            Slider(value = tail, onValueChange = { tail = it }, valueRange = 1f..16f)
+            Text("Maximale Helligkeit · ${intensity.roundToInt()} %", color = Color.White, fontSize = 12.sp)
+            Slider(value = intensity, onValueChange = { intensity = it }, valueRange = 5f..100f)
+            Text("Laufrichtung", color = Color.White, fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                FilterChip(selected = direction == ChaseDirection.FORWARD,
+                    onClick = { direction = ChaseDirection.FORWARD }, label = { Text("Vorwärts") })
+                FilterChip(selected = direction == ChaseDirection.REVERSE,
+                    onClick = { direction = ChaseDirection.REVERSE }, label = { Text("Rückwärts") })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = bounce, onCheckedChange = { bounce = it })
+                Text("Pingpong · an den Enden umkehren", color = Color.White, fontSize = 12.sp)
+            }
+            Button(
+                onClick = { if (config != null) controller.playChase(config, choice) },
+                enabled = !controller.busy && config != null && controller.devices.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Lichtlauf starten") }
+            Text("Hinweis: Schnell wechselnde Farben können für lichtempfindliche Personen ungeeignet sein.",
+                color = muted, fontSize = 11.sp)
+            HorizontalDivider(color = Color(0xFF49475F))
+            OutlinedTextField(
+                value = name, onValueChange = { name = it.take(64) },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                label = { Text("Name der eigenen Szene") }
+            )
+            OutlinedButton(
+                onClick = {
+                    if (config != null) runCatching { controller.saveChase(name, config) }
+                        .onFailure { controller.report("Speichern fehlgeschlagen: " + it.message) }
+                },
+                enabled = config != null && name.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Aktuelle Einstellungen als Szene speichern") }
+            if (controller.savedChases.isNotEmpty()) {
+                Text("Gespeicherte Lichtläufe", color = Color.White, fontWeight = FontWeight.SemiBold)
+                controller.savedChases.forEach { saved ->
+                    Surface(color = Color(0xFF2A2F43), shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(saved.name, color = Color.White, fontWeight = FontWeight.Medium)
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                TextButton(onClick = {
+                                    val c = saved.config
+                                    style = c.style
+                                    palette = ChaseCompiler.encodePalette(c.palette)
+                                    ms = c.stepMs.toFloat()
+                                    tail = c.tailLength.toFloat()
+                                    intensity = c.brightness.toFloat()
+                                    direction = c.direction
+                                    bounce = c.bounce
+                                    name = saved.name
+                                }) { Text("Laden") }
+                                TextButton(onClick = {
+                                    controller.playChase(saved.config, choice, saved.name)
+                                }, enabled = !controller.busy && controller.devices.isNotEmpty()) {
+                                    Text("Starten")
+                                }
+                                TextButton(onClick = { controller.deleteChase(saved) },
+                                    enabled = !controller.busy) { Text("Löschen") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SceneRestoreOption(controller: LoftController) {
+    Surface(color = panel, shape = RoundedCornerShape(17.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Nach Stopp vorheriges Licht wiederherstellen",
+                        color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text("Ein/Aus, Farbe und Helligkeit jeder Lampe werden vor der Szene erfasst.",
+                        color = muted, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = controller.restoreAfterStop,
+                    onCheckedChange = controller::configureRestoreAfterStop,
+                    enabled = !controller.busy && controller.runningDeviceIps.isEmpty()
+                )
+            }
+            Text(
+                "Wenn ein Zustand nicht sicher gelesen werden kann, startet die Szene nicht. Wiederherstellung erfolgt beim Stoppen, nicht automatisch nach einer festen Zeit.",
+                color = muted, fontSize = 11.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun SceneExchangePanel(controller: LoftController) {
+    val context = LocalContext.current
+    var pendingExport by remember { mutableStateOf<String?>(null) }
+    var pendingImport by remember { mutableStateOf<SceneArchiveData?>(null) }
+    var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(SceneArchive.mimeType)
+    ) { uri ->
+        val payload = pendingExport
+        if (uri != null && payload != null) runCatching {
+            val bytes = payload.toByteArray(StandardCharsets.UTF_8)
+            context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
+                stream.write(bytes)
+                stream.flush()
+            } ?: error("Zieldatei nicht beschreibbar")
+        }.onSuccess {
+            controller.report("Szenen erfolgreich als JSON exportiert")
+        }.onFailure {
+            controller.report("Export fehlgeschlagen: " + it.message)
+        }
+        pendingExport = null
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) runCatching {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
+                val buffer = ByteArray(SceneArchive.maxBytes + 1)
+                var total = 0
+                while (total < buffer.size) {
+                    val read = stream.read(buffer, total, buffer.size - total)
+                    if (read < 0) break
+                    total += read
+                }
+                require(total <= SceneArchive.maxBytes) { "Importdatei ist zu groß" }
+                String(buffer, 0, total, StandardCharsets.UTF_8)
+            } ?: error("Datei nicht lesbar")
+            SceneArchive.decode(bytes)
+        }.onSuccess { archive ->
+            pendingImport = archive
+            selected = archive.flows.map { "flow:" + it.id }.toSet() +
+                archive.chases.map { "chase:" + it.id }.toSet()
+        }.onFailure { controller.report("Import fehlgeschlagen: " + it.message) }
+    }
+
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Szenen sichern und übertragen", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("Gesamte Sammlung oder einzelne Szenen – lokale JSON-Dateien ohne IP-Adressen, Geräte-IDs oder Grundrisse.",
+                color = muted, fontSize = 12.sp)
+            Button(onClick = {
+                pendingExport = controller.exportSceneArchive()
+                exportLauncher.launch(SceneArchive.fileName)
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("Alle Szenen exportieren")
+            }
+            OutlinedButton(onClick = {
+                importLauncher.launch(arrayOf(SceneArchive.mimeType, "text/plain"))
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("Szenen importieren · einzeln auswählen")
+            }
+            Text("Einzeln exportieren", color = Color.White, fontWeight = FontWeight.SemiBold)
+            controller.allScenes().forEach { scene ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(scene.name, color = Color.White, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        pendingExport = controller.exportSingleFlow(scene)
+                        exportLauncher.launch("yeelight-flow-" + scene.id + ".json")
+                    }) { Text("Export") }
+                }
+            }
+            controller.savedChases.forEach { preset ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(preset.name, color = Color.White, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        pendingExport = controller.exportSingleChase(preset)
+                        exportLauncher.launch("yeelight-chase-" + preset.id + ".json")
+                    }) { Text("Export") }
+                }
+            }
+            Text("Identische Szenen werden beim Import übersprungen; deine vorhandenen bleiben erhalten.",
+                color = muted, fontSize = 11.sp)
+        }
+    }
+    pendingImport?.let { archive ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text("Szenen zum Import auswählen") },
+            text = {
+                Column(Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState())) {
+                    Text("Nur markierte Szenen werden übernommen.",
+                        fontSize = 12.sp)
+                    archive.flows.forEach { scene ->
+                        val key = "flow:" + scene.id
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = key in selected,
+                                onCheckedChange = { checked ->
+                                    selected = if (checked) selected + key else selected - key
+                                })
+                            Text(scene.name + " · Farbverlauf", fontSize = 12.sp)
+                        }
+                    }
+                    archive.chases.forEach { preset ->
+                        val key = "chase:" + preset.id
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = key in selected,
+                                onCheckedChange = { checked ->
+                                    selected = if (checked) selected + key else selected - key
+                                })
+                            Text(preset.name + " · Lichtlauf", fontSize = 12.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = selected.isNotEmpty(),
+                    onClick = {
+                        runCatching {
+                            val subset = SceneArchiveData(
+                                archive.flows.filter { "flow:" + it.id in selected },
+                                archive.chases.filter { "chase:" + it.id in selected }
+                            )
+                            controller.importSceneArchive(SceneArchive.encode(subset))
+                        }.onSuccess { controller.report(it); pendingImport = null }
+                            .onFailure { controller.report("Import fehlgeschlagen: " + it.message) }
+                    }
+                ) { Text("Auswahl importieren") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImport = null }) { Text("Abbrechen") }
+            }
+        )
     }
 }
 

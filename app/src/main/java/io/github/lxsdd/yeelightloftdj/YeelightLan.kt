@@ -36,6 +36,12 @@ object YeelightLan {
         private set
     @Volatile var lastSearchInvalidPackets: Int = 0
         private set
+    @Volatile var lastSearchRoundUnique: List<Int> = emptyList()
+        private set
+    @Volatile var lastSearchSourceAddress: String = "unbekannt"
+        private set
+    @Volatile var lastSearchSourceMismatches: Int = 0
+        private set
     private val ipv4 = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}")
     private val search = (
         "M-SEARCH * HTTP/1.1\r\n" +
@@ -86,12 +92,20 @@ object YeelightLan {
         val found = linkedMapOf<String, YeelightDevice>()
         var packets = 0
         var invalid = 0
+        var mismatches = 0
+        val roundUnique = mutableListOf<Int>()
+        val source = wifiIpv4Address()
+            ?: error("Keine lokale WLAN-IPv4-Adresse erkannt; Multicast nicht auf Mobilfunk umleiten")
         try {
             lock.acquire()
-            DatagramSocket().use { socket ->
+            // Bind explicitly to the Wi-Fi IP so Android/VPN routing cannot
+            // accidentally send M-SEARCH via a different active interface.
+            DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+                lastSearchSourceAddress = socket.localAddress.hostAddress ?: "unbekannt"
                 socket.soTimeout = 220
                 val packet = DatagramPacket(search, search.size, InetAddress.getByName(HOST), PORT)
                 repeat(5) {
+                    val round = mutableSetOf<String>()
                     socket.send(packet)
                     val deadline = System.nanoTime() + 1_150_000_000L
                     while (System.nanoTime() < deadline) {
@@ -101,19 +115,66 @@ object YeelightLan {
                             socket.receive(received)
                             packets++
                             val parsed = parseAnnouncement(String(received.data, received.offset, received.length, Charsets.UTF_8))
-                            if (parsed == null) invalid++ else found[parsed.ip] = parsed
+                            if (parsed == null) invalid++ else {
+                                round.add(parsed.ip)
+                                if (received.address.hostAddress != parsed.ip) mismatches++
+                                found[parsed.ip] = parsed
+                            }
                         } catch (_: SocketTimeoutException) {
                             // Do not break: a bulb may reply after a quiet period.
                         }
                     }
+                    roundUnique.add(round.size)
                 }
             }
         } finally {
             lastSearchPackets = packets
             lastSearchInvalidPackets = invalid
+            lastSearchRoundUnique = roundUnique.toList()
+            lastSearchSourceMismatches = mismatches
             if (lock.isHeld) lock.release()
         }
         return found.values.sortedWith(compareBy({ it.model }, { it.ip }))
+    }
+
+
+    /**
+     * Explicit, read-only experiment: send the Yeelight search payload as
+     * directed UDP to already confirmed local TCP bulbs. Some firmwares ignore
+     * unicast search by design: a positive reply is useful evidence, a missing
+     * reply is NOT evidence of a fault.
+     */
+    fun directedUdpProbe(targets: List<YeelightDevice>): Set<String> {
+        val source = wifiIpv4Address() ?: error("Kein WLAN aktiv")
+        val allowed = targets.asSequence()
+            .filter { isLocalIp(it.ip) }
+            .distinctBy { it.ip }
+            .take(24).toList()
+        val answered = mutableSetOf<String>()
+        DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+            socket.soTimeout = 100
+            allowed.forEach { device ->
+                val address = InetAddress.getByName(device.ip)
+                socket.send(DatagramPacket(search, search.size, address, PORT))
+                val deadline = System.nanoTime() + 360_000_000L
+                while (System.nanoTime() < deadline) {
+                    try {
+                        val buffer = ByteArray(4096)
+                        val reply = DatagramPacket(buffer, buffer.size)
+                        socket.receive(reply)
+                        val parsed = parseAnnouncement(
+                            String(reply.data, reply.offset, reply.length, Charsets.UTF_8)
+                        )
+                        if (parsed?.ip == device.ip && reply.address.hostAddress == device.ip) {
+                            answered.add(device.ip)
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        // Continue through the bounded deadline.
+                    }
+                }
+            }
+        }
+        return answered
     }
 
     /** Safe fallback: one /24 block from the phone's Wi-Fi interface only. */
@@ -125,8 +186,9 @@ object YeelightLan {
         return (1..254).map { prefix + "." + it }.filterNot { it == ip }
     }
 
-    fun wifiSubnetCandidates(): List<String> {
-        val nets = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+    /** Prefer the actual Wi-Fi interface to Android's generic default network. */
+    fun wifiIpv4Address(): String? {
+        val nets = NetworkInterface.getNetworkInterfaces() ?: return null
         while (nets.hasMoreElements()) {
             val net = nets.nextElement()
             if (!net.isUp || (!net.name.startsWith("wlan") && !net.name.startsWith("wifi"))) continue
@@ -134,12 +196,15 @@ object YeelightLan {
             while (addresses.hasMoreElements()) {
                 val address = addresses.nextElement()
                 if (address is Inet4Address && isLocalIp(address.hostAddress ?: "")) {
-                    return subnetCandidates(address.hostAddress ?: "")
+                    return address.hostAddress
                 }
             }
         }
-        return emptyList()
+        return null
     }
+
+    fun wifiSubnetCandidates(): List<String> =
+        wifiIpv4Address()?.let(::subnetCandidates) ?: emptyList()
 
     /**
      * Read-only direct TCP probe for a Yeelight on port 55443.
@@ -226,7 +291,7 @@ object YeelightLan {
     /** Each JSON command ends in CRLF. We check explicit device errors. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
-        require(method in setOf("set_power", "start_cf", "stop_cf"))
+        require(method in setOf("set_power", "start_cf", "stop_cf", "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
         val id = seq.getAndIncrement()
         val payload = JSONObject().put("id", id).put("method", method)
             .put("params", JSONArray(params)).toString() + "\r\n"
@@ -241,6 +306,79 @@ object YeelightLan {
             if (result.has("error")) error(result.getJSONObject("error").optString("message", "Yeelight-Fehler"))
             if (result.optInt("id", -1) != id) error("Ungültige Geräteantwort")
         }
+    }
+
+
+    /** One status read over a fresh TCP connection; no fabricated device states. */
+    fun readStatus(device: YeelightDevice): LampSnapshot {
+        require(isLocalIp(device.ip))
+        val requestId = seq.getAndIncrement()
+        val params = JSONArray(LampSnapshot.properties)
+        val payload = JSONObject().put("id", requestId).put("method", "get_prop")
+            .put("params", params).toString() + "\r\n"
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
+            socket.soTimeout = 1800
+            socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
+            socket.getOutputStream().flush()
+            val line = socket.getInputStream().bufferedReader().readLine()
+                ?: error("Keine Statusantwort")
+            val answer = JSONObject(line)
+            if (answer.optInt("id", -1) != requestId) error("Falsche Statusantwort")
+            if (answer.has("error")) error(answer.getJSONObject("error").optString("message", "Statusfehler"))
+            val values = answer.optJSONArray("result") ?: error("Statusdaten fehlen")
+            return LampSnapshot.fromValues((0 until values.length()).map { values.optString(it) })
+                ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
+        }
+    }
+
+    /** Only explicitly requested commands can reach the local lamp. */
+    fun manualControl(device: YeelightDevice, command: LampCommand) {
+        require(command.method in setOf("set_power", "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
+        if (device.methods.isNotEmpty() && command.method !in device.methods) {
+            error(device.model + " meldet keine Unterstützung für " + command.method)
+        }
+        send(device, command.method, command.params)
+    }
+
+    /**
+     * Blink once and restore the previously read static state.
+     * Refuse unknown ON color modes rather than leave a lamp permanently recolored.
+     * The controller must prevent identification while a scene is active.
+     */
+    fun identify(device: YeelightDevice): LampSnapshot {
+        val before = readStatus(device)
+        if (before.isOn && (before.colorMode !in 1..3 || before.restoreCommands().size < 2)) {
+            error("Farbzustand nicht vollständig lesbar; Identifikation abgebrochen")
+        }
+        // A known capability list must permit both the flash and every restore command.
+        // Otherwise even a readable snapshot could leave a lamp in the wrong color.
+        val required = setOf("set_power", "set_rgb", "set_bright") +
+            before.restoreCommands().map { it.method }
+        if (device.methods.isNotEmpty() && !device.methods.containsAll(required)) {
+            error("Gerät unterstützt nicht alle Befehle für eine sichere Identifikation")
+        }
+        var touched = false
+        var failure: Exception? = null
+        try {
+            touched = true
+            manualControl(device, LampCommands.power(true))
+            manualControl(device, LampCommands.rgb(0xAA77FF))
+            manualControl(device, LampCommands.brightness(65))
+            Thread.sleep(650)
+        } catch (e: Exception) {
+            failure = e
+        } finally {
+            if (touched) {
+                // Attempt all restoration steps even if the first one fails.
+                before.restoreCommands().forEach { command ->
+                    try { manualControl(device, command) }
+                    catch (e: Exception) { if (failure == null) failure = e else failure?.addSuppressed(e) }
+                }
+            }
+        }
+        if (failure != null) throw failure!!
+        return before
     }
 
     fun play(device: YeelightDevice, expression: String) {
