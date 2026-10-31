@@ -1,12 +1,13 @@
-# Lichtlauf-Studio und Szenen-Import/Export (Android v0.1.2)
+# Lichtlauf-Studio, Szenen-Import/Export und Sortiermodus (Android v0.1.4)
 
 ## Ziel und Abnahme
 
 Für 15 aktuell direkt per LAN erkannte Lampen (5 per Multicast) kann der Nutzer
 **Szenen → Lichtlauf-Studio → Alle** wählen, den Effekt einstellen und mit
 **Lichtlauf starten** einen räumlichen Lichtlauf auslösen. Die Lampenreihenfolge
-wird unter **Geräte → Reihenfolge im Lauflicht** per ↑/↓ konfiguriert und lokal
-gespeichert. Die bestehende Auswahl **Test (1)** ermöglicht einen sicheren
+wird unter **Geräte → Lauflicht-Reihenfolge** mit direktem **Identifizieren**
+und ↑/↓ oder dem neuen **Lauflicht sortieren**-Assistenten konfiguriert und
+lokal gespeichert. Die bestehende Auswahl **Test (1)** ermöglicht einen sicheren
 Einzelgerätetest, **Loft** nutzt die Raumzuordnung.
 
 ## Drei Effekte
@@ -25,9 +26,11 @@ berechnete Position auf dem Handy, ausdrücklich nicht den echten Gerätestatus.
 ## LAN-Implementierung und Grenzen
 
 Das Android-Telefon kompiliert pro Lampe eine unterschiedliche native Yeelight
-`start_cf`-Sequenz mit den Phasen des ausgewählten Lichtwegs.
-Es sendet beim Start pro Lampe nur `set_power` und `start_cf` und
-beim Stopp `stop_cf`. **Keine** permanente Wiederholung von TCP-Kommandos
+Farbverlauf-Sequenz mit den Phasen des ausgewählten Lichtwegs.
+Seit v0.1.3 startet es bevorzugt atomar per `set_scene("cf")`, bei älteren
+Modellen mit bekannter Einschränkung über verzögertes `set_power` +
+`start_cf` und prüft danach die tatsächliche `flowing`-Eigenschaft.
+Beim Stopp verwendet es `stop_cf`. **Keine** permanente Wiederholung von TCP-Kommandos
 pro Animationsframe. Das reduziert die WLAN-Last erheblich. Das Yeelight-
 Protokoll begrenzt die Anzahl der LAN-Befehle pro Verbindung und Gerät.
 Das Starten von 15 Lampen ist nur näherungsweise synchron; Netzwerklatenzen
@@ -61,11 +64,35 @@ importierte Farbverläufe und vom Nutzer **gespeicherte** Lichtläufe.
 - **Nicht enthalten:** private IP-Adressen, Yeelight-ID, Räume,
   Grundrisse, Standortkoordinaten, Anmelde- oder Signierschlüssel.
 
+## Lauflicht-Reihenfolge: Visuelle Zuordnung im Gerätetab
+
+1. Unter **Geräte** oben **Lauflicht sortieren** öffnen. Die Geräte erscheinen
+   als kompakte, nummerierte Karten mit lokalem Anzeigenamen.
+2. Je Lampe auf **Identifizieren** tippen: ein kurzer violetter Impuls wird
+   nach vorheriger Statusabfrage ausgeführt und der ursprüngliche Zustand
+   anschließend wiederhergestellt. Unsicher lesbare Zustände führen zu einem
+   Fehler statt zu unkontrolliertem Schalten.
+3. Erkanntes Leuchtmittel mit **Als Nr. N** zur nächsten Wegposition zuweisen;
+   der Assistent springt zu Platz N+1. Jede Lampe kann pro Durchgang nur
+   einmal zugewiesen werden. Die Reihenfolge wird nach jedem Schritt
+   dauerhaft im lokalen App-Speicher gesichert.
+4. Für Korrekturen ohne Assistent stehen direkt **unter jeder Gerätekarte**
+   Identifizieren und ↑/↓ zur Verfügung. **Zuordnung neu beginnen** beginnt
+   eine neue Folge, ohne bereits gespeicherte Platzierungen zurückzusetzen.
+5. Identifizieren und Umsortieren sind während aktiver oder noch als aktiv
+   erfasster Lichtshows gesperrt. Zuerst zuverlässig stoppen.
+
+Die Sortierung ist eine räumliche Zuordnung und **kein Nachweis**, dass
+native Lampen-Animationen laufen oder exakt synchron starten. Ein weiterhin
+statischer Farbwechsel muss separat am Gerät diagnostiziert werden.
+
 ## Testplan am echten Loft
 
 1. Zunächst Szene `Test (1)` starten, Schweif und Stoppen prüfen.
-2. Unter Geräte zwei benachbarte Lampen in der Reihenfolge vertauschen;
-   erneut starten und Richtung kontrollieren.
+2. Unter Geräte den Sortiermodus starten, zwei Lampen identifizieren, per
+   **Als Nr. 1/2** zuordnen und danach mit ↑/↓ feinjustieren. Die App neu
+   öffnen und die persistierte Reihenfolge kontrollieren.
+   Erneut starten und Richtung kontrollieren.
 3. Mit `Alle` den 15-Lampen-Lauf auf längerer Tempoeinstellung auslösen;
    auf fehlende Leuchten, ungeplante Blitze und Startversatz achten.
 4. Regenbogenschweif → Sternschnuppe → Pingpong → Farbwelle prüfen,
