@@ -63,6 +63,10 @@ class MainActivity : ComponentActivity() {
             )) { LoftApp(controller) }
         }
     }
+    override fun onStop() {
+        controller.stopMicrophone()
+        super.onStop()
+    }
     override fun onDestroy() {
         controller.close()
         super.onDestroy()
@@ -76,8 +80,8 @@ private fun LoftApp(controller: LoftController) {
         containerColor = night,
         bottomBar = {
             NavigationBar(containerColor = panel) {
-                val pages = listOf("Home", "Szenen", "Geräte")
-                val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices)
+                val pages = listOf("Home", "Szenen", "Geräte", "Musik")
+                val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices, Icons.Rounded.GraphicEq)
                 pages.forEachIndexed { index, label ->
                     NavigationBarItem(
                         selected = page == index,
@@ -119,15 +123,19 @@ private fun LoftApp(controller: LoftController) {
                     item { ChasePanel(controller) }
                     item { SceneExchangePanel(controller) }
                     item { StopButton(controller) }
-                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Musikreaktion folgt später.") }
+                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Musikmodus über den Tab Musik verfügbar.") }
                 }
-                else -> {
+                2 -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
                     item { DeviceTools(controller) }
                     items(controller.orderedDevices(), key = { it.id }) { device -> DeviceCard(device, controller) }
                     if (controller.devices.isEmpty()) {
                         item { Note("Noch keine Geräte gefunden. Suche im WLAN oder füge eine lokale IP hinzu. LAN-Steuerung muss in Yeelight aktiviert sein.") }
                     }
+                }
+                else -> {
+                    item { TargetSelector(controller) }
+                    item { MusicScreen(controller) }
                 }
             }
             item { Footer() }
