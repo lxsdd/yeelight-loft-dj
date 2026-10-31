@@ -133,7 +133,7 @@ private fun LoftApp(controller: LoftController) {
                                 Text("Lauflicht-Reihenfolge", color = Color.White,
                                     fontWeight = FontWeight.SemiBold)
                                 Text(if (orderMode)
-                                    "Lampennamen antippen, optisch identifizieren und als nächste Position übernehmen."
+                                    "Je Lampe auf Identifizieren tippen und dann als nächste Position übernehmen."
                                 else "Lampen direkt an ihrer Position identifizieren oder im Sortiermodus nacheinander zuordnen.",
                                     color = muted, fontSize = 12.sp)
                                 OutlinedButton(
