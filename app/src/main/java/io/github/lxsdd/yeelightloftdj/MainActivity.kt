@@ -643,7 +643,7 @@ private fun SceneRestoreOption(controller: LoftController) {
                 }
                 Switch(
                     checked = controller.restoreAfterStop,
-                    onCheckedChange = controller::setRestoreAfterStop,
+                    onCheckedChange = controller::configureRestoreAfterStop,
                     enabled = !controller.busy && controller.runningDeviceIps.isEmpty()
                 )
             }
