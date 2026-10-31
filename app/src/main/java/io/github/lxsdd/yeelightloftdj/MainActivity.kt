@@ -11,6 +11,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.zIndex
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
+import sh.calvin.reorderable.draggableHandle
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -73,8 +85,21 @@ class MainActivity : ComponentActivity() {
 private fun LoftApp(controller: LoftController) {
     var page by remember { mutableIntStateOf(0) }
     var orderMode by remember { mutableStateOf(false) }
-    var nextPosition by remember { mutableIntStateOf(0) }
-    var positionedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var stagedOrder by remember { mutableStateOf<List<String>>(emptyList()) }
+    val scrollState = rememberLazyListState()
+    val feedback = LocalHapticFeedback.current
+    val dragState = rememberReorderableLazyListState(scrollState) { from, to ->
+        val source = (from.key as? String)?.takeIf { it.startsWith("sort:") }
+            ?.removePrefix("sort:")
+        val destination = (to.key as? String)?.takeIf { it.startsWith("sort:") }
+            ?.removePrefix("sort:")
+        if (controller.canOrganizeLamps && source != null && destination != null) {
+            val target = stagedOrder.indexOf(destination)
+            if (target >= 0) {
+                stagedOrder = LampOrder.relocate(stagedOrder, source, target)
+            }
+        }
+    }
     Scaffold(
         containerColor = night,
         bottomBar = {
@@ -93,6 +118,7 @@ private fun LoftApp(controller: LoftController) {
         },
     ) { padding ->
         LazyColumn(
+            state = scrollState,
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -127,50 +153,134 @@ private fun LoftApp(controller: LoftController) {
                 else -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
                     item {
-                        Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
-                            Column(Modifier.fillMaxWidth().padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("Lauflicht-Reihenfolge", color = Color.White,
-                                    fontWeight = FontWeight.SemiBold)
-                                Text(if (orderMode)
-                                    "Je Lampe auf Identifizieren tippen und dann als nächste Position übernehmen."
-                                else "Lampen direkt an ihrer Position identifizieren oder im Sortiermodus nacheinander zuordnen.",
-                                    color = muted, fontSize = 12.sp)
-                                OutlinedButton(
+                        Surface(color = panel, shape = RoundedCornerShape(24.dp)) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(18.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.DragHandle, contentDescription = null,
+                                        tint = lavender)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text("Lichtweg gestalten", color = Color.White,
+                                        fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                }
+                                Text(
+                                    if (orderMode)
+                                        "Am Griff ziehen und die Lampen in die gewünschte räumliche Abfolge bringen. Zum Erkennen kurz auf das Lichtsymbol tippen."
+                                    else "Deine Lampen auf einem Lichtweg – einfach ziehen statt Positionen eintippen.",
+                                    color = muted, fontSize = 12.sp
+                                )
+                                Button(
                                     onClick = {
-                                        orderMode = !orderMode
-                                        nextPosition = 0
-                                        positionedIds = emptySet()
+                                        if (orderMode) {
+                                            orderMode = false
+                                        } else {
+                                            stagedOrder = controller.orderedDevices().map { it.id }
+                                            orderMode = true
+                                        }
                                     },
                                     enabled = controller.devices.isNotEmpty(),
                                     modifier = Modifier.fillMaxWidth()
-                                ) { Text(if (orderMode) "Sortiermodus schließen" else "Lauflicht sortieren") }
-                                if (orderMode) {
-                                    Text(if (nextPosition >= controller.devices.size)
-                                        "Fertig: ${controller.devices.size} Lampen zugeordnet. Reihenfolge gespeichert."
-                                    else "Als Nächstes: Platz ${nextPosition + 1} von ${controller.devices.size}",
-                                        color = Color.White, fontWeight = FontWeight.Medium)
-                                    TextButton(onClick = {
-                                        nextPosition = 0
-                                        positionedIds = emptySet()
-                                    }, enabled = controller.canOrganizeLamps) {
-                                        Text("Zuordnung neu beginnen")
-                                    }
-                                    if (!controller.canOrganizeLamps) {
-                                        Text("Lichtshow zuerst vollständig stoppen. Währenddessen sind Identifikation und Sortierung gesperrt.",
-                                            color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                                    }
+                                ) {
+                                    Icon(Icons.Rounded.DragHandle, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(if (orderMode) "Sortierung schließen" else "Lichtweg anordnen")
+                                }
+                                if (orderMode && !controller.canOrganizeLamps) {
+                                    Text("Bitte die Lichtshow zuerst vollständig stoppen.",
+                                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                                 }
                             }
                         }
                     }
                     if (orderMode) {
-                        items(controller.orderedDevices(), key = { it.id }) { device ->
-                            LampSortCard(device, controller, nextPosition,
-                                device.id in positionedIds) {
-                                if (controller.placeLampAt(device, nextPosition)) {
-                                    positionedIds = positionedIds + device.id
-                                    nextPosition++
+                        val byId = controller.devices.associateBy { it.id }
+                        items(
+                            stagedOrder.mapNotNull { byId[it] },
+                            key = { "sort:" + it.id }
+                        ) { device ->
+                            ReorderableItem(
+                                dragState,
+                                key = "sort:" + device.id,
+                            ) { isDragging ->
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .zIndex(if (isDragging) 1f else 0f)
+                                        .animateItem()
+                                        .semantics {
+                                            customActions = listOf(
+                                                CustomAccessibilityAction("Im Lichtweg nach oben") {
+                                                    val at = stagedOrder.indexOf(device.id)
+                                                    if (controller.canOrganizeLamps && at > 0) {
+                                                        val changed = LampOrder.relocate(stagedOrder,
+                                                            device.id, at - 1)
+                                                        if (controller.saveDraggedOrder(changed)) {
+                                                            stagedOrder = changed
+                                                            true
+                                                        } else false
+                                                    } else false
+                                                },
+                                                CustomAccessibilityAction("Im Lichtweg nach unten") {
+                                                    val at = stagedOrder.indexOf(device.id)
+                                                    if (controller.canOrganizeLamps &&
+                                                        at >= 0 && at < stagedOrder.lastIndex
+                                                    ) {
+                                                        val changed = LampOrder.relocate(stagedOrder,
+                                                            device.id, at + 1)
+                                                        if (controller.saveDraggedOrder(changed)) {
+                                                            stagedOrder = changed
+                                                            true
+                                                        } else false
+                                                    } else false
+                                                }
+                                            )
+                                        },
+                                    color = if (isDragging) Color(0xFF34314F) else panel,
+                                    shape = RoundedCornerShape(22.dp),
+                                    shadowElevation = if (isDragging) 12.dp else 0.dp,
+                                    border = if (isDragging) BorderStroke(1.5.dp, lavender) else null,
+                                ) {
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        IconButton(
+                                            onClick = {},
+                                            modifier = if (controller.canOrganizeLamps) {
+                                                Modifier.draggableHandle(
+                                                    onDragStarted = {
+                                                        feedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    },
+                                                    onDragStopped = {
+                                                        if (!controller.saveDraggedOrder(stagedOrder)) {
+                                                            stagedOrder = controller.orderedDevices().map { it.id }
+                                                        }
+                                                    },
+                                                )
+                                            } else Modifier,
+                                            enabled = controller.canOrganizeLamps,
+                                        ) {
+                                            Icon(Icons.Rounded.DragHandle,
+                                                contentDescription = "Halten und zum Verschieben ziehen",
+                                                tint = lavender)
+                                        }
+                                        Column(Modifier.weight(1f)) {
+                                            Text(controller.displayName(device), color = Color.White,
+                                                fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                            Text(if (device.ip in controller.lastSeenIps)
+                                                "Im WLAN erkannt" else "Zuletzt nicht bestätigt",
+                                                color = muted, fontSize = 11.sp)
+                                        }
+                                        IconButton(
+                                            onClick = { controller.identifyLamp(device) },
+                                            enabled = controller.canOrganizeLamps,
+                                        ) {
+                                            Icon(Icons.Rounded.Lightbulb,
+                                                contentDescription = "Diese Lampe 2,5 Sekunden identifizieren",
+                                                tint = Color(0xFF80D9C6))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -379,20 +489,16 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                 else -> "Bei diesem Suchlauf nicht bestätigt"
             }
             Text("Erkennung: " + discoveryMethod, color = muted, fontSize = 11.sp)
-            val position = controller.orderedDevices().indexOfFirst { it.id == device.id }
-            Text("Reihenfolge im Lauflicht · Platz ${position + 1}",
-                fontSize = 12.sp, color = muted)
             Row(verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { controller.identifyLamp(device) },
                     enabled = controller.canOrganizeLamps,
                     modifier = Modifier.weight(1f)
-                ) { Text("Identifizieren") }
-                OutlinedButton(onClick = { controller.moveLamp(device, -1) },
-                    enabled = controller.canOrganizeLamps && position > 0) { Text("↑") }
-                OutlinedButton(onClick = { controller.moveLamp(device, 1) },
-                    enabled = controller.canOrganizeLamps && position < controller.devices.lastIndex) { Text("↓") }
+                ) { Text("Lampe identifizieren · 2,5 s") }
+                Icon(Icons.Rounded.DragHandle,
+                    contentDescription = "Im Sortiermodus per Drag-and-drop anordnen",
+                    tint = muted)
             }
             LampManualPanel(device, controller)
             TextButton(onClick = { controller.forget(device) }, enabled = !controller.busy) { Text("Aus dieser App entfernen") }
@@ -411,51 +517,6 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
     }
 }
 
-
-@Composable
-private fun LampSortCard(
-    device: YeelightDevice,
-    controller: LoftController,
-    nextPosition: Int,
-    assigned: Boolean,
-    onAssign: () -> Unit,
-) {
-    val place = controller.orderedDevices().indexOfFirst { it.id == device.id } + 1
-    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
-        Column(Modifier.fillMaxWidth().padding(15.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF35304E)), contentAlignment = Alignment.Center) {
-                    Text(place.toString(), color = lavender, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(controller.displayName(device), color = Color.White,
-                        fontWeight = FontWeight.SemiBold)
-                    Text("Platz $place · " + (if (device.ip in controller.lastSeenIps)
-                        "Zuletzt erreichbar" else "Nicht erneut bestätigt"),
-                        color = muted, fontSize = 11.sp)
-                }
-                if (assigned) Text("✓", color = Color(0xFF80D9C6),
-                    fontWeight = FontWeight.Bold)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { controller.identifyLamp(device) },
-                    enabled = controller.canOrganizeLamps,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Identifizieren") }
-                Button(
-                    onClick = onAssign,
-                    enabled = controller.canOrganizeLamps && !assigned &&
-                        nextPosition < controller.devices.size,
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (assigned) "Zugeordnet" else "Als Nr. ${nextPosition + 1}") }
-            }
-        }
-    }
-}
 
 @Composable
 private fun TargetPowerControls(controller: LoftController) {
