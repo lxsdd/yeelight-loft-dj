@@ -171,3 +171,21 @@ Details: [docs/CHASE_SCENES_DE.md](CHASE_SCENES_DE.md).
   Cast-Fallback und eigener Player.
 - Die daraus entstehende priorisierte Produktdifferenzierung ist in
   [UNIQUE_FEATURE_VISION_DE.md](UNIQUE_FEATURE_VISION_DE.md) dokumentiert.
+
+
+## Musik-/DJ-MVP v0.1.3 – ausführbarer Entwicklungsblock
+
+- Neue native Android-Mikrofonquelle: nur im Vordergrund, nur nach ausdrücklich
+  erteilter RECORD_AUDIO-Laufzeitberechtigung und aktivem Start-Button.
+- Echte lokale FFT-Spektrumanalyse mit sechs Frequenzbändern, Pegel,
+  Bass-Transienten/Beat und vorsichtiger BPM-Schätzung (kein simuliertes Signal).
+- Musik-Tab mit Live-Anzeige und klarer Mic/Privatsphäre-Zustandsmeldung.
+- Zweite, **separate** ausdrückliche Freigabe für Beat-Farbsteuerung
+  des gewählten Zielbereichs; Standard Test (1).
+- Strikte Yeelight-Kommandodrossel von mindestens 1500ms pro RGB-Befehl
+  und Lampe, Originalzustand vor Aktivierung sichern und beim Deaktivieren
+  wiederherstellen; auch nach Neustart wiederholbar.
+- Deezer-interne Wiedergabe/MediaProjection-AudioPlaybackCapture,
+  lokaler Player und Cast-Audio bleiben nach wie vor eigene, offene
+  Funktionsbereiche. Cast nutzt hier Mikrofon als physikalischen Fallback.
+- Ablauf und Grenzen: [MUSIC_MVP_DE.md](MUSIC_MVP_DE.md).
