@@ -4,7 +4,24 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Never check a private signing key into this public repository.
+// CI injects it only for trusted main/explicit workflow_dispatch builds.
+val stableStore = System.getenv("YEELIGHT_SIGNING_STORE")?.takeIf { it.isNotBlank() }
+val stablePassword = System.getenv("YEELIGHT_SIGNING_PASSWORD")?.takeIf { it.isNotBlank() }
+val stableSigning = stableStore != null && stablePassword != null
+
 android {
+    signingConfigs {
+        if (stableSigning) {
+            create("stablePreview") {
+                storeFile = file(stableStore!!)
+                storeType = "PKCS12"
+                storePassword = stablePassword!!
+                keyAlias = "loft-dj-app"
+                keyPassword = stablePassword
+            }
+        }
+    }
     namespace = "io.github.lxsdd.yeelightloftdj"
     compileSdk = 36
 
@@ -12,11 +29,19 @@ android {
         applicationId = "io.github.lxsdd.yeelightloftdj"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    buildTypes { release { isMinifyEnabled = false } }
+    buildTypes {
+        getByName("debug") {
+            if (stableSigning) signingConfig = signingConfigs.getByName("stablePreview")
+        }
+        getByName("release") {
+            isMinifyEnabled = false
+            if (stableSigning) signingConfig = signingConfigs.getByName("stablePreview")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

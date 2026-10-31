@@ -23,12 +23,31 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.13'
+      # Pull-request builds are untrusted and never receive signing credentials.
+      # Only main and explicit workflow_dispatch builds produce installable APKs.
+      - name: Configure stable signing (trusted builds only)
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          STORE_B64: ${{ secrets.YEELIGHT_SIGNING_STORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.YEELIGHT_SIGNING_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -z "$STORE_B64" || -z "$STORE_PASSWORD" ]]; then
+            echo "::error::Missing stable signing secrets. Follow docs/SIGNING.md"
+            exit 1
+          fi
+          echo "::add-mask::$STORE_PASSWORD"
+          printf '%s' "$STORE_B64" | base64 --decode > "$RUNNER_TEMP/loft-dj.p12"
+          chmod 600 "$RUNNER_TEMP/loft-dj.p12"
+          keytool -list -storetype PKCS12 -keystore "$RUNNER_TEMP/loft-dj.p12" -alias loft-dj-app -storepass "$STORE_PASSWORD" >/dev/null
+          echo "YEELIGHT_SIGNING_STORE=$RUNNER_TEMP/loft-dj.p12" >> "$GITHUB_ENV"
+          echo "YEELIGHT_SIGNING_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - uses: actions/upload-artifact@v4
-        if: success()
+        if: ${{ success() && github.event_name != 'pull_request' }}
         with:
-          name: yeelight-loft-dj-debug
+          name: yeelight-loft-dj-stable-signed
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: error

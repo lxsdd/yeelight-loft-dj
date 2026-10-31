@@ -12,7 +12,7 @@ Android-first, local-first lighting controller for Yeelight 1S (`color4`) lights
 
 ## Build and test
 
-CI uses Android SDK 36, JDK 17, Gradle 8.13 and runs `gradle testDebugUnitTest assembleDebug`. Download the *debug APK* from Actions after a successful run. GitHub-hosted debug keys are not stable across builds, so a stable privately managed signing identity is needed before repeat-update releases.
+CI uses Android SDK 36, JDK 17, Gradle 8.13 and runs `gradle testDebugUnitTest assembleDebug`. Pull-request CI compiles and tests but deliberately does **not** publish ephemeral-signature APKs. Once two private GitHub Actions signing secrets are configured, trusted `main` or manually dispatched builds produce a consistently signed APK. Read [SIGNING.md](docs/SIGNING.md) before distributing an APK. The original 0.1.0 preview used temporary runner signatures and **must be uninstalled once** before adopting the stable identity.
 
 ## Hardware acceptance (open)
 
