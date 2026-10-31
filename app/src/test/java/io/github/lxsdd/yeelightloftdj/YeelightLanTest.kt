@@ -108,4 +108,18 @@ class YeelightLanTest {
         assertTrue(YeelightLan.isSpecificModel("color4"))
         assertTrue(YeelightLan.isSpecificModel("stripe"))
     }
+    @Test fun atomicSceneIsPreferredWhenSupportedOrCapabilitiesUnknown() {
+        assertTrue(YeelightLan.preferAtomicFlowStart(emptySet()))
+        assertTrue(YeelightLan.preferAtomicFlowStart(setOf("start_cf", "set_scene")))
+        assertFalse(YeelightLan.preferAtomicFlowStart(setOf("start_cf", "stop_cf")))
+    }
+
+    @Test fun flowingPropertyNeedsAnExplicitDeviceState() {
+        assertEquals(true, YeelightLan.flowStateFromValue("1"))
+        assertEquals(false, YeelightLan.flowStateFromValue("0"))
+        assertNull(YeelightLan.flowStateFromValue(""))
+        assertNull(YeelightLan.flowStateFromValue("unsupported"))
+        assertNull(YeelightLan.flowStateFromValue(null))
+    }
+
 }
