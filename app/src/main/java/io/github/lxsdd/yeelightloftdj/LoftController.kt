@@ -420,10 +420,14 @@ class LoftController(context: Context) {
     }
 
     fun stop() {
-        val selectedDevices = devices.filter { it.ip in runningDeviceIps }
+        // After an app restart, native Yeelight loops may still be running.
+        // Fall back to the explicit target selection when session tracking is empty.
+        val selectedDevices = if (runningDeviceIps.isNotEmpty()) {
+            devices.filter { it.ip in runningDeviceIps }
+        } else selected()
         if (selectedDevices.isEmpty()) {
             activeScene = null
-            status = "Keine gestartete Lichtshow bekannt"
+            status = "Keine Lampen zum Stoppen ausgewählt"
             return
         }
         task("Stoppe Farbverläufe auf " + selectedDevices.size + " Lampen …") {
