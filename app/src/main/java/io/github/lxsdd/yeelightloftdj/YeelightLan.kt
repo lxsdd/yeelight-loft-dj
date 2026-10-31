@@ -32,6 +32,10 @@ object YeelightLan {
     private const val HOST = "239.255.255.250"
     private const val PORT = 1982
     private val seq = AtomicInteger(1)
+    @Volatile var lastSearchPackets: Int = 0
+        private set
+    @Volatile var lastSearchInvalidPackets: Int = 0
+        private set
     private val ipv4 = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}")
     private val search = (
         "M-SEARCH * HTTP/1.1\r\n" +
@@ -80,6 +84,8 @@ object YeelightLan {
         val lock = wifi.createMulticastLock("yeelight-loft-dj")
         lock.setReferenceCounted(false)
         val found = linkedMapOf<String, YeelightDevice>()
+        var packets = 0
+        var invalid = 0
         try {
             lock.acquire()
             DatagramSocket().use { socket ->
@@ -93,8 +99,9 @@ object YeelightLan {
                             val buffer = ByteArray(4096)
                             val received = DatagramPacket(buffer, buffer.size)
                             socket.receive(received)
-                            parseAnnouncement(String(received.data, received.offset, received.length, Charsets.UTF_8))
-                                ?.let { found[it.ip] = it }
+                            packets++
+                            val parsed = parseAnnouncement(String(received.data, received.offset, received.length, Charsets.UTF_8))
+                            if (parsed == null) invalid++ else found[parsed.ip] = parsed
                         } catch (_: SocketTimeoutException) {
                             // Do not break: a bulb may reply after a quiet period.
                         }
@@ -102,6 +109,8 @@ object YeelightLan {
                 }
             }
         } finally {
+            lastSearchPackets = packets
+            lastSearchInvalidPackets = invalid
             if (lock.isHeld) lock.release()
         }
         return found.values.sortedWith(compareBy({ it.model }, { it.ip }))
