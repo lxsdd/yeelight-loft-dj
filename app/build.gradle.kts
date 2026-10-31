@@ -29,8 +29,8 @@ android {
         applicationId = "io.github.lxsdd.yeelightloftdj"
         minSdk = 29
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
@@ -60,6 +60,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Apache-2.0, physical drag-and-drop with edge autoscroll and drag handles.
+    implementation("sh.calvin.reorderable:reorderable:3.1.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is only a mock in JVM unit tests.
