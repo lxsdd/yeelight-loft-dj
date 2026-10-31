@@ -14,12 +14,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class MicrophoneCapture {
     private val enabled = AtomicBoolean(false)
+    private val stopped = AtomicBoolean(false)
     @Volatile private var recorder: AudioRecord? = null
     val sampleRate = 16000
     val frameSize = 2048
 
     @SuppressLint("MissingPermission")
     suspend fun run(onFrame: suspend (MusicFrame) -> Unit) = withContext(Dispatchers.IO) {
+        check(!stopped.get()) { "Mikrofon wurde bereits gestoppt" }
         check(enabled.compareAndSet(false, true)) { "Mikrofon läuft bereits" }
         val analyzer = MusicAnalyzer(sampleRate, frameSize)
         try {
@@ -37,6 +39,7 @@ class MicrophoneCapture {
                 .setBufferSizeInBytes(maxOf(minimum * 2, frameSize * 2 * 4))
                 .build()
             recorder = audio
+            check(!stopped.get()) { "Mikrofonaufnahme wurde vor dem Start beendet" }
             check(audio.state == AudioRecord.STATE_INITIALIZED) { "Mikrofon konnte nicht initialisiert werden" }
             audio.startRecording()
             check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -67,6 +70,7 @@ class MicrophoneCapture {
     }
 
     fun stop() {
+        stopped.set(true)
         enabled.set(false)
         // Stop unblocks READ_BLOCKING; release remains owned by the IO worker.
         try { recorder?.stop() } catch (_: Exception) { }
