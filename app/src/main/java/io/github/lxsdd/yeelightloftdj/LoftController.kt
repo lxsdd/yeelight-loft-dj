@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -24,6 +25,7 @@ class LoftController(context: Context) {
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private var microphone: MicrophoneCapture? = null
     private var musicSending = false
+    private var musicStopPending = false
     private var lastMusicCommandAt = Long.MIN_VALUE / 2
     private var musicDeviceSession = prefs.getBoolean("music-light-session", false)
     private var musicColorBeat = 0L
@@ -42,7 +44,10 @@ class LoftController(context: Context) {
         private set
     var musicLightArmed by mutableStateOf(false)
         private set
-    var musicLightStatus by mutableStateOf("Musik-Lichtsteuerung nicht aktiviert")
+    var musicLightStatus by mutableStateOf(
+        if (musicDeviceSession) "Frühere Musiklicht-Sitzung erkannt · bitte Beleuchtung wiederherstellen"
+        else "Musik-Lichtsteuerung nicht aktiviert"
+    )
         private set
     var busy by mutableStateOf(false)
         private set
@@ -609,6 +614,7 @@ class LoftController(context: Context) {
                     device.ip to snapshot
                 } }.awaitAll().toMap()
             }
+            check(microphoneRunning) { "Mikrofon wurde vor der Lichtaktivierung gestoppt" }
             setRecoveryJournal(snapshots)
             setRunningIps(chosen.map { it.ip }.toSet())
             check(prefs.edit().putBoolean("music-light-session", true).commit()) {
@@ -627,7 +633,10 @@ class LoftController(context: Context) {
             }
             musicLightStatus = chosen.size.toString() +
                 " Lampen gewählt · max. 1 Farbwechsel je 1,5 s / Lampe"
-            if (failed.isEmpty()) "Musiklicht aktiviert · vorheriger Zustand gesichert"
+            if (!microphoneRunning) {
+                val stopResult = haltRunning(false)
+                "Mikrofon beendet; Beleuchtung wiederhergestellt · " + stopResult
+            } else if (failed.isEmpty()) "Musiklicht aktiviert · vorheriger Zustand gesichert"
             else "Musiklicht aktiviert · " + failed.size + " Lampen nicht einschaltbar; Stoppen zum Zurücksetzen"
         }
     }
@@ -669,11 +678,17 @@ class LoftController(context: Context) {
     }
 
     fun disarmMusicLights() {
-        if (!musicLightArmed && !musicDeviceSession) return
-        task("Stoppe Musiklicht und stelle vorherige Beleuchtung wieder her …") {
-            val message = haltRunning(false)
-            musicLightArmed = false
-            message
+        if ((!musicLightArmed && !musicDeviceSession) || musicStopPending) return
+        // Stop new beat commands immediately, then await any already in flight
+        // before restoring. Otherwise a late RGB write could undo recovery.
+        musicLightArmed = false
+        musicStopPending = true
+        scope.launch {
+            while (busy || musicSending) delay(50)
+            task("Stoppe Musiklicht und stelle vorherige Beleuchtung wieder her …") {
+                try { haltRunning(false) }
+                finally { musicStopPending = false }
+            }
         }
     }
 
