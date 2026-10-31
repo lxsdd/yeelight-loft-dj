@@ -32,3 +32,55 @@
 - Öffentliche Runner, keine privaten Gerätedaten im Repository.
 - Keine eigenmächtigen Merges oder Releases.
 - Keine Internetfreigabe für unverschlüsseltes Yeelight-LAN.
+
+## Erweiterte Produktvision (31.10.2026)
+
+**Ziel:** Android-first, local-first Ersatz der Yeelight-App für sämtliche im Heimnetz
+unterstützten täglichen Lichtfunktionen. Die DJ-Musikvisualisierung bleibt ein
+gleichwertiges Unterscheidungsmerkmal und wird nicht gestrichen.
+
+### Geräte, Räume, Gruppen, Grundriss
+- Geräteinventar mit stabiler Identität bevorzugt aus Yeelight-Geräte-ID;
+  bei reiner TCP-Erkennung IP-Fallback und spätere Zusammenführung beim SSDP-Treffer.
+- Frei benennbare Lampen sowie lokale Zuordnung zu Raum, mehreren Gruppen und
+  einer globalen oder gruppenbezogenen **Reihenfolge**.
+- Räumlicher Editor: Grundrisse pro Etage/Raum mit frei verschiebbaren Punkten;
+  normierte x/y-Positionen und optionale Höhe (z) pro Lampe; Zoom und Rotation
+  nach Bedarf, alles lokal und exportierbar.
+- Geräteidentifikation per kontrolliertem kurzem Aufblinken mit Wiederherstellung
+  des vorherigen Zustands. Nur auf ausdrückliche Berührung.
+- Szenen/Gruppen können manuelle Sortierung oder räumliche Anordnung verwenden.
+- Effekte: Raum-übergreifendes Lauflicht, Wellenfront anhand Position und
+  Geschwindigkeit, Spiral-/Kreisbewegungen, Zonen, Audio-Bass-Pulse und
+  frequenzabhängige Gruppen. Berechnungen erfolgen auf dem Telefon.
+- Gleichzeitige Steuerung vieler Yeelights muss die unterstützten LAN-Funktionen,
+  Befehlsraten und Netzwerk-Latenz berücksichtigen; keine perfekte
+  Millisekunden-Synchronität versprechen.
+- Lokale Sicherung/Export/Import der Lampenstruktur, bevorzugt JSON, ohne
+  öffentliche Offenlegung persönlicher Adressen/IPs.
+
+### Alltag und Migration von der Yeelight-App
+- Schalten, Dimmen, RGB, Weißtemperatur, Übergänge, Status-Updates,
+  Favoriten, zeitgesteuerte Szenen (Android-Betriebsrestriktionen berücksichtigen).
+- Kein Konto und keine Cloud **für die Steuerung bereits eingerichteter,
+  LAN-fähiger Geräte im selben WLAN**.
+- Neue WLAN-Geräte provisionieren, Firmware aktualisieren, Yeelight-Cloud-Szenen,
+  Remote-Zugriff und etwaige Google-Home-Cloud-Anbindung sind **nicht** durch
+  das LAN-Protokoll allein gegeben. Diese Lücken gesondert behandeln, bevor
+  der Nutzer die Hersteller-App oder sein Konto entfernt.
+- Bedienoberfläche hochwertig und selbsterklärend: Compose Material 3,
+  visuelle Raumkarten, direkt-manipulierbarer Grundriss, responsive Tablet-UI,
+  dunkles und optional helles Design.
+- Mikrofon-Analyse, Android AudioPlaybackCapture soweit von Quell-App erlaubt,
+  Google-Cast-Mikrofon-Fallback, eigener lokaler Player: weiterhin geplant.
+
+### Umsetzungsempfehlung
+1. Zuverlässige Geräteliste, Identifikation, Lese-/Schreibbefehle, Live-Status.
+2. Persistentes Datenmodell (Lamp/Room/Group/Location/Order/Scene), lokal sichern.
+3. Gruppen- und räumlicher Editor, Multi-Device-Ausführung, Lauflicht/Lichtwellen.
+4. Alltagssteuerung und Szenen-/Zeitplanverwaltung vollständig machen.
+5. Musik/DJ-Engine, Android-Interne-Audioquellen und erweiterte Visualisierung.
+6. Lückenprüfung gegenüber Yeelight-App vor endgültiger Migration.
+
+**Hardware-Abnahme:** Erfolgreicher Farbverlaufs-Test einer echten Birne im
+Modus "Test (1)" ist bestätigt. Mehrlampen- und Langzeittest noch offen.
