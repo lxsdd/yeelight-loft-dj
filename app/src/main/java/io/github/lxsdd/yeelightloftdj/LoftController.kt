@@ -45,6 +45,9 @@ class LoftController(context: Context) {
         private set
     var aliases by mutableStateOf<Map<String, String>>(emptyMap())
         private set
+    // Live status is intentionally session-only; cached values from yesterday are not live data.
+    var lampSnapshots by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
+        private set
 
     private fun loadKnown(): List<YeelightDevice> = try {
         val array = JSONArray(prefs.getString("known-devices", "[]") ?: "[]")
@@ -168,9 +171,67 @@ class LoftController(context: Context) {
         lastSeenIps = lastSeenIps - device.ip
         lastMulticastIps = lastMulticastIps - device.ip
         lastDirectIps = lastDirectIps - device.ip
+        lampSnapshots = lampSnapshots - device.ip
         prefs.edit().remove("room." + device.id).remove("alias." + device.ip).apply()
         saveKnown()
         status = "Gerät aus dieser App entfernt"
+    }
+
+
+    fun snapshotFor(device: YeelightDevice): LampSnapshot? = lampSnapshots[device.ip]
+
+    fun refreshLamp(device: YeelightDevice) = task("Lese Status von " + displayName(device) + " …") {
+        val current = withContext(Dispatchers.IO) { YeelightLan.readStatus(device) }
+        lampSnapshots = lampSnapshots + (device.ip to current)
+        displayName(device) + ": " + if (current.isOn) "Ein · " + current.brightness + "%" else "Aus"
+    }
+
+    fun controlLamp(device: YeelightDevice, command: LampCommand, description: String) =
+        task(description + " …") {
+            val current = withContext(Dispatchers.IO) {
+                YeelightLan.manualControl(device, command)
+                runCatching { YeelightLan.readStatus(device) }.getOrNull()
+            }
+            if (current != null) lampSnapshots = lampSnapshots + (device.ip to current)
+            else lampSnapshots = lampSnapshots - device.ip
+            displayName(device) + ": " + description +
+                if (current != null) " · bestätigt" else " · Befehl akzeptiert, Status unbekannt"
+        }
+
+    fun identifyLamp(device: YeelightDevice) {
+        if (activeScene != null) {
+            status = "Lichtshow zuerst stoppen, um den Lampenzustand nicht zu verändern"
+            return
+        }
+        task("Identifiziere " + displayName(device) + " …") {
+            withContext(Dispatchers.IO) { YeelightLan.identify(device) }
+            val restored = runCatching { withContext(Dispatchers.IO) { YeelightLan.readStatus(device) } }.getOrNull()
+            if (restored != null) lampSnapshots = lampSnapshots + (device.ip to restored)
+            else lampSnapshots = lampSnapshots - device.ip
+            displayName(device) + ": kurzer Lichtimpuls abgeschlossen · Zustand wiederhergestellt"
+        }
+    }
+
+    fun powerTarget(on: Boolean) {
+        val chosen = selected()
+        if (chosen.isEmpty()) {
+            status = "Bitte zuerst den Zielbereich mit Lampen belegen"
+            return
+        }
+        task(if (on) "Schalte Zielbereich ein …" else "Schalte Zielbereich aus …") {
+            val errors = withContext(Dispatchers.IO) {
+                chosen.map { device -> async {
+                    try { YeelightLan.manualControl(device, LampCommands.power(on)); null }
+                    catch (e: Exception) { displayName(device) + ": " + (e.message ?: "Fehler") }
+                } }.awaitAll().filterNotNull()
+            }
+            lampSnapshots = lampSnapshots - chosen.map { it.ip }.toSet()
+            activeScene = null
+            val successful = chosen.size - errors.size
+            successful.toString() + "/" + chosen.size + " Lampen " +
+                if (on) "eingeschaltet" else "ausgeschaltet" +
+                if (errors.isEmpty()) "" else " · " + errors.first()
+        }
     }
 
     private fun selected() = when (target) {
