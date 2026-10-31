@@ -2,6 +2,7 @@ package io.github.lxsdd.yeelightloftdj
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.json.JSONObject
 
 class SceneArchiveTest {
     private val chase = ChasePreset("meteor-saved", "Sternschnuppe",
@@ -24,7 +25,8 @@ class SceneArchiveTest {
         assertThrows(IllegalArgumentException::class.java) { SceneArchive.decode("{}") }
         val valid = SceneArchive.encode(SceneArchiveData(emptyList(), emptyList()))
         assertThrows(IllegalArgumentException::class.java) {
-            SceneArchive.decode(valid.replace("\"version\": 1", "\"version\": 999"))
+            val wrong = JSONObject(valid).put("version", 999).toString()
+            SceneArchive.decode(wrong)
         }
         assertThrows(IllegalArgumentException::class.java) {
             SceneArchive.decode(" ".repeat(SceneArchive.maxBytes + 1))
@@ -33,13 +35,16 @@ class SceneArchiveTest {
 
     @Test fun rejectsOutOfBoundsChaseAndFlowFrames() {
         val json = SceneArchive.encode(SceneArchiveData(SceneLibrary.scenes.take(1), listOf(chase)))
+        val invalidTail = JSONObject(json)
+        invalidTail.getJSONArray("chases").getJSONObject(0).put("tail", 77)
         assertThrows(IllegalArgumentException::class.java) {
-            SceneArchive.decode(json.replace("\"tail\": 3", "\"tail\": 77"))
+            SceneArchive.decode(invalidTail.toString())
         }
-        val mutated = json.replace("\"brightness\": 55", "\"brightness\": 101")
-        // Depending on builtin frame brightness, the replacement is detectable.
-        if (mutated != json) {
-            assertThrows(IllegalArgumentException::class.java) { SceneArchive.decode(mutated) }
+        val invalidBrightness = JSONObject(json)
+        invalidBrightness.getJSONArray("flows").getJSONObject(0)
+            .getJSONArray("frames").getJSONObject(0).put("brightness", 101)
+        assertThrows(IllegalArgumentException::class.java) {
+            SceneArchive.decode(invalidBrightness.toString())
         }
     }
 
