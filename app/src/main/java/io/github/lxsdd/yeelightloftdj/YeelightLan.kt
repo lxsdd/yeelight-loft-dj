@@ -343,15 +343,21 @@ object YeelightLan {
             socket.soTimeout = 1800
             socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
             socket.getOutputStream().flush()
-            val line = socket.getInputStream().bufferedReader().readLine()
-                ?: error("Keine Antwort auf flowing-Abfrage")
-            val answer = JSONObject(line)
-            if (answer.optInt("id", -1) != requestId) error("Falsche flowing-Antwort")
-            if (answer.has("error")) {
-                error("flowing-Abfrage: " +
-                    answer.getJSONObject("error").optString("message", "Gerätefehler"))
+            val reader = socket.getInputStream().bufferedReader()
+            var answer: JSONObject? = null
+            repeat(12) {
+                if (answer == null) {
+                    val candidate = JSONObject(reader.readLine()
+                        ?: error("Keine Antwort auf flowing-Abfrage"))
+                    if (candidate.optInt("id", -1) == requestId) answer = candidate
+                }
             }
-            return flowStateFromValue(answer.optJSONArray("result")?.optString(0))
+            val response = answer ?: error("Keine passende flowing-Antwort")
+            if (response.has("error")) {
+                error("flowing-Abfrage: " +
+                    response.getJSONObject("error").optString("message", "Gerätefehler"))
+            }
+            return flowStateFromValue(response.optJSONArray("result")?.optString(0))
         }
     }
 
@@ -370,12 +376,17 @@ object YeelightLan {
             socket.soTimeout = 1800
             socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
             socket.getOutputStream().flush()
-            val line = socket.getInputStream().bufferedReader().readLine()
-                ?: error("Keine Statusantwort")
-            val answer = JSONObject(line)
-            if (answer.optInt("id", -1) != requestId) error("Falsche Statusantwort")
-            if (answer.has("error")) error(answer.getJSONObject("error").optString("message", "Statusfehler"))
-            val values = answer.optJSONArray("result") ?: error("Statusdaten fehlen")
+            val reader = socket.getInputStream().bufferedReader()
+            var answer: JSONObject? = null
+            repeat(12) {
+                if (answer == null) {
+                    val candidate = JSONObject(reader.readLine() ?: error("Keine Statusantwort"))
+                    if (candidate.optInt("id", -1) == requestId) answer = candidate
+                }
+            }
+            val response = answer ?: error("Keine passende Statusantwort")
+            if (response.has("error")) error(response.getJSONObject("error").optString("message", "Statusfehler"))
+            val values = response.optJSONArray("result") ?: error("Statusdaten fehlen")
             return LampSnapshot.fromValues((0 until values.length()).map { values.optString(it) })
                 ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
         }
