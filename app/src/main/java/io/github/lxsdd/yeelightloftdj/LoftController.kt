@@ -132,7 +132,9 @@ class LoftController(context: Context) {
         searchDiagnostics = "Multicast: " + lastMulticastIps.size +
             " · Direkt-LAN: " + lastDirectIps.size +
             " · Beide: " + both.size +
-            " · Nur direkt: " + directOnly.size
+            " · Nur direkt: " + directOnly.size +
+            "\nUDP-Antwortpakete: " + YeelightLan.lastSearchPackets +
+            " · davon nicht auswertbar: " + YeelightLan.lastSearchInvalidPackets
         val merged = YeelightLan.mergeDevices(multicast, direct)
         mergeFound(merged, "Kombinierte Suche")
     }
