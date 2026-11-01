@@ -630,7 +630,21 @@ object YeelightLan {
         val flowing: Boolean?,
         val snapshot: LampSnapshot?,
         val powerOn: Boolean?,
+        /** Firmware-reported 0/1; never interpret missing property as off. */
+        val musicOn: Boolean? = null,
     )
+
+    internal fun musicStateFromValue(raw: String?): Boolean? =
+        flowStateFromValue(raw)
+
+    /** Refuse a new music session if another controller may own it. */
+    internal fun musicPreflightRefusal(musicOn: Boolean?): String? = when (musicOn) {
+        false -> null
+        true -> "Musikmodus der Lampe ist bereits aktiv (music_on=1). " +
+            "Keine fremde Sitzung überschreiben oder erneut starten."
+        null -> "Musikmodus der Lampe nicht lesbar (music_on unbekannt). " +
+            "Keine LAN-Steuerbefehle für einen ungeprüften Musikstart."
+    }
 
     internal fun parseRecoveryProperties(values: List<String>): RecoveryObservation {
         val powerOn = when (values.getOrNull(1)) {
@@ -643,7 +657,8 @@ object YeelightLan {
         return RecoveryObservation(
             flowing = flowStateFromValue(values.getOrNull(0)),
             snapshot = LampSnapshot.fromValues(values.drop(1)),
-            powerOn = powerOn
+            powerOn = powerOn,
+            musicOn = musicStateFromValue(values.getOrNull(1 + LampSnapshot.properties.size))
         )
     }
 
@@ -653,7 +668,7 @@ object YeelightLan {
     private fun directReadRecoveryObservation(device: YeelightDevice): RecoveryObservation {
         require(isLocalIp(device.ip))
         val reply=tcp.request(device.ip,device.port,seq.getAndIncrement(),"get_prop",
-            listOf("flowing")+LampSnapshot.properties)
+            listOf("flowing")+LampSnapshot.properties+listOf("music_on"))
         if(reply.has("error"))error("Zustandsprüfung abgelehnt: " +
             reply.getJSONObject("error").optString("message","Yeelight-Fehler"))
         val values=reply.optJSONArray("result")?:error("Statuswerte fehlen")
@@ -677,6 +692,29 @@ object YeelightLan {
         return LampSnapshot.fromValues((0 until values.length()).map { values.optString(it) })
             ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
     }
+
+    /**
+     * One read-only get_prop snapshot with music_on for safe music preflight.
+     * An unavailable value is UNKNOWN, never interpreted as idle.
+     * This is a single command, not a background poll or automatic retry.
+     */
+    fun readMusicPreflight(device: YeelightDevice): LampSnapshot =
+        commandGate.run(device.ip) {
+            require(isLocalIp(device.ip))
+            val response = tcp.request(device.ip, device.port, seq.getAndIncrement(),
+                "get_prop", LampSnapshot.properties + listOf("music_on"))
+            if (response.has("error")) error("Music-Preflight abgelehnt: " +
+                response.getJSONObject("error").optString("message", "Gerätefehler"))
+            val values = response.optJSONArray("result")
+                ?: error("Music-Preflight: keine Statusantwort")
+            val musicOn = musicStateFromValue(
+                values.optString(LampSnapshot.properties.size, "")
+            )
+            musicPreflightRefusal(musicOn)?.let { error(it) }
+            LampSnapshot.fromValues((0 until LampSnapshot.properties.size).map {
+                values.optString(it)
+            }) ?: error("Music-Preflight: ursprünglicher Lichtzustand unvollständig")
+        }
 
     /**
      * Only devices that EXPLICITLY advertise set_music and set_rgb can use
