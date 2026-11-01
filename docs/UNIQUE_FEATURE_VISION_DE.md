@@ -6,8 +6,7 @@ bisherigen Anforderungen. Android ist Hauptplattform, Windows optional.
 ## Priorität A: Musikmotor und räumliches DJ-Licht (nächster großer Funktionsblock)
 
 1. **Musikquellen-Eingang** mit drei transparent ausgewiesenen Betriebsarten:
-   Smartphone-Mikrofon für XDJ-RX3/Lautsprecher/Cast, eigenes
-   lokales Audio und erlaubte interne Android-Wiedergabe via
+   Smartphone-Mikrofon für XDJ-RX3/Lautsprecher/Cast, Audio aus bestehenden Player-/Streaming-Apps und erlaubte interne Android-Wiedergabe via
    `MediaProjection`/`AudioPlaybackCapture`. Keine Zusage, DRM oder
    Aufnahmeverbote anderer Apps umgehen zu können.
 2. **On-device Audio-Engine**: FFT-Bänder, Bassdrum-/Onset-Signale,
@@ -71,9 +70,17 @@ bisherigen Anforderungen. Android ist Hauptplattform, Windows optional.
 3. **Grundrisseditor-MVP**: Räume/Wände/Türen, Lampenpositionen, grafischer
    Effektpfad und lokale Dateisicherung.
 4. Weitere Audioquellen, AudioPlaybackCapture mit Erlaubniskontrolle,
-   Cast-Mikrofon-Fallback und lokaler Player.
+   Cast-Mikrofon-Fallback; kein eigener lokaler Player.
 5. Schicht-/Story-Editor, Kalibrierung, Material-3-Tablet-Layout und
    App-Migrationsprüfung.
 
 Keine dieser Folgefunktionen wird als implementiert bezeichnet, solange
 sie nicht in Quellcode und CI/Hardwareprüfung nachgewiesen ist.
+
+
+**Aktueller verbindlicher UX-/Funktions-Fahrplan:**
+[FEATURE_LEDGER_UX_ROADMAP_DE.md](FEATURE_LEDGER_UX_ROADMAP_DE.md).
+Frühere Player-Planungen wurden durch die Nutzerentscheidung
+überschrieben: kein eigener MP3-Player, sondern Unterstützung bestehender
+Audioquellen. Bereits in v0.2.1 realisierte Android-AudioPlaybackCapture
+ist nicht erneut als unimplementiert zu behandeln.
