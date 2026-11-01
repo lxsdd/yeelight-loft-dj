@@ -148,9 +148,12 @@ class MusicAnalyzer(private val sampleRate: Int = 16000, val fftSize: Int = 2048
 object MusicLightPolicy {
     const val minCommandIntervalMs = 1500L
 
-    fun maySend(frame: MusicFrame, previousSentAt: Long, nowMs: Long): Boolean =
-        frame.beat && frame.rms >= 0.016f &&
-            nowMs >= previousSentAt && nowMs - previousSentAt >= minCommandIntervalMs
+    fun maySend(
+        frame: MusicFrame, previousSentAt: Long, nowMs: Long,
+        minimumIntervalMs: Long = minCommandIntervalMs,
+    ): Boolean =
+        frame.beat && frame.rms >= 0.016f && minimumIntervalMs >= 250L &&
+            nowMs >= previousSentAt && nowMs - previousSentAt >= minimumIntervalMs
 
     fun color(frame: MusicFrame, lampIndex: Int, beatNumber: Long): Int {
         val palettes = listOf(
