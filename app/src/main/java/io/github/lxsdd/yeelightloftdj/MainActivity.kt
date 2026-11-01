@@ -1150,6 +1150,27 @@ private fun DeviceCapabilityPanel(device: YeelightDevice) {
                         fontSize = 12.sp
                     )
                 }
+                val notAvailable = YeelightCommandCatalog.reportedButNotImplemented(device.methods)
+                if (notAvailable.isNotEmpty()) {
+                    var showFuture by remember(device.id) { mutableStateOf(false) }
+                    TextButton(onClick = { showFuture = !showFuture }) {
+                        Text(notAvailable.size.toString() + " weitere Gerätebefehle anzeigen " +
+                            if (showFuture) "−" else "+")
+                    }
+                    if (showFuture) {
+                        notAvailable.forEach { method ->
+                            Text(method.title + " · Gerät meldet " + method.id +
+                                ", in App noch nicht implementiert",
+                                color = muted, fontSize = 11.sp)
+                        }
+                    }
+                }
+                val future = YeelightCommandCatalog.unknownReported(device.methods)
+                if (future.isNotEmpty()) {
+                    Text("Firmware meldet zusätzliche, nicht klassifizierte Befehle: " +
+                        future.joinToString(", ").take(150),
+                        color = muted, fontSize = 11.sp)
+                }
             }
         }
     }
