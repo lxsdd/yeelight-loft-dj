@@ -491,7 +491,8 @@ class LoftController(context: Context) {
             }
             val read = result.getOrThrow()
             val decision = RecoveryReadPolicy.decide(
-                read.flowing, read.snapshot, snapshot, scannerMode
+                read.flowing, read.snapshot, snapshot, scannerMode,
+                reportedPowerOn = read.powerOn
             )
             val label = displayName(device)
             if (RecoveryReadPolicy.canClear(decision)) {
