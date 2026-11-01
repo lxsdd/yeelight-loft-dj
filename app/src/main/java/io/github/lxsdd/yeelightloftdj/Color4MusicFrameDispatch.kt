@@ -8,10 +8,13 @@ package io.github.lxsdd.yeelightloftdj
  * eight-second reverse-channel acceptance test. It is NEVER a substitute
  * for classic LAN TCP writes, nor does it fabricate detected beats or BPM.
  */
-internal enum class MusicFrameDispatch { NONE, BEAT, AUDIO_ACTIVITY }
+internal enum class MusicFrameDispatch { NONE, BEAT, ACCENT, AUDIO_ACTIVITY }
 
 internal object Color4MusicFrameDispatch {
     private const val MIN_ACTIVITY_INTERVAL_MS = 1_000L
+    // At most 2 measured non-bass accent writes per second and ONLY through
+    // the explicitly approved, already connected reverse-music channel.
+    private const val MIN_ACCENT_INTERVAL_MS = 500L
 
     fun isAudible(frame: MusicFrame): Boolean =
         frame.rms.isFinite() && frame.peak.isFinite() &&
@@ -29,8 +32,16 @@ internal object Color4MusicFrameDispatch {
         if (MusicLightPolicy.maySend(frame, previousSentAt, nowMs, beatInterval)) {
             return MusicFrameDispatch.BEAT
         }
+        // A real onset from the 6-band FFT can also trigger a Color4
+        // acceptance frame. Absolutely no accent bypass of standard LAN
+        // command pacing, 8-second deadline, or model/SUPPORT gates.
+        if (acceptanceTest && allStreaming && isAudible(frame) &&
+            frame.accent != null && nowMs >= previousSentAt &&
+            nowMs - previousSentAt >= MIN_ACCENT_INTERVAL_MS
+        ) return MusicFrameDispatch.ACCENT
+
         // Never weaken normal user shows or send continuous Color4 updates
-        // via the quota-limited classic LAN endpoint.
+        // via the quota-limited classic LAN endpoint. Fallback stays 1/s.
         if (acceptanceTest && allStreaming && isAudible(frame) &&
             nowMs >= previousSentAt &&
             nowMs - previousSentAt >= MIN_ACTIVITY_INTERVAL_MS
@@ -43,6 +54,10 @@ internal data class Color4MusicTestMetrics(
     val frames: Long = 0,
     val audible: Long = 0,
     val beats: Long = 0,
+    val accents: Long = 0,
+    val beatWriteAttempts: Long = 0,
+    val accentWriteAttempts: Long = 0,
+    val activityWriteAttempts: Long = 0,
     val writeAttempts: Long = 0,
     val writeFailures: Long = 0,
 ) {
@@ -50,17 +65,33 @@ internal data class Color4MusicTestMetrics(
         frames = frames + 1,
         audible = audible + if (Color4MusicFrameDispatch.isAudible(frame)) 1 else 0,
         beats = beats + if (frame.beat) 1 else 0,
+        accents = accents + if (frame.accent != null) 1 else 0,
     )
 
-    fun withWrites(attempts: Int, failures: Int): Color4MusicTestMetrics {
+    fun withWrites(
+        attempts: Int,
+        failures: Int,
+        dispatch: MusicFrameDispatch = MusicFrameDispatch.AUDIO_ACTIVITY,
+    ): Color4MusicTestMetrics {
         require(attempts >= 0 && failures in 0..attempts)
-        return copy(writeAttempts = writeAttempts + attempts,
-            writeFailures = writeFailures + failures)
+        require(dispatch != MusicFrameDispatch.NONE || attempts == 0)
+        return copy(
+            beatWriteAttempts = beatWriteAttempts +
+                if (dispatch == MusicFrameDispatch.BEAT) attempts else 0,
+            accentWriteAttempts = accentWriteAttempts +
+                if (dispatch == MusicFrameDispatch.ACCENT) attempts else 0,
+            activityWriteAttempts = activityWriteAttempts +
+                if (dispatch == MusicFrameDispatch.AUDIO_ACTIVITY) attempts else 0,
+            writeAttempts = writeAttempts + attempts,
+            writeFailures = writeFailures + failures
+        )
     }
 
     fun runningReport(): String =
         "RC-Musiktest · Audio: $audible/$frames Frames · Beats: $beats · " +
-            "RGB-Sendeversuche: $writeAttempts · Übertragungsfehler: $writeFailures"
+            "Akzente: $accents · RGB-Sendeversuche: $writeAttempts " +
+            "(Beat $beatWriteAttempts / Akzent $accentWriteAttempts / " +
+            "Aktivität $activityWriteAttempts) · Übertragungsfehler: $writeFailures"
 
     fun finishedReport(): String {
         val sent = writeAttempts - writeFailures
@@ -72,7 +103,9 @@ internal data class Color4MusicTestMetrics(
             else -> "$sent RGB-Telegramm(e) an den Rückkanal geschrieben"
         }
         return "Color4-Test beendet · $outcome · " +
-            "Audio $audible/$frames · Beats $beats · " +
-            "Fehler $writeFailures. Senden ist keine optische Bestätigung."
+            "Audio $audible/$frames · Beats $beats · Akzente $accents · " +
+            "RGB-Versuche: Beat $beatWriteAttempts / Akzent $accentWriteAttempts / " +
+            "Aktivität $activityWriteAttempts · Fehler $writeFailures. " +
+            "Senden ist keine optische Bestätigung."
     }
 }

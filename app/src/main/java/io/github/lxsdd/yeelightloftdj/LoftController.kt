@@ -1672,10 +1672,9 @@ class LoftController(context: Context) {
         if (musicLightArmed && !busy && acceptanceTestActive) {
             acceptanceStats = acceptanceStats.withFrame(frame)
         }
-        // RC3 only dispatched BEAT=true frames: a live audio signal with no
-        // detected bass transient could leave the reverse stream entirely idle.
-        // The dispatcher now handles measured, non-silent audio ONLY during
-        // the explicit, single-Color4 acceptance test.
+        // RGB dispatch is gated: normal shows remain bass-beat-only.
+        // Only the explicitly single-device acceptance test may emit
+        // slower measured multi-band onsets on an active reverse channel.
         onMusicBeat(frame)
     }
 
@@ -1900,7 +1899,7 @@ class LoftController(context: Context) {
                     Triple(permitted.size, chosen.size - permitted.size, failures)
                 }
                 if (acceptanceTestActive) {
-                    acceptanceStats = acceptanceStats.withWrites(attempted, problems.size)
+                    acceptanceStats = acceptanceStats.withWrites(attempted, problems.size, dispatch)
                 }
                 musicLightStatus = when {
                     acceptanceTestActive -> acceptanceStats.runningReport()
