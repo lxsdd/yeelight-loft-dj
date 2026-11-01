@@ -1814,7 +1814,26 @@ class LoftController(context: Context) {
         musicAcceptanceEpoch++ // invalidate any pending acceptance timer
         musicStopPending = true
         scope.launch {
-            while (busy || musicSending) delay(50)
+            val drained = withTimeoutOrNull(2_500L) {
+                while (busy || musicSending) delay(50)
+                true
+            } == true
+            if (!drained && musicSending) {
+                // A stuck OutputStream.write is not bounded by soTimeout.
+                // Close only the reverse socket; set_music(0) is reserved
+                // for the single subsequent stop in haltRunning().
+                YeelightLan.interruptMusicOutputs(runningDeviceIps)
+            }
+            val settled = drained || withTimeoutOrNull(3_000L) {
+                while (busy || musicSending) delay(50)
+                true
+            } == true
+            if (!settled) {
+                musicLightStatus = "Musikkanal hängt noch – keine weitere Steuerung. " +
+                    "Wiederherstellung bleibt gespeichert; Stopp erneut prüfen."
+                musicStopPending = false
+                return@launch
+            }
             task("Stoppe Musiklicht und stelle vorherige Beleuchtung wieder her …") {
                 try { haltRunning(false) }
                 finally { musicStopPending = false }
