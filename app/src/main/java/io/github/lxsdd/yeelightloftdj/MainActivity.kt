@@ -661,11 +661,24 @@ private fun RecoveryBanner(controller: LoftController) {
 @Composable
 private fun Status(controller: LoftController) {
     Surface(shape = RoundedCornerShape(17.dp), color = Color(0xFF252A3A)) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (controller.busy) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Rounded.Lightbulb, null, tint = Color(0xFF7EDBC7), modifier = Modifier.size(19.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(controller.status, color = Color.White, fontSize = 13.sp, maxLines = 3)
+        Column(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (controller.busy) CircularProgressIndicator(
+                    Modifier.size(17.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Rounded.Lightbulb, null, tint = Color(0xFF7EDBC7),
+                    modifier = Modifier.size(19.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(controller.status, color = Color.White, fontSize = 13.sp, maxLines = 3)
+            }
+            val warning = FirmwareQuotaUiPolicy.quarantinedSummary(
+                controller.quarantinedLampLabels()
+            )
+            if (warning.isNotBlank()) {
+                Text(warning, color = Color(0xFFFFD38A), fontSize = 11.sp)
+            }
         }
     }
 }
