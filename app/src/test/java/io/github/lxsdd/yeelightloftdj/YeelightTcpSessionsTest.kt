@@ -109,8 +109,7 @@ class YeelightTcpSessionsTest {
                     val line = socket.getInputStream().bufferedReader().readLine()
                     val id = org.json.JSONObject(line).getInt("id")
                     socket.getOutputStream().write(
-                        (org.json.JSONObject().put("id", id).put("error", org.json.JSONObject().put("message", "client quota exceeded")).toString() + "\r\n"
-                            .toByteArray()
+                        (org.json.JSONObject().put("id", id).put("error", org.json.JSONObject().put("message", "client quota exceeded")).toString() + "\r\n").toByteArray()
                     )
                     socket.getOutputStream().flush()
                 }
@@ -155,8 +154,7 @@ class YeelightTcpSessionsTest {
                     val line = socket.getInputStream().bufferedReader().readLine()
                     val id = org.json.JSONObject(line).getInt("id")
                     socket.getOutputStream().write(
-                        (org.json.JSONObject().put("id", id).put("error", org.json.JSONObject().put("message", "unsupported method")).toString() + "\r\n"
-                            .toByteArray()
+                        (org.json.JSONObject().put("id", id).put("error", org.json.JSONObject().put("message", "unsupported method")).toString() + "\r\n").toByteArray()
                     )
                     socket.getOutputStream().flush()
                 }
