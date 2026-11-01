@@ -15,13 +15,13 @@ class TargetReferenceTest {
     @Test fun roomRenameAndDeletionNeverLeaveInvisibleTarget() {
         assertEquals("Raum:Esstisch",
             TargetReference.roomRenamed("Raum:Esszimmer", "Esszimmer", "Esstisch"))
-        assertEquals("Test (1)",
+        assertEquals("Auswahl",
             TargetReference.roomRemoved("Raum:Esstisch", "Esstisch"))
         assertEquals("Loft", TargetReference.roomRemoved("Loft", "Esstisch"))
     }
 
     @Test fun forgottenSingleLampFallsBackToSafeExplicitTestTarget() {
-        assertEquals("Test (1)", TargetReference.deviceRemoved("Lampe:lost", "lost"))
+        assertEquals("Auswahl", TargetReference.deviceRemoved("Lampe:lost", "lost"))
         assertEquals("Auswahl", TargetReference.deviceRemoved("Auswahl", "lost"))
     }
 }

@@ -527,6 +527,7 @@ private fun SceneCard(scene: LoftScene, enabled: Boolean, active: Boolean, onPla
 @Composable
 private fun TargetSelector(controller: LoftController) {
     var showSingles by remember { mutableStateOf(false) }
+    var newGroupName by rememberSaveable { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Ziel · " + controller.targetLabel(controller.target) +
             " (" + controller.selectedCount() + " Lampen)", color = Color.White,
@@ -582,36 +583,64 @@ private fun TargetSelector(controller: LoftController) {
             Text(controller.targetDescription(controller.target),
                 color = muted, fontSize = 12.sp)
         }
-        if (controller.target == "Loft") {
-            var editLoft by rememberSaveable { mutableStateOf(false) }
-            TextButton(onClick = { editLoft = !editLoft }) {
-                Text(if (editLoft) "Loft-Gruppe schließen" else "Loft-Gruppe bearbeiten")
-            }
-            if (editLoft) {
-                Text("Loft-Mitglieder unabhängig von den Räumen auswählen.",
-                    color = muted, fontSize = 12.sp)
-                controller.orderedDevices().forEach { device ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = device.id in controller.loftMemberIds(),
-                            onCheckedChange = { controller.setLoftMember(device.id, it) },
-                            enabled = controller.canOrganizeLamps
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
-                            Text(controller.roomFor(device), color = muted, fontSize = 11.sp)
-                        }
-                        TextButton(
-                            onClick = { controller.identifyLamp(device) },
-                            enabled = controller.canIdentifyLamp(device)
-                        ) { Text("Identifizieren", fontSize = 11.sp) }
+        HorizontalDivider(color = Color(0xFF374052))
+        Text("Eigene Gruppen", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Text("Beliebig benannte Gruppen mit den gewünschten Lampen erstellen und bearbeiten.",
+            color = muted, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = newGroupName,
+                onValueChange = { newGroupName = it.take(40) },
+                modifier = Modifier.weight(1f),
+                label = { Text("Neuer Gruppenname") }, singleLine = true)
+            Button(
+                onClick = {
+                    controller.addGroup(newGroupName)
+                    newGroupName = ""
+                },
+                enabled = controller.canOrganizeLamps &&
+                    NamedLampGroups.validName(newGroupName.trim())
+            ) { Text("Anlegen") }
+        }
+        if (controller.target.startsWith("Gruppe:")) {
+            val selected = controller.target.removePrefix("Gruppe:")
+            var renamed by rememberSaveable(selected) { mutableStateOf(selected) }
+            Text("Gruppenmitglieder · " + selected, color = Color.White,
+                fontWeight = FontWeight.SemiBold)
+            controller.orderedDevices().forEach { device ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = device.id in controller.namedGroups[selected].orEmpty(),
+                        onCheckedChange = { controller.setGroupMember(selected, device.id, it) },
+                        enabled = controller.canOrganizeLamps
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
+                        Text(controller.roomFor(device), color = muted, fontSize = 11.sp)
+                    }
+                    TextButton(onClick = { controller.identifyLamp(device) },
+                        enabled = controller.canIdentifyLamp(device)) {
+                        Text("Erkennen", fontSize = 11.sp)
                     }
                 }
+            }
+            OutlinedTextField(value = renamed,
+                onValueChange = { renamed = it.take(40) },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                label = { Text("Gruppe umbenennen") })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = controller::resetLoftMembers,
+                    onClick = { controller.renameGroup(selected, renamed) },
+                    enabled = controller.canOrganizeLamps &&
+                        NamedLampGroups.validName(renamed.trim()) &&
+                        renamed.trim() != selected,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Speichern") }
+                TextButton(
+                    onClick = { controller.deleteGroup(selected) },
                     enabled = controller.canOrganizeLamps,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Loft wieder nach Räumen zusammenstellen") }
+                    modifier = Modifier.weight(1f)
+                ) { Text("Gruppe löschen") }
             }
         }
     }
@@ -745,6 +774,18 @@ private fun DeviceTools(controller: LoftController, initiallyExpanded: Boolean =
                 Text(controller.searchDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
                 Text("Yeelight nutzt SSDP-ähnliches UDP-Multicast (nicht mDNS). Antworten kommen einzeln per Unicast; Direkt-LAN prüft unabhängig davon TCP 55443. Je Suchrunde werden unterschiedliche Lampen gezählt.", color = muted, fontSize = 11.sp)
             }
+        }
+        OutlinedButton(
+            onClick = controller::extendedMulticastDiagnostic,
+            enabled = !controller.busy && controller.devices.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("12-Runden-Multicast-Gegenprobe (nur lesend)") }
+        Text("Jede Lampe einzeln: UDP-Antworten pro Suchrunde vs. TCP-Erreichbarkeit",
+            color = muted, fontSize = 12.sp)
+        controller.orderedDevices().forEach { device ->
+            Text(controller.displayName(device) + " · " + controller.discoveryDetail(device),
+                color = if (device.ip in controller.lastMulticastIps)
+                    Color(0xFF80D9C6) else muted, fontSize = 11.sp)
         }
         OutlinedButton(
             onClick = controller::compareDirectedUdp,
@@ -906,6 +947,66 @@ private fun TargetPowerControls(controller: LoftController) {
                     modifier = Modifier.weight(1f)
                 ) { Text("Ausschalten") }
             }
+            if (controller.lastPowerResults.isNotEmpty()) {
+                HorizontalDivider(color = Color(0xFF394156))
+                Text("Letzte Schaltmessung · " +
+                    if (controller.lastPowerDesiredOn == true) "EIN" else "AUS",
+                    color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(controller.lastPowerSummary, color = muted, fontSize = 12.sp)
+                controller.orderedDevices().filter {
+                    it.ip in controller.lastPowerResults
+                }.forEach { device ->
+                    PowerTrace(
+                        controller.displayName(device),
+                        controller.lastPowerResults.getValue(device.ip),
+                        discoverySource(controller, device)
+                    )
+                }
+                Text("Zeiten ab Betätigung der einzelnen Lampe, nicht ab dem " +
+                    "ersten Gruppenbefehl. Kein automatischer Retry bei unbekanntem Status.",
+                    color = muted, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun discoverySource(controller: LoftController, device: YeelightDevice): String =
+    when {
+        device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps ->
+            "UDP + TCP erkannt"
+        device.ip in controller.lastMulticastIps -> "UDP erkannt"
+        device.ip in controller.lastDirectIps -> "nur TCP erkannt"
+        else -> "letzte Erkennung nicht bestätigt"
+    }
+
+@Composable
+private fun PowerTrace(name: String, probe: PowerProbe, discovery: String) {
+    val outcome = when (probe.outcome) {
+        PowerOutcome.VERIFIED -> "Schaltzustand bestätigt"
+        PowerOutcome.ACK_ONLY -> "Befehl angenommen, Zustand unbekannt"
+        PowerOutcome.MISMATCH -> "Zustand weicht vom Ziel ab"
+        PowerOutcome.REJECTED -> "Befehl abgelehnt"
+        PowerOutcome.NO_ACK -> "Geräteantwort fehlt"
+        PowerOutcome.UNREACHABLE -> "TCP nicht erreichbar"
+        PowerOutcome.PROTECTED -> "Durch Wiederherstellung geschützt"
+        PowerOutcome.UNSUPPORTED -> "Gerät unterstützt Ein/Aus nicht"
+    }
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(name + " · " + discovery + " · " + outcome,
+            color = if (probe.outcome == PowerOutcome.VERIFIED)
+                Color(0xFF80D9C6) else Color(0xFFFFC1A6),
+            fontSize = 12.sp)
+        if (probe.totalMs > 0) {
+            Text("TCP: " + (probe.connectMs?.let { "$it ms" } ?: "keine Verbindung") +
+                " · OK: " + (probe.ackMs?.let { "$it ms" } ?: "keine Bestätigung") +
+                " · Status: " + (probe.statusMs?.let { "$it ms" } ?: "nicht verifiziert") +
+                " · Gesamt: " + probe.totalMs + " ms",
+                color = muted, fontSize = 11.sp)
+        }
+        if (probe.message.isNotBlank()) {
+            Text(probe.message.take(140), color = muted, fontSize = 11.sp)
         }
     }
 }
@@ -983,6 +1084,12 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
         if (!controller.canIdentifyLamp(device)) {
             Text("Nur diese Lampe ist wegen Lichtshow/Wiederherstellung derzeit geschützt.",
                 color = muted, fontSize = 11.sp)
+        }
+        controller.lastPowerResults[device.ip]?.let { probe ->
+            Text("Letzte Ein/Aus-Messung", color = Color.White,
+                fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            PowerTrace(controller.displayName(device), probe,
+                discoverySource(controller, device))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
