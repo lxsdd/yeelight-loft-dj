@@ -111,6 +111,26 @@ class YeelightMusicChannelTest {
         assertFalse(channel.isActive)
         channel.close()
         assertEquals(1, disableCalls.get())
+        assertTrue(channel.alreadyDisabledSuccessfully)
+    }
+
+    @Test fun failedCleanupIsNotFalselyReportedAsAcknowledgedMusicDisable() {
+        val disabled = AtomicInteger()
+        val channel = YeelightMusicChannel(
+            "127.0.0.1",
+            enableOnDevice = { _, _ -> error("Handshake ACK missing") },
+            disableOnDevice = {
+                disabled.incrementAndGet()
+                error("set_music(0) rejected")
+            }
+        )
+        val failure = runCatching { channel.start("127.0.0.1") }.exceptionOrNull()
+        assertNotNull(failure)
+        assertEquals(1, disabled.get())
+        assertFalse(channel.alreadyDisabledSuccessfully)
+        assertEquals(1, failure!!.suppressed.size)
+        channel.close() // no duplicated write
+        assertEquals(1, disabled.get())
     }
 
     @Test fun unknownReversePeerIsRejectedBeforeAnyMusicCommandIsSent() {
