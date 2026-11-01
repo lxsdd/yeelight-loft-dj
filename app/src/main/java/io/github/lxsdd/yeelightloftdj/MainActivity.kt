@@ -1329,6 +1329,17 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
     if (!expanded) return
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val lanQuarantined = controller.isLampLanQuarantined(device)
+        if (lanQuarantined) {
+            Note("LAN-Steuerung dieser Lampe geschützt: Die Firmware hat " +
+                "'client quota exceeded' gemeldet. Es werden keine regulären " +
+                "LAN-Kommandos mehr gesendet. Kein automatischer Neustart oder Retry.")
+            OutlinedButton(
+                onClick = { controller.verifyLampLanRecovery(device) },
+                enabled = !controller.busy,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("LAN-Wiederherstellung prüfen (1 Leseabfrage)") }
+        }
         if (device.methods.isEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
