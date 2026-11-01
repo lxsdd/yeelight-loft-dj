@@ -237,6 +237,12 @@ fun MusicScreen(controller: LoftController) {
                     ) { Text("Musiklicht stoppen und vorheriges Licht wiederherstellen") }
                 }
                 Text(controller.musicLightStatus, color = Color(0xFF98A6C0), fontSize = 12.sp)
+                if (controller.lastColor4TestReport.isNotBlank()) {
+                    Text(
+                        controller.lastColor4TestReport,
+                        color = Color(0xFF67E1C8), fontSize = 12.sp
+                    )
+                }
                 Text("Vor Aktivierung werden alle ursprünglichen Lampenzustände lokal gesichert. " +
                     "Wenn diese nicht lesbar sind, wird kein Licht verändert.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
@@ -250,10 +256,11 @@ fun MusicScreen(controller: LoftController) {
                 text = {
                     Text("Ausgewählte Lampe: ${controller.color4AcceptanceTargetName() ?: "unbekannt"}. " +
                         "Nur fortfahren, wenn dies Couchtisch ist. " +
-                        "Der Test läuft höchstens 8 Sekunden, sendet nur musikgesteuerte " +
-                        "Farbimpulse über den bestätigten Rückkanal und versucht anschließend " +
-                        "die vorherigen Werte wiederherzustellen. Bei einer Fehlermeldung " +
-                        "keine weiteren Versuche starten.")
+                        "Der Test läuft höchstens 8 Sekunden. Bei messbarer Musik " +
+                        "werden echte Bassimpulse oder langsamere Audioaktivitäts-" +
+                        "Farbwechsel ausschließlich über den Rückkanal gesendet. " +
+                        "Anschließend wird der vorherige Zustand wiederhergestellt. " +
+                        "Bei einer Fehlermeldung nicht erneut starten.")
                 },
                 confirmButton = {
                     TextButton(onClick = {

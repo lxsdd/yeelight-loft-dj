@@ -41,6 +41,10 @@ class LoftController(context: Context) {
     private var musicDeviceSession = prefs.getBoolean("music-light-session", false)
     private var musicColorBeat = 0L
     private var musicAcceptanceEpoch = 0L
+    // The eight-second Color4 acceptance test also watches real non-beat
+    // audio activity; it NEVER enables this fallback in normal LAN shows.
+    private var acceptanceTestActive = false
+    private var acceptanceStats = Color4MusicTestMetrics()
 
 
     var devices by mutableStateOf(loadKnown())
@@ -81,6 +85,8 @@ class LoftController(context: Context) {
         if (musicDeviceSession) "Frühere Musiklicht-Sitzung erkannt · bitte Beleuchtung wiederherstellen"
         else "Musik-Lichtsteuerung nicht aktiviert"
     )
+        private set
+    var lastColor4TestReport by mutableStateOf("")
         private set
     var busy by mutableStateOf(false)
         private set
@@ -1662,10 +1668,15 @@ class LoftController(context: Context) {
 
     private fun consumeMusicFrame(frame: MusicFrame) {
         musicFrame = frame
-        if (frame.beat) {
-            musicBeatCount++
-            onMusicBeat(frame)
+        if (frame.beat) musicBeatCount++
+        if (musicLightArmed && !busy && acceptanceTestActive) {
+            acceptanceStats = acceptanceStats.withFrame(frame)
         }
+        // RC3 only dispatched BEAT=true frames: a live audio signal with no
+        // detected bass transient could leave the reverse stream entirely idle.
+        // The dispatcher now handles measured, non-silent audio ONLY during
+        // the explicit, single-Color4 acceptance test.
+        onMusicBeat(frame)
     }
 
     fun startInternalAudio(resultCode: Int, grant: android.content.Intent) {
@@ -1817,6 +1828,11 @@ class LoftController(context: Context) {
                     } + " · keine Farbimpulse gesendet · " + restored
             }
             val streamingCount = chosen.count(YeelightLan::musicModeActive)
+            acceptanceTestActive = acceptanceTest
+            if (acceptanceTest) {
+                acceptanceStats = Color4MusicTestMetrics()
+                lastColor4TestReport = "Test läuft: empfange echte Audiodaten · keine simulierten Beats"
+            }
             musicLightStatus = "$streamingCount Musik-Rückkanäle · " +
                 (chosen.size - streamingCount) + " reguläre LAN-Lampen"
             if (!microphoneRunning && !InternalAudioBridge.running) {
@@ -1844,8 +1860,12 @@ class LoftController(context: Context) {
         val chosen = orderedDevices().filter { it.ip in runningDeviceIps }
         if (chosen.isEmpty()) return
         val allStreaming = chosen.all(YeelightLan::musicModeActive)
-        val interval = if (allStreaming) 350L else MusicLightPolicy.minCommandIntervalMs
-        if (!MusicLightPolicy.maySend(frame, lastMusicCommandAt, now, interval)) return
+        val dispatch = Color4MusicFrameDispatch.decide(
+            frame, lastMusicCommandAt, now,
+            acceptanceTest = acceptanceTestActive && chosen.size == 1,
+            allStreaming = allStreaming
+        )
+        if (dispatch == MusicFrameDispatch.NONE) return
         musicSending = true
         lastMusicCommandAt = now
         musicColorBeat++
@@ -1879,7 +1899,11 @@ class LoftController(context: Context) {
                     } }.awaitAll().filterNotNull()
                     Triple(permitted.size, chosen.size - permitted.size, failures)
                 }
+                if (acceptanceTestActive) {
+                    acceptanceStats = acceptanceStats.withWrites(attempted, problems.size)
+                }
                 musicLightStatus = when {
+                    acceptanceTestActive -> acceptanceStats.runningReport()
                     attempted == 0 ->
                         "Musikimpulse pausiert · fehlender Rückkanal oder LAN-Stoppreserve"
                     problems.isEmpty() && paused == 0 ->
@@ -1892,6 +1916,12 @@ class LoftController(context: Context) {
                 musicSending = false
             }
         }
+    }
+
+    private fun completeAcceptanceReport() {
+        if (!acceptanceTestActive) return
+        acceptanceTestActive = false
+        lastColor4TestReport = acceptanceStats.finishedReport()
     }
 
     fun disarmMusicLights() {
@@ -1919,12 +1949,20 @@ class LoftController(context: Context) {
             if (!settled) {
                 musicLightStatus = "Musikkanal hängt noch – keine weitere Steuerung. " +
                     "Wiederherstellung bleibt gespeichert; Stopp erneut prüfen."
+                if (acceptanceTestActive) {
+                    lastColor4TestReport = "Stop nicht bestätigt; " +
+                        "kein weiterer Test, Wiederherstellung prüfen."
+                    acceptanceTestActive = false
+                }
                 musicStopPending = false
                 return@launch
             }
             task("Stoppe Musiklicht und stelle vorherige Beleuchtung wieder her …") {
                 try { haltRunning(false) }
-                finally { musicStopPending = false }
+                finally {
+                    completeAcceptanceReport()
+                    musicStopPending = false
+                }
             }
         }
     }
