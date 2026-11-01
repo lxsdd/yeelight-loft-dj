@@ -599,6 +599,7 @@ class LoftController(context: Context) {
             "\nUDP-Antwortpakete: " + YeelightLan.lastSearchPackets +
             " · davon nicht auswertbar: " + YeelightLan.lastSearchInvalidPackets +
             "\nWLAN-Sendeadresse: " + YeelightLan.lastSearchSourceAddress +
+            " · Wi-Fi-Netzbindung: " + YeelightLan.lastSearchBoundToWifiNetwork +
             " · Treffer je Suchrunde: " + YeelightLan.lastSearchRoundUnique.joinToString("/") +
             " · Absender-/Location-Abweichungen: " + YeelightLan.lastSearchSourceMismatches
         val merged = YeelightLan.mergeDevices(multicast, direct)
@@ -626,6 +627,7 @@ class LoftController(context: Context) {
                 "\nAntwortpakete insgesamt: " + YeelightLan.lastSearchPackets +
                 " · nicht lesbar: " + YeelightLan.lastSearchInvalidPackets +
                 "\nAbsender-IP: " + YeelightLan.lastSearchSourceAddress +
+                " · Wi-Fi-Netzbindung: " + YeelightLan.lastSearchBoundToWifiNetwork +
                 " · Absender/Location-Abweichungen: " +
                 YeelightLan.lastSearchSourceMismatches
             mergeFound(replies, "12-Runden-Multicast-Gegenprobe")
@@ -652,7 +654,7 @@ class LoftController(context: Context) {
             return
         }
         task("Experimentelle UDP-Gegenprobe bei " + missing.size + " Lampen …") {
-            val replied = withContext(Dispatchers.IO) { YeelightLan.directedUdpProbe(missing) }
+            val replied = withContext(Dispatchers.IO) { YeelightLan.directedUdpProbe(app, missing) }
             directedUdpDiagnostics = "Gezielte UDP-Gegenprobe: " + replied.size + "/" +
                 missing.size + " antworten · " +
                 if (replied.isEmpty()) "Kein eindeutiger Rückschluss möglich (Multicast ist das Standardverfahren)"
