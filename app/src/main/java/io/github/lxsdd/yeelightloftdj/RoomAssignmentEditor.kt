@@ -126,7 +126,7 @@ fun RoomAssignmentEditor(controller: LoftController) {
                                 color = Color(0xFF9BAAC4), fontSize = 10.sp)
                         }
                         IconButton(
-                            enabled = controller.canOrganizeLamps,
+                            enabled = controller.canIdentifyLamp(device),
                             onClick = { controller.identifyLamp(device) }
                         ) {
                             Icon(Icons.Rounded.Lightbulb,
