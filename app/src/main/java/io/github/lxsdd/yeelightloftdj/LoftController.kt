@@ -432,6 +432,7 @@ class LoftController(context: Context) {
         )
 
     fun canIdentifyLamp(device: YeelightDevice): Boolean =
+        !YeelightLan.isLanQuarantined(device) &&
         LampOperationGate.canIdentifyLamp(
             busy, device.ip, runningDeviceIps, recoveryJournal.keys,
             musicDeviceSession, musicStopPending || musicSending
@@ -1051,7 +1052,10 @@ class LoftController(context: Context) {
 
     fun controlLamp(device: YeelightDevice, command: LampCommand, description: String) {
         if (!canIdentifyLamp(device)) {
-            status = "Diese Lampe ist noch in einer Lichtshow/Wiederherstellung. " +
+            status = if (YeelightLan.isLanQuarantined(device))
+                "Firmware-LAN-Limit bestätigt: Wellness/andere betroffene Lampe geschützt. " +
+                    "Nur eine ausdrückliche Recovery-Leseprüfung ist zugelassen."
+            else "Diese Lampe ist noch in einer Lichtshow/Wiederherstellung. " +
                 "Bitte zuerst gezielt stoppen."
             return
         }
