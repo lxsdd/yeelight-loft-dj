@@ -366,6 +366,11 @@ class LoftController(context: Context) {
             "Auswahl konnte nicht gespeichert werden"
         }
         customSelectedIds = updated
+        // A failed Music-Preflight is one device's refusal, NOT a
+        // global navigation lock. Changing checkboxes is local-only.
+        status = FirmwareQuotaUiPolicy.changedSelection(
+            targetLabel(target), selectedCount(), quarantinedLampLabels()
+        )
     }
 
     fun targetOptions(): List<String> =
@@ -885,6 +890,9 @@ class LoftController(context: Context) {
             return
         }
         target = value
+        status = FirmwareQuotaUiPolicy.changedSelection(
+            targetLabel(target), selectedCount(), quarantinedLampLabels()
+        )
     }
     fun roomFor(device: YeelightDevice): String = assignments[device.id] ?: "Nicht zugeordnet"
     fun aliasFor(device: YeelightDevice): String =
@@ -1085,6 +1093,14 @@ class LoftController(context: Context) {
 
     fun isLampLanQuarantined(device: YeelightDevice): Boolean =
         YeelightLan.isLanQuarantined(device)
+
+    /** Local journal only; NEVER start TCP requests to render a warning. */
+    fun quarantinedLampLabels(): List<String> = devices
+        .distinctBy { it.ip }
+        .filter(YeelightLan::isLanQuarantined)
+        .map { displayName(it) + " (..." + it.ip.substringAfterLast('.') + ")" }
+        .sorted()
+
 
     /** Explicitly invoked from the device UI, never via automatic retry. */
     fun verifyLampLanRecovery(device: YeelightDevice) {
@@ -1852,10 +1868,29 @@ class LoftController(context: Context) {
             }
             val snapshots = withContext(Dispatchers.IO) {
                 chosen.map { device -> async {
-                    val snapshot = if (YeelightLan.supportsMusicMode(device)) {
-                        YeelightLan.readMusicPreflight(device)
-                    } else {
-                        YeelightLan.readStatus(device)
+                    val snapshot = try {
+                        if (YeelightLan.supportsMusicMode(device)) {
+                            YeelightLan.readMusicPreflight(device)
+                        } else {
+                            YeelightLan.readStatus(device)
+                        }
+                    } catch (failure: Exception) {
+                        // Firmware quota is attributed to this bulb only.
+                        // Preserve its persisted quarantine, never retry.
+                        if (QuotaRecoveryPolicy.isQuotaRejection(failure.message) ||
+                            YeelightLan.isLanQuarantined(device)) {
+                            throw IllegalStateException(
+                                FirmwareQuotaUiPolicy.failedPreflight(
+                                    displayName(device), device.ip
+                                ), failure
+                            )
+                        }
+                        throw IllegalStateException(
+                            "Music-Preflight für " + displayName(device) +
+                                " (..." + device.ip.substringAfterLast('.') + "): " +
+                                (failure.message ?: failure.javaClass.simpleName),
+                            failure
+                        )
                     }
                     require(SceneRecovery.supported(snapshot)) {
                         "Musiklicht abgebrochen: Farbzustand von " + displayName(device) + " nicht vollständig lesbar"
