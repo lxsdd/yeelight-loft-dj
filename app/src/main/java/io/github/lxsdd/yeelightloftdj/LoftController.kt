@@ -1618,11 +1618,13 @@ class LoftController(context: Context) {
      */
     fun armMusicLights() {
         if (!(microphoneRunning || InternalAudioBridge.running) || musicLightArmed) return
-        val chosen = selected().distinctBy { it.ip }
-            .filterNot(YeelightLan::isLanQuarantined)
+        val requested = selected().distinctBy { it.ip }
+        val blocked = requested.filter(YeelightLan::isLanQuarantined)
+            .map { it.ip }.toSet()
+        val chosen = MusicTransportPolicy.eligible(requested, blocked)
         if (chosen.isEmpty()) {
-            status = "Keine verfügbaren Lampen für Musiklicht: Zielbereich leer " +
-                "oder Firmware-LAN-Sperre. Betroffene Color4 nicht automatisch prüfen."
+            status = "Keine geeigneten Lampen für Musiklicht: Color4 braucht " +
+                "bestätigten set_music-Rückkanal; gesperrte Lampen bleiben geschützt."
             return
         }
         task("Lese vorherige Lampenzustände für musikreaktives Licht …") {
