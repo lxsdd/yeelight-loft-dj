@@ -704,6 +704,11 @@ object YeelightLan {
     fun musicModeActive(device: YeelightDevice): Boolean =
         musicChannels[device.ip]?.isActive == true
 
+    /** Abort only reverse-stream TCP writes; no quota-accounted command. */
+    fun interruptMusicOutputs(ips: Set<String>) {
+        ips.forEach { ip -> musicChannels[ip]?.interruptBlockedOutput() }
+    }
+
     /** Returns false only if the device is using the normal LAN mode. */
     fun sendMusicRgb(device: YeelightDevice, rgb: Int): Boolean {
         check(!commandGate.isQuarantined(device.ip)) {
