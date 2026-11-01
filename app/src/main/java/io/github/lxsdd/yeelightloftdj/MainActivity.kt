@@ -432,6 +432,14 @@ private fun Header() {
 
 @Composable
 private fun RecoveryBanner(controller: LoftController) {
+    var releaseIp by rememberSaveable { mutableStateOf<String?>(null) }
+    var physicallyRestarted by rememberSaveable { mutableStateOf(false) }
+    var acceptsLoss by rememberSaveable { mutableStateOf(false) }
+    val closeDialog = {
+        releaseIp = null
+        physicallyRestarted = false
+        acceptsLoss = false
+    }
     Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF2C293B)) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -460,7 +468,78 @@ private fun RecoveryBanner(controller: LoftController) {
             Text("Tipp: Andere Lampen dürfen weiter benutzt und identifiziert werden. " +
                 "Die nicht bestätigte Lampe bleibt geschützt und kann später erneut geprüft werden.",
                 color = muted, fontSize = 11.sp)
+            if (controller.pendingRecoveryCount > 0) {
+                HorizontalDivider(color = Color(0xFF49455A))
+                Text("Alternative bei dauerhaft abgelehntem stop_cf:",
+                    color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text("Nur falls die betreffende Lampe wirklich kurz stromlos war: " +
+                    "Alte Wiederherstellung gezielt freigeben. Dadurch wird der ursprüngliche " +
+                    "Lichtzustand NICHT automatisch wiederhergestellt.",
+                    color = muted, fontSize = 11.sp)
+                controller.pendingRecoveryIps().forEach { ip ->
+                    val device = controller.devices.firstOrNull { it.ip == ip }
+                    val bulbName = device?.let(controller::displayName)
+                        ?: "Unbekannte gespeicherte Lampe"
+                    OutlinedButton(
+                        onClick = {
+                            releaseIp = ip
+                            physicallyRestarted = false
+                            acceptsLoss = false
+                        },
+                        enabled = controller.canRetryRecovery,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(bulbName + " (." + ip.substringAfterLast('.') +
+                            ") nach Stromneustart freigeben")
+                    }
+                }
+            }
         }
+    }
+    releaseIp?.let { ip ->
+        val targetName = controller.devices.firstOrNull { it.ip == ip }
+            ?.let(controller::displayName) ?: "Gespeicherte Lampe"
+        AlertDialog(
+            onDismissRequest = closeDialog,
+            title = { Text("Alten Lichtshow-Eintrag freigeben?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(targetName + " · " + ip +
+                        ". Dies entfernt ausschließlich den lokalen " +
+                        "Lichtshow-/Wiederherstellungseintrag dieser Lampe. " +
+                        "Es sendet keinen Befehl. Der frühere Lichtzustand geht dabei verloren.")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = physicallyRestarted,
+                            onCheckedChange = { physicallyRestarted = it })
+                        Text("Ich habe genau diese Lampe für mindestens 15 Sekunden " +
+                            "vom Strom getrennt und wieder eingeschaltet.",
+                            fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = acceptsLoss,
+                            onCheckedChange = { acceptsLoss = it })
+                        Text("Ich akzeptiere, dass die frühere Farbe/Helligkeit " +
+                            "nicht automatisch wiederhergestellt wird.",
+                            fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        controller.releaseAfterConfirmedPowerCycle(
+                            ip, physicallyRestarted, acceptsLoss
+                        )
+                        closeDialog()
+                    },
+                    enabled = physicallyRestarted && acceptsLoss &&
+                        controller.canRetryRecovery
+                ) { Text("Nur diese Lampe freigeben") }
+            },
+            dismissButton = {
+                TextButton(onClick = closeDialog) { Text("Abbrechen") }
+            },
+        )
     }
 }
 
