@@ -353,7 +353,7 @@ object YeelightLan {
                 // Firmware quota errors are terminal for this scan. The gate
                 // already applied the per-lamp cooldown to ALL command paths.
                 if (QuotaRecoveryPolicy.isQuotaRejection(e.message)) return null
-                if (properties.size != 2) return null
+                if (properties.size != 2 || !isUnsupportedProbeProperty(e.message)) return null
                 tryLegacy = true
             } catch (_: Exception) {
                 // Timeout, closed socket, malformed JSON or exhausted budget:
@@ -362,6 +362,13 @@ object YeelightLan {
             }
         }
         return null
+    }
+
+    /** Only an explicit unsupported-property response justifies a second probe. */
+    internal fun isUnsupportedProbeProperty(message: String?): Boolean {
+        val text = message?.lowercase() ?: return false
+        return text.contains("unsupported") || text.contains("not support") ||
+            text.contains("invalid param") || text.contains("unknown property")
     }
 
     /**
