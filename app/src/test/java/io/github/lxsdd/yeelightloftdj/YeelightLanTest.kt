@@ -158,8 +158,8 @@ class YeelightLanTest {
                     val request = JSONObject(socket.getInputStream().bufferedReader().readLine())
                     val id = request.getInt("id")
                     socket.getOutputStream().write((
-                        "{\"method\":\"props\",\"params\":{\"power\":\"on\"}}\\r\\n" +
-                        "{\"id\":$id,\"result\":[\"on\",\"Couchtisch\"]}\\r\\n"
+                        "{\"method\":\"props\",\"params\":{\"power\":\"on\"}}\r\n" +
+                        "{\"id\":$id,\"result\":[\"on\",\"Couchtisch\"]}\r\n"
                     ).toByteArray())
                     socket.getOutputStream().flush()
                 }
@@ -214,13 +214,13 @@ class YeelightLanTest {
                         if (attempt == 0) {
                             assertEquals(2, params.length())
                             socket.getOutputStream().write(
-                                "{\"id\":$id,\"error\":{\"message\":\"unsupported name property\"}}\\r\\n"
+                                "{\"id\":$id,\"error\":{\"message\":\"unsupported name property\"}}\r\n"
                                     .toByteArray()
                             )
                         } else {
                             assertEquals(1, params.length())
                             socket.getOutputStream().write(
-                                "{\"id\":$id,\"result\":[\"off\"]}\\r\\n".toByteArray()
+                                "{\"id\":$id,\"result\":[\"off\"]}\r\n".toByteArray()
                             )
                         }
                         socket.getOutputStream().flush()
@@ -248,7 +248,7 @@ class YeelightLanTest {
                     val request = JSONObject(socket.getInputStream().bufferedReader().readLine())
                     val id = request.getInt("id")
                     socket.getOutputStream().write(
-                        "{\"id\":$id,\"error\":{\"message\":\"client quota exceeded\"}}\\r\\n"
+                        "{\"id\":$id,\"error\":{\"message\":\"client quota exceeded\"}}\r\n"
                             .toByteArray()
                     )
                     socket.getOutputStream().flush()
