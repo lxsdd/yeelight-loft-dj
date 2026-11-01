@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
@@ -92,6 +93,8 @@ private fun LoftApp(controller: LoftController) {
     var page by remember { mutableIntStateOf(0) }
     var detailRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var parentRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    // Route-local editor controls must survive navigating to the target picker.
+    val routeState = rememberSaveableStateHolder()
     val goBack: () -> Unit = {
         detailRoute = parentRoute
         parentRoute = null
@@ -168,10 +171,18 @@ private fun LoftApp(controller: LoftController) {
                                 detailRoute = "target"
                             })
                         }
-                        item(key = "chase-editor") { ChasePanel(controller) }
+                        item(key = "chase-editor") {
+                            routeState.SaveableStateProvider("chase-editor") {
+                                ChasePanel(controller)
+                            }
+                        }
                         item(key = "chase-results") { SceneLampReport(controller) }
                     }
-                    "target" -> item(key = "target-manager") { TargetSelector(controller) }
+                    "target" -> item(key = "target-manager") {
+                        routeState.SaveableStateProvider("target-manager") {
+                            TargetSelector(controller)
+                        }
+                    }
                     "rooms" -> item(key = "room-manager") {
                         RoomAssignmentEditor(controller, initiallyExpanded = true)
                     }
@@ -186,7 +197,9 @@ private fun LoftApp(controller: LoftController) {
                         val device = controller.devices.firstOrNull { it.id == id }
                         if (device != null) {
                             item(key = "device-details") {
-                                DeviceCard(device, controller, initiallyExpanded = true)
+                                routeState.SaveableStateProvider("device:" + device.id) {
+                                    DeviceCard(device, controller, initiallyExpanded = true)
+                                }
                             }
                         } else {
                             item { Note("Das Gerät ist nicht mehr vorhanden. Zurück zur Geräteliste wechseln.") }
