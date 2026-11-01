@@ -22,6 +22,15 @@ class YeelightLanTest {
         assertTrue(device.canFlow)
     }
 
+    @Test fun rgbChaseRejectsFlowWithoutRgbSupport() {
+        val whiteFlow = YeelightDevice("white", "192.168.1.99", model = "mono",
+            methods = setOf("start_cf", "stop_cf", "set_bright"))
+        assertFalse(whiteFlow.canFlow)
+        assertFalse(YeelightDevice("mono", "192.168.1.98", model = "mono").canFlow)
+        assertTrue(YeelightDevice("color4", "192.168.1.97", model = "color4",
+            methods = setOf("set_rgb", "start_cf", "stop_cf")).canFlow)
+    }
+
     @Test fun onlyPrivateIps() {
         assertTrue(YeelightLan.isLocalIp("192.168.178.50"))
         assertTrue(YeelightLan.isLocalIp("10.0.0.1"))
@@ -80,7 +89,7 @@ class YeelightLanTest {
 
     @Test fun deepScanPreservesKnownModelAndLocalName() {
         val ssdp = YeelightDevice("0x33", "192.168.178.60", model = "stripe",
-            methods = setOf("start_cf", "get_prop"), lanName = "Lichtstreifen")
+            methods = setOf("start_cf", "set_rgb", "get_prop"), lanName = "Lichtstreifen")
         val tcp = YeelightDevice("ip-192.168.178.60", "192.168.178.60",
             model = "unknown", lanName = "")
         val merged = YeelightLan.mergeDevices(listOf(ssdp), listOf(tcp))
@@ -95,7 +104,7 @@ class YeelightLanTest {
         val tcp = YeelightDevice("ip-192.168.178.61", "192.168.178.61", model = "unknown",
             lanName = "Lampe lokal")
         val udp = YeelightDevice("0x34", "192.168.178.61", model = "color4",
-            methods = setOf("start_cf"))
+            methods = setOf("start_cf", "set_rgb"))
         val merged = YeelightLan.mergeDevices(listOf(tcp), listOf(udp))
         assertEquals(1, merged.size)
         assertEquals("0x34", merged.single().id)
