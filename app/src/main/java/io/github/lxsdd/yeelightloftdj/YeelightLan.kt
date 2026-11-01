@@ -16,6 +16,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -504,7 +505,7 @@ object YeelightLan {
     private fun directSend(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
         require(method in setOf("set_power","start_cf","stop_cf","set_scene",
-            "set_bright","set_rgb","set_ct_abx","set_hsv"))
+            "set_bright","set_rgb","set_ct_abx","set_hsv","set_music"))
         val result=tcp.request(device.ip,device.port,seq.getAndIncrement(),method,params)
         if(result.has("error"))throw RejectedCommand("$method abgelehnt: " +
             result.getJSONObject("error").optString("message","Yeelight-Fehler"))
@@ -592,8 +593,57 @@ object YeelightLan {
             ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
     }
 
-    // Until firmware-supported set_music streaming is implemented, music beats
-    // still use the quota-limited normal TCP channel. Never spend the commands
+    /**
+     * Only devices that EXPLICITLY advertise set_music and set_rgb can use
+     * the reverse stream. Unknown device capabilities never trigger a
+     * speculative Music-Mode handshake against a real lamp.
+     */
+    private val musicChannels = ConcurrentHashMap<String, YeelightMusicChannel>()
+
+    fun supportsMusicMode(device: YeelightDevice): Boolean =
+        "set_music" in device.methods && "set_rgb" in device.methods
+
+    @Synchronized
+    fun startMusicMode(device: YeelightDevice): Boolean {
+        if (!supportsMusicMode(device)) return false
+        require(isLocalIp(device.ip))
+        if (musicChannels[device.ip]?.isActive == true) return true
+        check(device.ip !in musicChannels) {
+            "Alter Music-Mode-Kanal dieser Lampe muss zuerst beendet werden"
+        }
+        val host = wifiIpv4Address()
+            ?: error("Music-Mode benötigt eine lokale WLAN-IPv4-Adresse")
+        val channel = YeelightMusicChannel(
+            deviceIp = device.ip,
+            enableOnDevice = { localIp, port ->
+                send(device, "set_music", listOf(1, localIp, port))
+            },
+            disableOnDevice = {
+                send(device, "set_music", listOf(0))
+            }
+        )
+        channel.start(host)
+        musicChannels[device.ip] = channel
+        return true
+    }
+
+    fun musicModeActive(device: YeelightDevice): Boolean =
+        musicChannels[device.ip]?.isActive == true
+
+    /** Returns false only if the device is using the normal LAN mode. */
+    fun sendMusicRgb(device: YeelightDevice, rgb: Int): Boolean {
+        val channel = musicChannels[device.ip] ?: return false
+        channel.sendRgb(rgb)
+        return true
+    }
+
+    /** Close reverse TCP before reading and restoring original properties. */
+    @Synchronized
+    fun stopMusicMode(device: YeelightDevice) {
+        musicChannels.remove(device.ip)?.close()
+    }
+
+    // For lamps without set_music, music beats still use the normal LAN channel. Never spend the commands
     // needed to stop and restore a lamp on optional visual beat updates.
     private const val MUSIC_STOP_RESTORE_RESERVE = 12
     fun canSendMusicBeat(device: YeelightDevice): Boolean =
