@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
+enum class FlowStartState { VERIFIED, UNVERIFIED }
+
 data class YeelightDevice(
     val id: String,
     val ip: String,
@@ -446,7 +448,7 @@ object YeelightLan {
      * color flow even when the bulb was off. This avoids the power-on race.
      * For known older devices without set_scene, use a settled power-on.
      */
-    fun play(device: YeelightDevice, expression: String) {
+    fun play(device: YeelightDevice, expression: String): FlowStartState {
         require(device.canFlow) { "start_cf wird von diesem Gerät nicht gemeldet" }
         fun legacyStart() {
             send(device, "set_power", listOf("on", "smooth", 300))
@@ -467,11 +469,19 @@ object YeelightLan {
             legacyStart()
         }
         Thread.sleep(150)
-        check(readFlowing(device) == true) {
-            "Animation nicht bestätigt (flowing ist nicht 1); " +
-                "Lampe bitte einzeln prüfen und gegebenenfalls stoppen"
+        // Some firmware versions accept a valid start_cf/set_scene but do not
+        // implement 'flowing' in get_prop. A missing property is NOT proof of
+        // failure. Never fabricate a 'running' confirmation either.
+        val flowing = runCatching { readFlowing(device) }.getOrNull()
+        check(flowing != false) {
+            "Gerät bestätigt flowing=0: Animation läuft nicht"
         }
+        return classifyFlowStart(flowing)
     }
+
+    internal fun classifyFlowStart(flowing: Boolean?): FlowStartState =
+        if (flowing == true) FlowStartState.VERIFIED
+        else FlowStartState.UNVERIFIED
 
     fun stop(device: YeelightDevice) {
         try {
