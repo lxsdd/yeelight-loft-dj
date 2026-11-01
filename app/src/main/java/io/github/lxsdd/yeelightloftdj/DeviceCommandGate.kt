@@ -62,6 +62,22 @@ class DeviceCommandGate(
         synchronized(state) { state.quotaBlockedUntil = nowMs() + quotaCooldownMs }
     }
 
+    /**
+     * Read-only quota headroom for optional continuous effects. Unlike normal
+     * commands, music beats must yield enough capacity for a user-requested
+     * STOP and the original-state restoration. No reserve is a quota reset.
+     */
+    fun remaining(ip: String): Int {
+        val state = states[ip] ?: return maxCommandsPerMinute
+        synchronized(state) {
+            val now = nowMs()
+            if (now < state.quotaBlockedUntil) return 0
+            while (state.timestamps.isNotEmpty() &&
+                now - state.timestamps.first >= windowMs) state.timestamps.removeFirst()
+            return (maxCommandsPerMinute - state.timestamps.size).coerceAtLeast(0)
+        }
+    }
+
     fun consumed(ip: String): Int {
         val state = states[ip] ?: return 0
         synchronized(state) {
