@@ -11,10 +11,10 @@ import color4_lan_quota_firmware_evidence as firmware
 import color4_quota_literal_xrefs as xref
 
 
-def fixture(*, include_instruction=True, duplicate_code=False):
+def fixture(*, include_instruction=True, duplicate_code=False, code_size=128):
     """Two mapped synthetic ESP32 segments; not an authentic OEM image."""
     drom = bytearray(512)
-    code = bytearray(128)
+    code = bytearray(code_size)
     drom_start = 0x3F400000
     code_start = 0x400D0000
     strings = []
@@ -67,6 +67,54 @@ class QuotaLiteralXrefTests(unittest.TestCase):
             hex(0x400D0000 + 20))
         self.assertFalse(t["code_xref_confirmed"])
         self.assertFalse(report["firmware_quota_root_cause_proven"])
+
+    def test_common_entry_prefix_is_only_a_hint_not_execution_proof(self):
+        image, table, quota = fixture()
+        data = bytearray(image)
+        code_at = 24 + 8 + 512 + 8
+        data[code_at + 77:code_at + 80] = bytes((0x36, 0x41, 0x01))
+        links = xref.candidate_links(bytes(data), table, quota)
+        item = links["error_table"]["candidate_pc_relative_l32r"][0]
+        self.assertTrue(item["context"]["preceded_by_common_entry_bytes_hint"])
+        self.assertFalse(item["context"]["verified_reachable_instruction"])
+        self.assertFalse(item["verified_decoded_instruction"])
+        self.assertFalse(links["error_table"]["code_xref_confirmed"])
+
+    def test_pointer_dense_region_is_flagged_as_possible_data(self):
+        image, table, quota = fixture()
+        data = bytearray(image)
+        code_at = 24 + 8 + 512 + 8
+        for offset in (56, 60, 64, 68, 72, 76, 84, 88, 92, 96, 100):
+            struct.pack_into("<I", data, code_at + offset, 0x3F400020 + 64)
+        links = xref.candidate_links(bytes(data), table, quota)
+        candidate = links["error_table"]["candidate_pc_relative_l32r"][0]
+        self.assertTrue(candidate["context"]["pointer_dense_data_warning"])
+        self.assertGreaterEqual(candidate["context"]["nearby_mapped_pointer_words"], 8)
+        self.assertFalse(candidate["context"]["verified_reachable_instruction"])
+
+    def test_xtensa_imm16_high_bits_are_one_extended_not_signed_16bit(self):
+        # Even imm16 0x0010 denotes a *negative* L32R displacement, unlike
+        # a normal signed 16-bit offset. The ISA prepends fourteen 1 bits.
+        image, table, quota = fixture(include_instruction=False, code_size=262200)
+        data = bytearray(image)
+        code_at = 24 + 8 + 512 + 8
+        # Literal pool at byte offset 16; (PC+3)&~3 at offset 262096.
+        pc_at = 16 + (65536 - 0x10) * 4
+        data[code_at + pc_at:code_at + pc_at + 3] = bytes((0x11, 0x10, 0x00))
+        links = xref.candidate_links(bytes(data), table, quota)
+        self.assertIn(hex(0x400D0000 + pc_at), [
+            c["instruction_address_hex"] for c in
+            links["error_table"]["candidate_pc_relative_l32r"]
+        ])
+
+    def test_context_window_at_segment_start_is_bounded(self):
+        image, table, quota = fixture()
+        segments = xref.mapped_segments(image)
+        code = segments[1]
+        hint = xref._candidate_context(image, segments, code, 0)
+        self.assertLessEqual(hint["nearby_aligned_words_examined"], 12)
+        self.assertFalse(hint["preceded_by_common_entry_bytes_hint"])
+        self.assertFalse(hint["verified_reachable_instruction"])
 
     def test_error_table_is_exactly_resolved_but_root_cause_unproven(self):
         image, table, quota = fixture()

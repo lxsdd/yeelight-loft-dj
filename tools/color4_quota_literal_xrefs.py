@@ -97,6 +97,34 @@ def mapped_word_references(image: bytes, segments: list[Segment], target: int) -
     return refs
 
 
+def _candidate_context(image: bytes, segments: list[Segment],
+                       seg: Segment, at: int) -> dict:
+    """Weak byte-level hints, explicitly NOT verified Xtensa instruction flow.
+
+    An L32R-looking byte sequence may occur inside an array of mapped
+    pointers. Examine only a fixed 12-word neighborhood and keep the raw
+    candidate even when the context looks like data. Conversely, a nearby
+    common ENTRY encoding is a useful triage hint, never a proof of a
+    reachable function or its behavior.
+    """
+    pc = seg.load_at + at
+    aligned = pc & ~3
+    values = []
+    for address in range(aligned - 24, aligned + 24, 4):
+        if not seg.contains(address, 4):
+            continue
+        value = struct.unpack_from("<I", image, seg.offset(address))[0]
+        values.append(any(other.contains(value) for other in segments))
+    prefix = image[seg.file_at + at - 3:seg.file_at + at] if at >= 3 else b""
+    return {
+        "nearby_mapped_pointer_words": sum(values),
+        "nearby_aligned_words_examined": len(values),
+        "pointer_dense_data_warning": len(values) >= 8 and sum(values) >= 8,
+        "preceded_by_common_entry_bytes_hint": prefix == bytes((0x36, 0x41, 0x01)),
+        "verified_reachable_instruction": False,
+    }
+
+
 def possible_l32r_sites(image: bytes, segments: list[Segment],
                         literal_addresses: set[int]) -> list[dict]:
     """Find raw RI16 *candidates* assuming default PC-relative L32R mode.
@@ -126,6 +154,7 @@ def possible_l32r_sites(image: bytes, segments: list[Segment],
                 "literal_address_hex": hex(literal),
                 "target_register": b0 >> 4,
                 "verified_decoded_instruction": False,
+                "context": _candidate_context(image, segments, seg, at),
             })
     return candidates
 

@@ -32,3 +32,63 @@ Der Ergebnis-JSON-Text enthält nur statische Adresshinweise. Er darf **nicht** 
 ## Verifikation
 
 Eine ausschließlich synthetische ESP32-Zweisegment-Fixture prüft echte RI16-negativ verschobene Literale, separate Fehler-Tabellen-/Quota-String-Adressen, Begrenzung auf Instruktionssegmente, unaligned Datenwörter, beschädigte Header, überlaufende/überlappende Segmente, falschen Hash, Datenschutz und sichere Nichtbehauptung eines Code-/Timer-Nachweises. Pflichttest: bestehender öffentlicher Android-CI-Lauf, der alle `test_color4_*.py` und JVM-Tests ausführt. Keine Hersteller-Images in CI.
+
+## Echtes Stock-Image diesmal lokal untersucht – konkrete Befunde
+
+**Beweismaterial:** Die vom Nutzer als private Library-Datei in diesen Chat eingefügte
+Originaldatei wurde am 01.11.2026 lokal und ausschließlich lesend verarbeitet;
+sie wurde weder in GitHub hochgeladen noch als PR- oder CI-Artefakt abgelegt.
+Das Ergebnis wird nur als Adressen, Längen, Trefferzahlen und Warnhinweise
+öffentlich festgehalten; keinerlei proprietäre Instruktions-/Payload-Bytes.
+
+- **Exaktes Stock-Match:** 1.502.532 Bytes; SHA-256
+  `67f075ca909ae9f5c08ff580a4847683d1899e8ba251a7cd75d275b9848f22aa`;
+  MD5 `f13ec12c9d53573748054b36a709e75a`.
+- **Integrität:** 7 ESP32-Mappingsegmente, gültiges XOR-Checksum-Byte,
+  gültige eingebettete SHA-256, gültige vier-Byte-Xiaomi-CRC.
+  Keine Signatur-/Secure-Boot-/OTA-Freigabe daraus ableitbar.
+- **Authentische, eindeutige 7-Zeiger-LAN-Fehlertabelle:** Datei-Offset
+  `0x3E33C`, geladene Adresse `0x3FFC01B8`.
+  Der OEM-Fehlerstring `client quota exceeded` ist der sechste
+  Tabelleneintrag (Index 5), RAM-Zeigerwort `0x3FFC01CC`
+  (Datei-Offset `0x3E350`).
+- **Neue konkrete Verkettung:** Ein einziges ausgerichtetes 32-bit-Wort
+  bei Datei-Offset `0x79B38` bzw. IROM-Adresse `0x40109B38`
+  enthält als Literalwert die **Tabellenadresse** `0x3FFC01B8`.
+  Ein bloßer Datenzeiger begründet noch keinen ausgeführten Codepfad.
+- **Drei rohe Xtensa-L32R-Muster** berechnen PC-relativ exakt
+  `0x40109B38` als Leseadresse:
+  `0x4010AA3A` (Datei `0x7AA3A`),
+  `0x40115D0B` (Datei `0x85D0B`) und
+  `0x40122837` (Datei `0x92837`).
+- **Beweiskritische Kontextunterscheidung:** Die erste Musterstelle liegt
+  in einem Bereich mit **11 von 12 benachbarten ausgerichteten Worten,
+  die wie gültige Segmentadressen aussehen** – mutmaßlich ein
+  Datentabellen-Zufallstreffer. Die zweite und dritte Musterstelle
+  folgen unmittelbar auf eine gemeinsame typische Xtensa-ENTRY-
+  Prologsequenz, ohne solche Zeigerhäufung (0/12). Damit sind
+  **zwei Stellen für eine gezielte Xtensa-Disassembly prioritär**,
+  aber selbst diese sind bislang nur Byte-/Prolog-Hinweise und keine
+  bestätigten, tatsächlich erreichbaren Funktionsaufrufe.
+- **Kein separater direkter L32R-Treffer zum Quota-String**:
+  Ein einziges Zeigerwort verweist dort auf den String; die 3
+  Kandidaten hängen an der gesamten Fehlertabelle, nicht an
+  einem nachgewiesenen Quota-Zähler oder Timer.
+
+### Qualifikationsgrenze
+
+Die echte Offlineauswertung beweist **eine statische Daten-/Literal-Kette**
+bis zu zwei plausiblen Codebereichen. Sie identifiziert **nicht** den
+numerischen LAN-JSON-Fehlercode, die Kontrollfluss-Erreichbarkeit der
+Kandidaten, die per-Client/globalen Zähler, Refill-/Rearm-Callbacks
+oder die behauptete 49,7-Tage-Ursache. Ein Power-Cycle als derzeitiger
+Workaround erklärt die Ursache ebenfalls nicht.
+
+Die neue Kontextklassifikation im Forschungsanalysator meldet
+`pointer_dense_data_warning` und
+`preceded_by_common_entry_bytes_hint` getrennt und erhält **alle**
+rohen Kandidaten, statt unerwiesene Treffer automatisch zu verwerfen.
+Zusätzliche synthetische Regressionen sichern insbesondere die
+Xtensa-Sonderregel ab: Auch ein formal kleines 16-bit-Immediate
+(0x0010) bezeichnet bei L32R eine **negative** Wortverschiebung,
+denn die oberen 14 Offsetbits sind immer 1.
