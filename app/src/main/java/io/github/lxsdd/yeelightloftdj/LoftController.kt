@@ -1622,6 +1622,9 @@ class LoftController(context: Context) {
     /** Exactly one explicitly chosen Color4; self-stops after 8 seconds. */
     fun armColor4MusicAcceptance() = armMusicLightsInternal(acceptanceTest = true)
 
+    fun color4AcceptanceTargetName(): String? =
+        selected().distinctBy { it.ip }.singleOrNull()?.let(::displayName)
+
     fun color4MusicAcceptanceRefusal(): String? {
         val requested = selected().distinctBy { it.ip }
         val blocked = requested.filter(YeelightLan::isLanQuarantined)
