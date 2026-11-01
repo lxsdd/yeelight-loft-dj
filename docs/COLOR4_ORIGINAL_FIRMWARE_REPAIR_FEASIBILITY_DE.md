@@ -93,3 +93,25 @@ Er meldet nur SHA-256 der gesamten Datei, Dateigröße, ESP32-\`0xE9\`-Header-Ka
 Source-Format: https://docs.espressif.com/projects/esptool/en/release-v4/esp32/advanced-topics/firmware-image-format.html
 
 **Nächste technische Prüfung:** Erst eine zur \`color4\`-Originalversion passende Firmwaredatei mit belegbarer legaler Herkunft und SHA-256 beschaffen, lokal mit dem Inspektor untersuchen und den ESP32-Kandidatenstatus nur dann konkretisieren. Falls die Datei nicht dem ESP-IDF-Format entspricht, zunächst die wahre Container-/Verschlüsselungsschicht klären, **nicht** das Image ändern oder auf eine Lampe übertragen.
+
+
+## Neue Hardware-Evidenz – beide betroffenen color4 (01.11.2026)
+
+Vom Betreiber **für beide konkret betroffenen Lampen** „Wellness“ und „Couchtisch“ angegeben:
+- Yeelight-Originalfirmware: **\`2.1.7_0039\`**, auf beiden Geräten.
+- Stromversorgung vor dem beobachteten \`client quota exceeded\`: **sehr wahrscheinlich über 50 Tage ohne Unterbrechung**.
+- Dieses Indiz passt *gleichzeitig* zu dem Yeelight-Entwicklerbefund von 2022 (Timer nicht mehr rearmed nach \`2^32 ms\`, ursprüngliche Analyse \`ceiling1\`) und zum unabhängigen \`YLDP13YL 2.1.7_0039\`-Bericht über Ausfall nach ungefähr 1100–1200 Firmware-Betriebsstunden (2025).
+- **Beweisgrenze:** Netzstromzeit ist nicht zwingend MCU-/Firmware-Uptime. Ein autonomer Firmware-/Watchdog-Neustart kann den Zeitnullpunkt verschieben. Ohne Originalimage und tatsächlichen Uptime-/Fehlerdatensatz bleibt der Bug in \`color4\` eine stark gestützte, aber noch **nicht binär nachgewiesene Root-Cause-Hypothese**.
+- **Wichtig:** Ein Firmware-Patch darf keinesfalls schlicht die 60/min- bzw. globale Quote deaktivieren. Hersteller bestätigte Schutzfunktion der LAN-Quota für Cloud-/Geräteressourcen. Ein korrekter Minimalpatch stellt nur **regelmäßiges Refill/Rearm über den Clock-Wrap** wieder her.
+
+### Rein offline erstellte Grenzwert-Regressionen (kein Yeelight-Originalcode)
+
+\`tools/color4_quota_rollover_reference.py\` ist eine **explizit als Referenz und Gedankenexperiment markierte**, synthetische Refill-Implementierung mit monotoner 64-bit-Zeit sowie **einem absichtlich fehlerhaften Demonstrationsmodell**, das ab \`2^32 ms\` nicht wiederauffüllt. **Weder** Code noch Verhalten stammen aus einem OEM-Dump; ein grüner Test ist **kein** Nachweis des color4-Fehlers und keine patchbare Binärdatei.
+
+\`tools/tests/test_color4_quota_rollover_reference.py\` enthält **13 Regressionen** über den Grenzübergang \`2^32 ms\` (49 d 17 h 2 min 47.296 s), lange Idle-Phasen und mehrere Wraps. Die Referenz erhält 60 Kommandos/min je simulierter Verbindung, 144 Kommandos/min global und maximal vier parallele Verbindungen. Nur das Refill ist repariert, nicht das Schutzbudget entfernt. Die exakten OEM-Regeln zur Fenstergrenze/Anfragenzählung sind weiter **unbekannt** und dürfen aus dieser Simulation nicht abgeleitet werden.
+
+Die bestehenden **11 synthetischen OEM-Image-Inspektor-Tests** laufen zusammen mit diesen 13 neuen Clock-Regressionen im öffentlichen CI-Workflow. Es werden weder Firmwaredateien noch Gerätedaten, IP-/MAC-Adressen, OTA-Kommandos oder private Netzwerke benutzt.
+
+### Entscheidungsfolge aus der neuen Evidenz
+
+(1) Originalfirmware \`2.1.7_0039\` von einer autorisierten Bezugsquelle legitim beziehen und **nur offline** strukturell untersuchen. (2) Refill-Timer-/Scheduler-Code dieser Originalversion gegen \`2^32 ms\` tatsächlich nachweisen; sichere Signatur- und Recovery-Kette klären. (3) Wenn dort ein eindeutig behebbarer Fehler vorliegt: minimalen, eigenständig qualifizierten Fix bauen und auf **separater, ausdrücklich freigegebener Hardware** prüfen. Andernfalls den Befund sauber von der identischen Firmwareversion trennen. Die laufende konservative LAN-Failsafe-Entwicklung in PR #31 bleibt unabhängig davon notwendig.
