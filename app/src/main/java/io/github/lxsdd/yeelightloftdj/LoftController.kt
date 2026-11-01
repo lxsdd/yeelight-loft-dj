@@ -40,6 +40,7 @@ class LoftController(context: Context) {
     private var lastMusicCommandAt = Long.MIN_VALUE / 2
     private var musicDeviceSession = prefs.getBoolean("music-light-session", false)
     private var musicColorBeat = 0L
+    private var musicAcceptanceEpoch = 0L
 
 
     var devices by mutableStateOf(loadKnown())
@@ -1616,8 +1617,29 @@ class LoftController(context: Context) {
      * state and commit recovery data BEFORE sending a single lighting command.
      * Only explicitly selected user targets may control music lighting.
      */
-    fun armMusicLights() {
+    fun armMusicLights() = armMusicLightsInternal(acceptanceTest = false)
+
+    /** Exactly one explicitly chosen Color4; self-stops after 8 seconds. */
+    fun armColor4MusicAcceptance() = armMusicLightsInternal(acceptanceTest = true)
+
+    fun color4MusicAcceptanceRefusal(): String? {
+        val requested = selected().distinctBy { it.ip }
+        val blocked = requested.filter(YeelightLan::isLanQuarantined)
+            .map { it.ip }.toSet()
+        return Color4MusicAcceptancePolicy.refusal(
+            requested, blocked, recoveryPending
+        )
+    }
+
+    private fun armMusicLightsInternal(acceptanceTest: Boolean) {
         if (!(microphoneRunning || InternalAudioBridge.running) || musicLightArmed) return
+        if (acceptanceTest) {
+            val refusal = color4MusicAcceptanceRefusal()
+            if (refusal != null) {
+                status = refusal
+                return
+            }
+        }
         val requested = selected().distinctBy { it.ip }
         val blocked = requested.filter(YeelightLan::isLanQuarantined)
             .map { it.ip }.toSet()
@@ -1628,7 +1650,20 @@ class LoftController(context: Context) {
             return
         }
         task("Lese vorherige Lampenzustände für musikreaktives Licht …") {
-            if (recoveryPending) haltRunning(false)
+            if (acceptanceTest) {
+                // A safety decision taken before task scheduling must be
+                // rechecked here. Never auto-stop another bulb or retry
+                // unresolved recovery as a side effect of the test.
+                val refusal = Color4MusicAcceptancePolicy.refusal(
+                    chosen,
+                    chosen.filter(YeelightLan::isLanQuarantined)
+                        .map { it.ip }.toSet(),
+                    recoveryPending
+                )
+                if (refusal != null) return@task refusal
+            } else if (recoveryPending) {
+                haltRunning(false)
+            }
             val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
             check(chosen.none { it.ip in pending }) {
                 "Musiklicht: mindestens eine gewählte Lampe hat eine offene Wiederherstellung. " +
@@ -1696,6 +1731,18 @@ class LoftController(context: Context) {
             if (!microphoneRunning && !InternalAudioBridge.running) {
                 val stopResult = haltRunning(false)
                 "Audioanalyse beendet; Beleuchtung wiederhergestellt · " + stopResult
+            } else if (acceptanceTest) {
+                // Session-scoped auto-stop. Epoch prevents an old timer from
+                // stopping a later session after an early manual disarm.
+                val token = ++musicAcceptanceEpoch
+                scope.launch {
+                    delay(Color4MusicAcceptancePolicy.DURATION_MS)
+                    if (musicLightArmed && musicDeviceSession &&
+                        !musicStopPending && token == musicAcceptanceEpoch) {
+                        disarmMusicLights()
+                    }
+                }
+                "Color4-Einzeltest läuft · automatischer Stopp und Wiederherstellung nach 8 s"
             } else "Musiklicht aktiviert · vorheriger Zustand gesichert"
         }
     }
@@ -1761,6 +1808,7 @@ class LoftController(context: Context) {
         // Stop new beat commands immediately, then await any already in flight
         // before restoring. Otherwise a late RGB write could undo recovery.
         musicLightArmed = false
+        musicAcceptanceEpoch++ // invalidate any pending acceptance timer
         musicStopPending = true
         scope.launch {
             while (busy || musicSending) delay(50)
