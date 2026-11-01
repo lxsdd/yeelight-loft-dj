@@ -592,6 +592,13 @@ object YeelightLan {
             ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
     }
 
+    // Until firmware-supported set_music streaming is implemented, music beats
+    // still use the quota-limited normal TCP channel. Never spend the commands
+    // needed to stop and restore a lamp on optional visual beat updates.
+    private const val MUSIC_STOP_RESTORE_RESERVE = 12
+    fun canSendMusicBeat(device: YeelightDevice): Boolean =
+        commandGate.remaining(device.ip) > MUSIC_STOP_RESTORE_RESERVE
+
     /** Only explicitly requested commands can reach the local lamp. */
     fun manualControl(device: YeelightDevice, command: LampCommand) {
         require(command.method in setOf("set_power", "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
