@@ -34,6 +34,11 @@ class MMMEvidenceTests(unittest.TestCase):
         self.assertEqual(r["section_count"], 3)
         self.assertTrue(all(x["compressed_sha1_matches_header"] for x in r["sections"]))
         self.assertTrue(r["local_lan_evidence"]["quota_string_found"])
+        self.assertEqual(r["local_lan_evidence"]["header_flash_offset_candidate"],
+                         hex(0x71000+5))
+        self.assertEqual(r["local_lan_evidence"]["mapped_memory_address_candidate"],
+                         hex(0x10071000+5))
+        self.assertNotIn("header_based_mapped_address_candidate", r["local_lan_evidence"])
         self.assertFalse(r["local_lan_evidence"]["quota_timer_root_cause_found"])
         self.assertFalse(r["flash_or_ota_approved"])
         self.assertFalse(r["cryptographic_oem_authenticity_verified"])

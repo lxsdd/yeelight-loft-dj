@@ -76,7 +76,12 @@ def analyze_mmm(data: bytes) -> dict:
             report["local_lan_evidence"] = {
                 "quota_string_found": idx >= 0,
                 "quota_string_offset_in_decompressed_main": hex(idx) if idx >= 0 else None,
-                "header_based_mapped_address_candidate": hex(address + idx) if idx >= 0 else None,
+                # MMM header carries the *flash offset* (e.g. 0x71000).
+                # Firmware literal pointer words demonstrate 0x10000000 MMIO/
+                # code mapping alias on this exact stock image. The old
+                # "address + offset" value was NOT a mapped CPU address.
+                "header_flash_offset_candidate": hex(address + idx) if idx >= 0 else None,
+                "mapped_memory_address_candidate": hex(0x10000000 + address + idx) if idx >= 0 else None,
                 "lan_handler_strings_present": [t[:-1].decode("ascii") for t in tokens if t in raw],
                 "quota_timer_root_cause_found": False,
             }

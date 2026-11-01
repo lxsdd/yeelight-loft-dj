@@ -63,6 +63,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p 'test_mediatek_mmm_evidence.py' -v
       - name: Analyze ceiling1 WLAN callback evidence with synthetic fixtures only
         run: python3 -m unittest discover -s tools/tests -p 'test_ceiling1_wlan_firmware_markers.py' -v
+      - name: Trace offline ceiling1 Thumb literal references (synthetic only)
+        run: python3 -m unittest discover -s tools/tests -p 'test_ceiling1_thumb_literal_xrefs.py' -v
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - name: Verify permanent APK signing certificate

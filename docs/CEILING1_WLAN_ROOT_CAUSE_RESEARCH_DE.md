@@ -78,3 +78,25 @@ Die Kotlin-Diagnostik schließt Firmware-Ursachenaussagen und sämtliche automat
 4. **Eigenständige Color4-Lane**: Quota-Refill-/LAN-Drosselung ist ausschließlich in Color4-Research-Issue #32 und separaten Produkt-PRs (#31, #34, #35) zu verfolgen. Kein Auslösen dieser Diagnostik durch WLAN-Verdacht.
 
 **Ergebnis:** Quota und WLAN-Ausfälle sind technisch **klar getrennt**. Das ceiling1-OEM-Image liefert echte Spuren für WLAN-Reconnect, DHCP, Watchdog und Cloud, aber **noch keinen nachweislich korrigierbaren Root Cause**. Dazu sind Disassembly sowie ggf. ein zeitgleicher, nicht-invasive AP-/Geräte-Zustandsnachweis erforderlich.
+
+
+## 01.11.2026 – erstmalige ARM-Thumb-Literal-Xrefs aus echter Firmware (keine Kausalitätsbehauptung)
+
+**Korrektur der bisherigen Adressangaben:** Der MMM-Header nennt `0x71000` als **Flash-Offset**. Für die CPU-Adressabbildung ist, anhand mehrerer exakt passender **echter 32-bit-Literalpointer und ARM-Thumb-LDR-Instruktionen**, der Alias **`0x10000000 + 0x71000 = 0x10071000`** nachgewiesen. Zuvor genannte `0x10xxxx`-Werte sind Flash-Offsets, **keine tatsächlichen CPU-Adressreferenzen**. Insbesondere `client quota exceeded` liegt im Ceiling1-Hauptimage bei Offset `0x9D2B3` und damit der plausiblen *CPU-Adresse* `0x1010E2B3`; `0x10E2B3` bezeichnet nur den Flash-Offset.
+
+Die folgenden Werte stammen aus dem **Originalimage `1.5.9_0189`**, via SHA256 und 3×FOTA-SHA1/LZMA verifiziert. Die letzten beiden Spalten sind Byte-Offsets **im entpackten Hauptabschnitt**, keine Hardware-Flash-Schreibpositionen:
+
+| Ursprünglicher diagnostischer String | CPU-Stringadresse | Pointer-Wort-Offset | Thumb-PC-relativer LDR-Code-Offset |
+|---|---|---|---|
+| `wifi_station_disconnected_event_handler` | `0x10107DF4` | `0x2C81C` | **`0x2C802`** |
+| `wifi_station_port_secure_event_handler` | `0x10107DCD` | `0x2C85C` | **`0x2C846`** |
+| `DHCP got Failed` | `0x10107E44` | `0x2C7CC` | **`0x2C76E`** |
+| `DHCP got IP:` | `0x10107E35` | `0x2C7C8` | **`0x2C746`** |
+| `Auto connect enabled: try to reconnect` | `0x1011E426` | `0x61FD8` | **`0x61E04`** |
+| `Try to reconnect to the same BSS` | `0x1011E4FB` | `0x61FEC` | **`0x61EDA`** |
+| `Association request to the driver failed` | `0x1011D05C` | `0x6097C` | **`0x6087E`** |
+| `start DHCP client failed` | `0x100FA8E1` | `0xF928` | **`0xF854`** |
+
+**Unabhängiger Decode-Abgleich:** LLVM 17 `llvm-objdump` mit ARM/Thumb-Ziel und einer **rein lokalen, temporären ELF-Abbildung** auf `0x10071000` hat die Thumb-`ldr`-Instruktionen und die umgebenden `bl`/`blx`-Aufrufe an mindestens `0x2C802`, `0x61E04` und `0x61EDA` dekodiert. Der `0x2C802`-LDR speist **ein Diagnose-/Logging-`blx`**, und die `0x61E04`-/`0x61EDA`-Instruktionen speisen jeweils einen gemeinsamen Logger `bl 0x100BAA28`. **Das sind Referenzen *aus* vorhandenem OEM-Maschinencode, aber keine Beweise, dass die Reconnect-Aktion tatsächlich ausgeführt wird, abbricht oder fehlschlägt.** N9-/Watchdog-Strings ohne solche einfachen direkten Referenzen dürfen nicht als `unerreichbar` oder `nicht vorhanden` bewertet werden.
+
+Neu implementiert: `tools/ceiling1_thumb_literal_xrefs.py` ist ein **read-only, auf die exakte Hersteller-SHA256 begrenzter Offline-Literal-Xref-Scanner** mit 12 synthetischen Regressionen für Thumb16/T1, Thumb32/T2, falsche Aliasbasis, Alignment, mehrdeutige Daten und Integritäts-/Geheimnisschutz. **Kein** Disassembly-/CFI-Vollständigkeitsanspruch, keine Bereitstellung des entpackten OEM-Binary, keine Hardwareaktionen, keine geänderte Firmware. Ein tatsächlich nachweisbarer Defekt im WiFi-Reconnect-/Retry-/Watchdog-Zustandsautomaten und eine sichere Patch-/Recovery-Kette sind **weiterhin offen**.
