@@ -50,6 +50,13 @@ class LoftController(context: Context) {
         private set
     var lastSceneReport by mutableStateOf<List<SceneLampResult>>(emptyList())
         private set
+    // Ephemeral, local-only diagnostics. No stored IPs, packets or private topology.
+    var lastPowerResults by mutableStateOf<Map<String, PowerProbe>>(emptyMap())
+        private set
+    var lastPowerDesiredOn by mutableStateOf<Boolean?>(null)
+        private set
+    var lastPowerSummary by mutableStateOf("")
+        private set
     var lastRecoveryFailures by mutableStateOf<Map<String, String>>(emptyMap())
         private set
     var status by mutableStateOf("Bereit · lokales WLAN")
@@ -830,14 +837,27 @@ class LoftController(context: Context) {
             return
         }
         task(description + " …") {
-            val current = withContext(Dispatchers.IO) {
-                YeelightLan.manualControl(device, command)
-                runCatching { YeelightLan.readStatus(device) }.getOrNull()
+            if (command.method == "set_power") {
+                val on = command.params.firstOrNull() == "on"
+                val result = withContext(Dispatchers.IO) {
+                    YeelightLan.setPowerVerified(device, on)
+                }
+                lastPowerDesiredOn = on
+                lastPowerResults = mapOf(device.ip to result)
+                lastPowerSummary = PowerVerificationPolicy.summarize(listOf(result))
+                lampSnapshots = lampSnapshots - device.ip
+                displayName(device) + ": " + lastPowerSummary +
+                    " · TCP " + (result.connectMs?.let { "$it ms" } ?: "nicht verbunden")
+            } else {
+                val current = withContext(Dispatchers.IO) {
+                    YeelightLan.manualControl(device, command)
+                    runCatching { YeelightLan.readStatus(device) }.getOrNull()
+                }
+                if (current != null) lampSnapshots = lampSnapshots + (device.ip to current)
+                else lampSnapshots = lampSnapshots - device.ip
+                displayName(device) + ": " + description +
+                    if (current != null) " · bestätigt" else " · Befehl akzeptiert, Status unbekannt"
             }
-            if (current != null) lampSnapshots = lampSnapshots + (device.ip to current)
-            else lampSnapshots = lampSnapshots - device.ip
-            displayName(device) + ": " + description +
-                if (current != null) " · bestätigt" else " · Befehl akzeptiert, Status unbekannt"
         }
     }
 
@@ -864,26 +884,36 @@ class LoftController(context: Context) {
             return
         }
         task(if (on) "Schalte Zielbereich ein …" else "Schalte Zielbereich aus …") {
-            if (recoveryPending && !musicDeviceSession) haltRunning(false)
+            // Never block healthy bulbs on a repeated automatic stop of a
+            // single unreachable bulb. Recovery is always a separate,
+            // explicit user action; affected IPs remain protected.
             val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
-            val permitted = chosen.filterNot { it.ip in pending }
-            val skipped = chosen.size - permitted.size
+            val unique = chosen.distinctBy { it.ip }
             val gate = Semaphore(3)
-            val errors = withContext(Dispatchers.IO) {
-                permitted.map { device -> async {
-                    gate.withPermit {
-                        try { YeelightLan.manualControl(device, LampCommands.power(on)); null }
-                        catch (e: Exception) { displayName(device) + ": " + (e.message ?: "Fehler") }
+            val outcomes = withContext(Dispatchers.IO) {
+                unique.map { device -> async {
+                    val result = if (device.ip in pending)
+                        PowerProbe(PowerOutcome.PROTECTED,
+                            message = "Offene Wiederherstellung – keine Änderung")
+                    else gate.withPermit {
+                        runCatching {
+                            YeelightLan.setPowerVerified(device, on)
+                        }.getOrElse { error ->
+                            PowerProbe(PowerOutcome.NO_ACK,
+                                message = error.message ?: error.javaClass.simpleName)
+                        }
                     }
-                } }.awaitAll().filterNotNull()
+                    device.ip to result
+                } }.awaitAll().toMap()
             }
-            lampSnapshots = lampSnapshots - permitted.map { it.ip }.toSet()
-            if (pending.isEmpty()) activeScene = null
-            val successful = permitted.size - errors.size
-            successful.toString() + "/" + chosen.size + " Lampen " +
-                (if (on) "eingeschaltet" else "ausgeschaltet") +
-                (if (skipped > 0) " · " + skipped + " wegen offener Wiederherstellung geschützt" else "") +
-                (if (errors.isEmpty()) "" else " · " + errors.first())
+            lastPowerDesiredOn = on
+            lastPowerResults = outcomes
+            lastPowerSummary = PowerVerificationPolicy.summarize(outcomes.values)
+            // A power-only get_prop readback does not supply a full RGB/CT
+            // snapshot. Do not silently retain a stale displayed snapshot.
+            lampSnapshots = lampSnapshots - unique.map { it.ip }.toSet()
+            (if (on) "Ein" else "Aus") + ": " + lastPowerSummary +
+                " · Messwerte je Lampe unter Schnellsteuerung"
         }
     }
 
