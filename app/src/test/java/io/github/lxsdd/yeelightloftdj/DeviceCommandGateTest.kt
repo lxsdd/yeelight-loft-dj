@@ -93,6 +93,36 @@ class DeviceCommandGateTest {
         assertEquals("on", gate.explicitRecoveryProbe("Wellness") { "on" })
     }
 
+    @Test fun successfulRecoveryReadDoesNotUnlockWhenDurableStorageFails() {
+        var now = 25_000L
+        var storeUsable = false
+        var committed = 0
+        val gate = DeviceCommandGate(
+            nowMs = { now },
+            minSpacingMs = 0,
+            onRecovered = {
+                if (!storeUsable) error("Quarantäne konnte nicht gespeichert werden")
+                committed++
+            }
+        )
+        gate.markQuarantined("Wellness")
+        assertTrue(runCatching {
+            gate.explicitRecoveryProbe("Wellness") { "on" }
+        }.isFailure)
+        assertTrue("Failed persistence must keep lamp blocked",
+            gate.isQuarantined("Wellness"))
+        assertTrue(runCatching {
+            gate.run("Wellness") { error("must not run") }
+        }.exceptionOrNull() is DeviceCommandGate.Deferred)
+        // The failed read may have reached the bulb. Explicit retry only
+        // after the cooldown, with a newly verified response.
+        now += 60_001L
+        storeUsable = true
+        assertEquals("off", gate.explicitRecoveryProbe("Wellness") { "off" })
+        assertFalse(gate.isQuarantined("Wellness"))
+        assertEquals(1, committed)
+    }
+
     @Test fun optionalBeatsReserveEnoughCapacityForStopAndRestore() {
         var now = 10_000L
         val gate = DeviceCommandGate(nowMs = { now }, maxCommandsPerMinute = 20,
