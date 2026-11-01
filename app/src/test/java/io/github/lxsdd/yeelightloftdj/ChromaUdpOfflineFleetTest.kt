@@ -161,6 +161,11 @@ class ChromaUdpOfflineFleetTest {
                 ChromaOfflineLampSpec("a", session),
                 ChromaOfflineLampSpec("a", session)))
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            ChromaUdpOfflineFleet(listOf(
+                ChromaOfflineLampSpec("a", session),
+                ChromaOfflineLampSpec("b", session)))
+        }
     }
 
     @Test fun snapshotHidesTokenAndDeviceAddress() {

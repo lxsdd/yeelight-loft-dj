@@ -22,6 +22,8 @@ class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
         require(specs.isNotEmpty() && specs.size <= MAX_LAMPS)
         require(specs.all { it.key.isNotBlank() && it.key.length <= 64 })
         require(specs.map { it.key }.distinct().size == specs.size)
+        // A single session may not be attached to multiple logical lamp keys.
+        require(specs.map { it.session }.distinct().size == specs.size)
     }
 
     private class Lane(spec: ChromaOfflineLampSpec) {
