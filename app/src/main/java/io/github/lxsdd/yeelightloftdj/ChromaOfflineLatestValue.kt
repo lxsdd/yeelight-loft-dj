@@ -46,6 +46,12 @@ class ChromaOfflineLatestValue(
             lanes[key]?.pending = null
             return false
         }
+        // A token alone is insufficient: the OEM scene method must be
+        // advertised, and the simulated session must still be within budget.
+        if (!fleet.canStageColor(key, nowMs)) {
+            lanes[key]?.pending = null
+            return false
+        }
         val lane = lanes.getOrPut(key) { Lane() }
         if (!advance(key, lane, nowMs)) return false
         if (lane.pending != null) lane.superseded++

@@ -57,6 +57,9 @@ class ChromaUdpOfflineSession(
     private var token: String? = null
 
     val tokenHeld: Boolean get() = state == ChromaPreviewState.ACTIVE && token != null
+    /** Exact cached SUPPORT method; an advertisement never proves real transport. */
+    val simulatedSceneAdvertised: Boolean get() =
+        eligible && support.any { it.trim().equals("set_scene", ignoreCase = true) }
     val ignoredOrMissedKeepalives: Int get() = missedKeepalives
 
     /** Creating a preview payload does not transmit it. Never retries. */
@@ -163,7 +166,7 @@ class ChromaUdpOfflineSession(
     fun previewColor(rgb: Int, brightness: Int, nowMs: Long): ChromaPreviewFrame? {
         if (!advance(nowMs) || state != ChromaPreviewState.ACTIVE) return null
         if (rgb !in 0..0xFFFFFF || brightness !in 1..100) return null
-        if (!support.any { it.trim().equals("set_scene", ignoreCase = true) }) return null
+        if (!simulatedSceneAdvertised) return null
         val params = JSONArray().put("color").put(rgb).put(brightness)
             .put(0).put("sudden")
         return frame(nextId++, "set_scene", params, token)
