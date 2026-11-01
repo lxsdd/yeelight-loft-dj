@@ -608,7 +608,7 @@ object YeelightLan {
         if (!supportsMusicMode(device)) return false
         require(isLocalIp(device.ip))
         if (musicChannels[device.ip]?.isActive == true) return true
-        check(device.ip !in musicChannels) {
+        check(!musicChannels.containsKey(device.ip)) {
             "Alter Music-Mode-Kanal dieser Lampe muss zuerst beendet werden"
         }
         val host = wifiIpv4Address()
