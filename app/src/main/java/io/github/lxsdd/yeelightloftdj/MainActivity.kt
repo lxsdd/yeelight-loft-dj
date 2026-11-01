@@ -1345,18 +1345,22 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
         )
         if (DeviceCapabilities.evidence(device, "set_rgb") != CapabilityEvidence.UNSUPPORTED) {
             Text("Direktfarben", color = Color.White, fontSize = 12.sp)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                colors.forEach { (name, rgb, tint) ->
-                    FilterChip(
-                        selected = live?.colorMode == 1 && live.rgb == rgb,
-                        onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
-                        enabled = controller.canIdentifyLamp(device) &&
-                            DeviceCapabilities.canOffer(device, "set_rgb", allowUnverified),
-                        label = { Text(name) },
-                        leadingIcon = {
-                            Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
-                        },
-                    )
+            colors.chunked(2).forEach { pair ->
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    pair.forEach { (name, rgb, tint) ->
+                        FilterChip(
+                            selected = live?.colorMode == 1 && live.rgb == rgb,
+                            onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
+                            enabled = controller.canIdentifyLamp(device) &&
+                                DeviceCapabilities.canOffer(device, "set_rgb", allowUnverified),
+                            modifier = Modifier.weight(1f),
+                            label = { Text(name) },
+                            leadingIcon = {
+                                Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
+                            },
+                        )
+                    }
                 }
             }
         }
