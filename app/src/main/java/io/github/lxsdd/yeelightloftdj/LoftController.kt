@@ -743,7 +743,7 @@ class LoftController(context: Context) {
         val rounds = YeelightLan.lastSearchRoundResponders
         val responseRounds = rounds.count { device.ip in it }
         val packets = YeelightLan.lastSearchRepliesPerIp[device.ip] ?: 0
-        val tcp = if (device.ip in lastDirectIps) "TCP bestätigt" else "TCP nicht geprüft"
+        val tcp = if (device.ip in lastDirectIps) "TCP bestätigt" else "TCP zuletzt nicht bestätigt"
         val udp = if (device.ip in lastMulticastIps) "Multicast geantwortet"
             else "Multicast keine Antwort"
         val directed = if (device.ip in lastDirectedUdpIps) " · Direkt-UDP bestätigt"
