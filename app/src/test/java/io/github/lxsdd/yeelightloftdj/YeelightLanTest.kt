@@ -239,6 +239,14 @@ class YeelightLanTest {
         }
     }
 
+    @Test fun legacyProbeFallbackRejectsUnrelatedErrors() {
+        assertTrue(YeelightLan.isUnsupportedProbeProperty("get_prop abgelehnt: unsupported name property"))
+        assertTrue(YeelightLan.isUnsupportedProbeProperty("invalid params"))
+        assertFalse(YeelightLan.isUnsupportedProbeProperty("device busy"))
+        assertFalse(YeelightLan.isUnsupportedProbeProperty("client quota exceeded"))
+        assertFalse(YeelightLan.isUnsupportedProbeProperty(null))
+    }
+
     @Test fun quotaRejectedProbeNeverRetriesAndBlocksFurtherProbeCommands() {
         ServerSocket(0).use { server ->
             val accepted = AtomicInteger(0)
