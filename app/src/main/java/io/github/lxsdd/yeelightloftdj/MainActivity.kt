@@ -193,9 +193,10 @@ private fun LoftApp(controller: LoftController) {
                                     Spacer(Modifier.width(8.dp))
                                     Text(if (orderMode) "Sortierung schließen" else "Lichtweg anordnen")
                                 }
-                                if (orderMode && !controller.canOrganizeLamps) {
-                                    Text("Identifizieren und Sortieren sind bis zum Abschluss der Lichtshow gesperrt. Stopp und Wiederherstellung findest du oben.",
-                                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                                if (orderMode && controller.pendingRecoveryCount > 0) {
+                                    Text("Nur Lampen mit offener Wiederherstellung können derzeit nicht " +
+                                        "identifiziert werden. Lichtweg-Sortieren bleibt verfügbar.",
+                                        color = muted, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -281,7 +282,7 @@ private fun LoftApp(controller: LoftController) {
                                         }
                                         TextButton(
                                              onClick = { controller.identifyLamp(device) },
-                                             enabled = controller.canOrganizeLamps,
+                                             enabled = controller.canIdentifyLamp(device),
                                          ) { Text("Identifizieren", fontSize = 11.sp) }
                                     }
                                 }
@@ -322,7 +323,8 @@ private fun Header() {
             Text("LOFT DJ", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
         }
         Spacer(Modifier.weight(1f))
-        Text("PREVIEW", color = lavender, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("v" + BuildConfig.VERSION_NAME + " · " + BuildConfig.VERSION_CODE,
+            color = lavender, fontSize = 10.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -331,9 +333,12 @@ private fun RecoveryBanner(controller: LoftController) {
     Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF2C293B)) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("Identifizieren vorübergehend gesperrt",
+            Text("Einzelne Lampe noch nicht wiederhergestellt",
                 color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Text(controller.recoveryExplanation, color = Color(0xFFE1D7F6), fontSize = 12.sp)
+            controller.pendingLampDescriptions().forEach { desc ->
+                Text(desc, color = Color(0xFFFFC1A6), fontSize = 12.sp)
+            }
             OutlinedButton(
                 onClick = controller::stop,
                 enabled = controller.canRetryRecovery,
@@ -343,8 +348,8 @@ private fun RecoveryBanner(controller: LoftController) {
                 Spacer(Modifier.width(8.dp))
                 Text("Lichtshow stoppen & Licht wiederherstellen")
             }
-            Text("Nicht erreichte Lampen bleiben zur sicheren Wiederholung vorgemerkt. " +
-                "Andere Lichtzustände werden nicht ungeprüft überschrieben.",
+            Text("Tipp: Andere Lampen dürfen weiter benutzt und identifiziert werden. " +
+                "Die nicht bestätigte Lampe bleibt geschützt und kann später erneut geprüft werden.",
                 color = muted, fontSize = 11.sp)
         }
     }
@@ -466,7 +471,7 @@ private fun TargetSelector(controller: LoftController) {
                     }
                     TextButton(
                         onClick = { controller.identifyLamp(device) },
-                        enabled = controller.canOrganizeLamps
+                        enabled = controller.canIdentifyLamp(device)
                     ) { Text("Identifizieren", fontSize = 11.sp) }
                 }
             }
@@ -496,7 +501,7 @@ private fun TargetSelector(controller: LoftController) {
                         }
                         TextButton(
                             onClick = { controller.identifyLamp(device) },
-                            enabled = controller.canOrganizeLamps
+                            enabled = controller.canIdentifyLamp(device)
                         ) { Text("Identifizieren", fontSize = 11.sp) }
                     }
                 }
@@ -660,7 +665,7 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
             }
             OutlinedButton(
                 onClick = { controller.identifyLamp(device) },
-                enabled = controller.canOrganizeLamps,
+                enabled = controller.canIdentifyLamp(device),
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Identifizieren · 2,5 s") }
             if (expanded) {
@@ -1203,5 +1208,7 @@ private fun Note(message: String) {
 
 @Composable
 private fun Footer() {
-    Text("PRIVAT IM WLAN  ·  KEINE CLOUD  ·  v0.1.6", color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
+    Text("PRIVAT IM WLAN · KEINE CLOUD · v" + BuildConfig.VERSION_NAME +
+        " (Build " + BuildConfig.VERSION_CODE + ")",
+        color = muted, fontSize = 10.sp, letterSpacing = 1.sp)
 }
