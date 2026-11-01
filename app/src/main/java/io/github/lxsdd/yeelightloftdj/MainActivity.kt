@@ -91,7 +91,12 @@ class MainActivity : ComponentActivity() {
 private fun LoftApp(controller: LoftController) {
     var page by remember { mutableIntStateOf(0) }
     var detailRoute by rememberSaveable { mutableStateOf<String?>(null) }
-    BackHandler(enabled = detailRoute != null) { detailRoute = null }
+    var parentRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    val goBack: () -> Unit = {
+        detailRoute = parentRoute
+        parentRoute = null
+    }
+    BackHandler(enabled = detailRoute != null) { goBack() }
     var orderMode by remember { mutableStateOf(false) }
     var stagedOrder by remember { mutableStateOf<List<String>>(emptyList()) }
     val scrollState = rememberLazyListState()
@@ -141,7 +146,7 @@ private fun LoftApp(controller: LoftController) {
                 item(key = "detail-back") {
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        OutlinedButton(onClick = { detailRoute = null }) { Text("← Zurück") }
+                        OutlinedButton(onClick = goBack) { Text("← Zurück") }
                         Text(
                             when (detailRoute) {
                                 "chase" -> "Lichtlauf-Studio"
@@ -158,7 +163,10 @@ private fun LoftApp(controller: LoftController) {
                 when (detailRoute) {
                     "chase" -> {
                         item(key = "chase-target") {
-                            CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                            CompactTargetCard(controller, onEdit = {
+                                parentRoute = detailRoute
+                                detailRoute = "target"
+                            })
                         }
                         item(key = "chase-editor") { ChasePanel(controller) }
                         item(key = "chase-results") { SceneLampReport(controller) }
@@ -829,6 +837,7 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
                         )
                     }
                 }
+                DeviceCapabilityPanel(device)
                 LampManualPanel(device, controller, initiallyExpanded = initiallyExpanded)
                 if (!device.canFlow) {
                     Note("Dieses Gerät meldet kein Yeelight start_cf – nicht in Farbfluss einbeziehen.")
@@ -880,10 +889,42 @@ private fun TargetPowerControls(controller: LoftController) {
 }
 
 @Composable
+private fun DeviceCapabilityPanel(device: YeelightDevice) {
+    Surface(color = Color(0xFF252B3D), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("Vom Gerät gemeldete Funktionen", color = Color.White,
+                fontWeight = FontWeight.SemiBold)
+            if (device.methods.isEmpty()) {
+                Text("Nur TCP-Erkennung: Es liegt keine SUPPORT-Liste vor. " +
+                    "RGB, Weißtemperatur und Lichtlauf sind damit nicht bestätigt. " +
+                    "Eine kombinierte Netzwerksuche kann zusätzliche Daten liefern.",
+                    color = muted, fontSize = 12.sp)
+            } else {
+                DeviceCapabilities.capabilities(device).forEach { capability ->
+                    Text(
+                        capability.label + ": " +
+                            when (capability.evidence) {
+                                CapabilityEvidence.CONFIRMED -> "unterstützt"
+                                CapabilityEvidence.UNVERIFIED -> "nicht bestätigt"
+                                CapabilityEvidence.UNSUPPORTED -> "nicht gemeldet"
+                            },
+                        color = if (capability.evidence == CapabilityEvidence.CONFIRMED)
+                            Color(0xFF80D9C6) else muted,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
     initiallyExpanded: Boolean = false) {
     var expanded by remember(device.ip) { mutableStateOf(initiallyExpanded) }
     val live = controller.snapshotFor(device)
+    var allowUnverified by rememberSaveable(device.ip) { mutableStateOf(false) }
     OutlinedButton(
         onClick = { expanded = !expanded },
         modifier = Modifier.fillMaxWidth()
@@ -891,6 +932,17 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
     if (!expanded) return
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (device.methods.isEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = allowUnverified,
+                    onCheckedChange = { allowUnverified = it },
+                    enabled = controller.canIdentifyLamp(device)
+                )
+                Text("Unbestätigte Funktionen für diese Lampe testen",
+                    color = muted, fontSize = 12.sp)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 when {
@@ -913,12 +965,14 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { controller.controlLamp(device, LampCommands.power(true), "Einschalten") },
-                enabled = controller.canIdentifyLamp(device),
+                enabled = controller.canIdentifyLamp(device) &&
+                    DeviceCapabilities.evidence(device, "set_power") != CapabilityEvidence.UNSUPPORTED,
                 modifier = Modifier.weight(1f)
             ) { Text("Ein") }
             OutlinedButton(
                 onClick = { controller.controlLamp(device, LampCommands.power(false), "Ausschalten") },
-                enabled = controller.canIdentifyLamp(device),
+                enabled = controller.canIdentifyLamp(device) &&
+                    DeviceCapabilities.evidence(device, "set_power") != CapabilityEvidence.UNSUPPORTED,
                 modifier = Modifier.weight(1f)
             ) { Text("Aus") }
         }
@@ -933,7 +987,8 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                 controller.controlLamp(device, LampCommands.brightness(brightness.roundToInt()), "Helligkeit")
             },
             valueRange = 1f..100f,
-            enabled = controller.canIdentifyLamp(device),
+            enabled = controller.canIdentifyLamp(device) &&
+                DeviceCapabilities.canOffer(device, "set_bright", allowUnverified),
         )
         val colors = listOf(
             Triple("Warm", 0xFFAE62, Color(0xFFFFAE62)),
@@ -941,14 +996,15 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
             Triple("Violett", 0xA47BFF, Color(0xFFA47BFF)),
             Triple("Pink", 0xFF55B4, Color(0xFFFF55B4)),
         )
-        if (device.methods.isEmpty() || "set_rgb" in device.methods) {
+        if (DeviceCapabilities.evidence(device, "set_rgb") != CapabilityEvidence.UNSUPPORTED) {
             Text("Direktfarben", color = Color.White, fontSize = 12.sp)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 colors.forEach { (name, rgb, tint) ->
                     FilterChip(
                         selected = live?.colorMode == 1 && live.rgb == rgb,
                         onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
-                        enabled = controller.canIdentifyLamp(device),
+                        enabled = controller.canIdentifyLamp(device) &&
+                            DeviceCapabilities.canOffer(device, "set_rgb", allowUnverified),
                         label = { Text(name) },
                         leadingIcon = {
                             Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
@@ -957,7 +1013,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                 }
             }
         }
-        if (device.methods.isEmpty() || "set_ct_abx" in device.methods) {
+        if (DeviceCapabilities.evidence(device, "set_ct_abx") != CapabilityEvidence.UNSUPPORTED) {
             var kelvin by remember(device.ip, live?.temperature) {
                 mutableFloatStateOf((live?.temperature ?: 3500).toFloat())
             }
@@ -969,7 +1025,8 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                     controller.controlLamp(device, LampCommands.temperature(kelvin.roundToInt()), "Weißtemperatur")
                 },
                 valueRange = 1700f..6500f,
-                enabled = controller.canIdentifyLamp(device),
+                enabled = controller.canIdentifyLamp(device) &&
+                    DeviceCapabilities.canOffer(device, "set_ct_abx", allowUnverified),
             )
         }
         OutlinedButton(
