@@ -33,6 +33,8 @@ class YeelightMusicChannel(
     private val sendLock = Any()
     private var socket: Socket? = null
     private var enabledAttempted = false
+    @Volatile private var disableAcknowledged = false
+    val alreadyDisabledSuccessfully: Boolean get() = disableAcknowledged
     private var closed = false
     private var nextId = 1
 
@@ -130,6 +132,9 @@ class YeelightMusicChannel(
         }
         // A single explicit set_music(0) is safer than assuming a lost
         // connection always resets every firmware. Never retry automatically.
-        if (shouldDisable) disableOnDevice()
+        if (shouldDisable) {
+            disableOnDevice()
+            disableAcknowledged = true
+        }
     }
 }
