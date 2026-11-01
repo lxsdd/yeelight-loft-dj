@@ -322,8 +322,9 @@ object YeelightLan {
                         // Devices may emit unsolicited props; never mistake one
                         // for the response, and never accept a mismatching ID.
                         var response: JSONObject? = null
+                        val reader = socket.getInputStream().bufferedReader()
                         for (ignored in 0 until 8) {
-                            val line = socket.getInputStream().bufferedReader().readLine()
+                            val line = reader.readLine()
                                 ?: break
                             val candidate = JSONObject(line)
                             if (matchesReplyId(candidate, requestId)) {
