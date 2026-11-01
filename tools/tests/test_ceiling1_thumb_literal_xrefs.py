@@ -96,6 +96,37 @@ class Ceiling1ThumbLiteralXrefsTest(unittest.TestCase):
         self.assertFalse(r["wifi_firmware_root_cause_proven"])
         self.assertFalse(r["flash_safe"])
 
+    def test_bl_zero_displacement_is_pc_plus_four(self):
+        b=struct.pack("<HH",0xf000,0xf800)
+        self.assertEqual(m.thumb_bl_target(b,0,0x10071000),0x10071004)
+
+    def test_bl_reconnect_candidate_target_matches_independent_thumb_disassembly(self):
+        # Real 4-byte opcode sequence from the researched Thumb ISA; a
+        # synthetic codeword fixture, not a manufacturer firmware dump.
+        b=bytes.fromhex("fef745ff")
+        self.assertEqual(m.thumb_bl_target(b,0,0x100d2ee6),0x100d1d74)
+
+    def test_bl_rejects_non_bl_blx_odd_or_truncated(self):
+        self.assertIsNone(m.thumb_bl_target(bytes(4),0,0))
+        self.assertIsNone(m.thumb_bl_target(struct.pack("<HH",0xf000,0xe800),0,0))
+        self.assertIsNone(m.thumb_bl_target(struct.pack("<HH",0xf000,0xf800),1,0))
+        self.assertIsNone(m.thumb_bl_target(bytes(1),0,0))
+
+    def test_nearby_branch_candidate_is_not_firmware_bug_proof(self):
+        b=bytearray(64)
+        struct.pack_into("<HH",b,0x18,0xf000,0xf800)
+        r=m.nearby_bl_candidates(bytes(b),0x10,0x10071000)
+        self.assertEqual(r,[{
+            "bl_instruction_offset_hex":"0x18",
+            "candidate_target_address_hex":"0x1007101c",
+        }])
+
+    def test_nearby_scan_is_distance_bounded(self):
+        b=bytearray(96)
+        struct.pack_into("<HH",b,0x30,0xf000,0xf800)
+        self.assertEqual(m.nearby_bl_candidates(bytes(b),0x10,0,12),[])
+        self.assertEqual(m.nearby_bl_candidates(bytes(b),0x10,0,65),[])
+
     def test_marker_without_pointer_is_not_a_function_proof(self):
         raw=fota(b"wifi_station_disconnected_event_handler\0")
         with patch.object(verifier,"MODEL_SHA256",hashlib.sha256(raw).hexdigest()):

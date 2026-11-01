@@ -61,6 +61,48 @@ def thumb_literal_candidates(image: bytes, word_offset: int, address_base: int) 
     return refs
 
 
+
+def thumb_bl_target(image: bytes, instruction_offset: int, address_base: int):
+    """Decode only Thumb-2 BL (T1) immediate, returning a target or None.
+
+    This is a syntactic decode, not a proof the halfwords are executed code.
+    For ARMv7-M, S:I1:I2:imm10:imm11:0 is a 25-bit signed displacement.
+    J1 = NOT(I1 XOR S), J2 = NOT(I2 XOR S).
+    """
+    i=instruction_offset
+    if i < 0 or i % 2 or i + 4 > len(image):
+        return None
+    first, second=struct.unpack_from("<HH",image,i)
+    if (first & 0xf800) != 0xf000 or (second & 0xd000) != 0xd000:
+        return None
+    sign=(first >> 10) & 1
+    i1=(~(((second >> 13) & 1) ^ sign)) & 1
+    i2=(~(((second >> 11) & 1) ^ sign)) & 1
+    displacement=((sign << 24) | (i1 << 23) | (i2 << 22) |
+                  ((first & 1023) << 12) | ((second & 2047) << 1))
+    if displacement & (1 << 24):
+        displacement -= (1 << 25)
+    return address_base + i + 4 + displacement
+
+
+def nearby_bl_candidates(image: bytes, instruction_offset: int,
+                         address_base: int, max_distance: int = 24):
+    """Nearby BL encodings, not semantically proven edges or runtime calls."""
+    if (instruction_offset < 0 or instruction_offset & 1 or
+            max_distance < 0 or max_distance > 64):
+        return []
+    result=[]
+    for i in range(instruction_offset + 2,
+                   min(len(image)-3, instruction_offset + max_distance)+1,2):
+        target=thumb_bl_target(image,i,address_base)
+        if target is not None:
+            result.append({
+                "bl_instruction_offset_hex":hex(i),
+                "candidate_target_address_hex":hex(target),
+            })
+    return result
+
+
 def investigate(raw_image: bytes) -> dict:
     result = {
         "status": "REJECTED", "model": "yeelink.light.ceiling1",
@@ -101,6 +143,12 @@ def investigate(raw_image: bytes) -> dict:
                 references.append({
                     "pointer_word_offset_hex":hex(word_off),
                     "thumb_literal_encoding_candidates":insns,
+                    "nearby_thumb_bl_encoding_candidates": [
+                        candidate for insn in insns
+                        for candidate in nearby_bl_candidates(
+                            main, int(insn["instruction_offset_hex"],16),
+                            base)
+                    ][:MAX_REFS],
                 })
             section.append({
                 "marker":marker.decode("ascii"),
