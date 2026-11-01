@@ -9,6 +9,42 @@ class DiscoveryTrafficPolicyTest {
         methods = setOf("get_prop", "set_rgb", "set_music")
     )
 
+    @Test fun normalSearchOnlyCallsMulticastAndTargetedUdpWithNoTcpDependency() {
+        val multicastLamp = color("192.168.0.134")
+        val blockedLamp = color("192.168.0.135")
+        val allowedLamp = color("192.168.0.136")
+        val calls = mutableListOf<String>()
+        val result = DiscoveryTrafficPolicy.normalSearch(
+            known = listOf(multicastLamp, blockedLamp, allowedLamp),
+            quarantinedIps = setOf(blockedLamp.ip),
+            multicast = {
+                calls.add("udp-multicast")
+                listOf(multicastLamp)
+            },
+            directed = { targets ->
+                calls.add("udp-directed")
+                assertEquals(listOf(allowedLamp), targets)
+                targets
+            }
+        )
+        assertEquals(listOf("udp-multicast", "udp-directed"), calls)
+        assertEquals(listOf(multicastLamp), result.multicast)
+        assertEquals(listOf(allowedLamp), result.directed)
+    }
+
+    @Test fun noDirectedProbeWhenAllKnownLampsAreQuarantinedOrAlreadyAnnounced() {
+        val healthy = color("192.168.0.134")
+        val blocked = color("192.168.0.135")
+        val result = DiscoveryTrafficPolicy.normalSearch(
+            known = listOf(healthy, blocked),
+            quarantinedIps = setOf(blocked.ip),
+            multicast = { listOf(healthy) },
+            directed = { error("Normal search should not ask already-seen or blocked bulb") }
+        )
+        assertEquals(listOf(healthy), result.multicast)
+        assertTrue(result.directed.isEmpty())
+    }
+
     @Test fun normalSearchNeverPlansTcpProbes() {
         assertEquals(0, DiscoveryTrafficPolicy.NORMAL_SEARCH_TCP_PROBES)
     }
