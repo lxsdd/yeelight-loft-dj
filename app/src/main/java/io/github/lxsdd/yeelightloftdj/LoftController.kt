@@ -28,6 +28,7 @@ val rooms = listOf("Nicht zugeordnet", "Wohnzimmer", "Esszimmer", "Hobbyraum", "
 
 class LoftController(context: Context) {
     private val app = context.applicationContext
+    init { YeelightLan.installQuotaState(app) }
     private val prefs = app.getSharedPreferences("local-room-map", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private var microphone: MicrophoneCapture? = null
@@ -1006,6 +1007,24 @@ class LoftController(context: Context) {
         status = "Gerät aus dieser App entfernt"
     }
 
+
+    fun isLampLanQuarantined(device: YeelightDevice): Boolean =
+        YeelightLan.isLanQuarantined(device)
+
+    /** Explicitly invoked from the device UI, never via automatic retry. */
+    fun verifyLampLanRecovery(device: YeelightDevice) {
+        if (!YeelightLan.isLanQuarantined(device)) {
+            status = "Keine bestätigte Firmware-LAN-Sperre für diese Lampe gespeichert."
+            return
+        }
+        task("Prüfe LAN-Wiederherstellung für " + displayName(device) + " einmalig …") {
+            val power = withContext(Dispatchers.IO) {
+                YeelightLan.verifyLanRecovery(device)
+            }
+            displayName(device) + ": Firmware antwortet wieder (power=" + power +
+                "). LAN-Quarantäne aufgehoben; Steuerung vorsichtig fortsetzen."
+        }
+    }
 
     fun snapshotFor(device: YeelightDevice): LampSnapshot? = lampSnapshots[device.ip]
 
