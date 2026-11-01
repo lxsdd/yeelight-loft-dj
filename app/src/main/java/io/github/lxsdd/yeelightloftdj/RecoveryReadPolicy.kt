@@ -50,6 +50,12 @@ object RecoveryReadPolicy {
         }
     }
 
+    /** Only an explicit firmware music_on=0 establishes a stopped session.
+     * Missing/unsupported values and music_on=1 never unlock restoration.
+     */
+    fun musicStillUnconfirmed(sessionTracked: Boolean, musicOn: Boolean?): Boolean =
+        sessionTracked && musicOn != false
+
     fun canClear(
         d: RecoveryReadDecision,
         musicSessionUnconfirmed: Boolean = false,
