@@ -838,9 +838,18 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
                     }
                 }
                 DeviceCapabilityPanel(device)
+                OutlinedButton(
+                    onClick = { controller.inspectLamp(device) },
+                    enabled = !controller.busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Gerät prüfen · nur lesend") }
                 LampManualPanel(device, controller, initiallyExpanded = initiallyExpanded)
                 if (!device.canFlow) {
-                    Note("Dieses Gerät meldet kein Yeelight start_cf – nicht in Farbfluss einbeziehen.")
+                    Note("Der erkannte SUPPORT-Eintrag enthält kein start_cf. " +
+                        "Diese Lampe wird nicht in Farbfluss-Szenen aufgenommen.")
+                } else if (device.methods.isEmpty()) {
+                    Note("Farbfluss noch nicht verifiziert: Die reine TCP-Suche liefert " +
+                        "keine vollständige Geräteliste mit unterstützten Methoden.")
                 }
                 TextButton(
                     onClick = { showRemoveConfirm = true },
