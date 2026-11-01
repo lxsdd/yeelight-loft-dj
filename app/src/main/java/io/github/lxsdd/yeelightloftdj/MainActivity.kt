@@ -902,25 +902,52 @@ private fun DeviceSummaryCard(
     controller: LoftController,
     onDetails: () -> Unit
 ) {
+    val live = controller.snapshotFor(device)
+    val bulbTint = when {
+        live?.isOn == false -> Color(0xFF50586D)
+        live?.isOn == true && live.colorMode == 1 && live.rgb != null ->
+            Color(0xFF000000L or live.rgb.toLong())
+        live?.isOn == true -> Color(0xFFFFD58C)
+        else -> lavender
+    }
     Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Lightbulb, null, tint = lavender)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(controller.displayName(device), color = Color.White,
-                        fontWeight = FontWeight.SemiBold)
-                    Text(controller.roomFor(device) + " · " +
-                        DeviceCapabilities.summary(device),
-                        color = muted, fontSize = 11.sp)
+                Box(Modifier.size(45.dp).clip(RoundedCornerShape(15.dp))
+                    .background(bulbTint.copy(alpha = 0.24f)),
+                    contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Lightbulb, null, tint = bulbTint,
+                        modifier = Modifier.size(27.dp))
                 }
-                TextButton(onClick = onDetails) { Text("Steuern →") }
+                Spacer(Modifier.width(11.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    Text(
+                        when {
+                            live?.isOn == true -> "An · ${live.brightness} %"
+                            live?.isOn == false -> "Aus"
+                            else -> "Status nicht geprüft"
+                        },
+                        color = if (live?.isOn == true) Color(0xFF80D9C6) else muted,
+                        fontSize = 12.sp
+                    )
+                }
+                TextButton(onClick = onDetails) { Text("Steuern") }
             }
-            TextButton(
-                onClick = { controller.identifyLamp(device) },
-                enabled = controller.canIdentifyLamp(device)
-            ) { Text("Lampe identifizieren") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                OutlinedButton(onClick = { controller.refreshLamp(device) },
+                    enabled = !controller.busy, modifier = Modifier.weight(1f)) {
+                    Text("Status")
+                }
+                OutlinedButton(onClick = { controller.identifyLamp(device) },
+                    enabled = controller.canIdentifyLamp(device),
+                    modifier = Modifier.weight(1f)) {
+                    Text("Erkennen")
+                }
+            }
         }
     }
 }
