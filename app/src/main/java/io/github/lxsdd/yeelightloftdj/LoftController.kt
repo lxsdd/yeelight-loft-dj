@@ -392,6 +392,12 @@ class LoftController(context: Context) {
     val canRetryRecovery: Boolean
         get() = !busy && !musicStopPending && !musicSending
 
+    val quotaRecoveryHint: Boolean
+        get() = lastRecoveryFailures.values.any {
+            QuotaRecoveryPolicy.isQuotaRejection(it) ||
+                it.contains("Yeelight-LAN-Limit", ignoreCase = true)
+        }
+
     val recoveryExplanation: String
         get() = when {
             musicStopPending -> "Musiklicht wird bereits gestoppt und wiederhergestellt."
