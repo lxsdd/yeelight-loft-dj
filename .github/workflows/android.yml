@@ -59,6 +59,8 @@ jobs:
         run: python3 -m unittest discover -s tools/tests -p 'test_ceiling1_*.py' -v
       - name: Inspect OEM image formats using synthetic-only regression fixtures
         run: python3 -m unittest discover -s tools/tests -p 'test_oem_image_evidence.py' -v
+      - name: Analyze MediaTek FOTA LZMA with synthetic fixtures only
+        run: python3 -m unittest discover -s tools/tests -p 'test_mediatek_mmm_evidence.py' -v
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - name: Verify permanent APK signing certificate

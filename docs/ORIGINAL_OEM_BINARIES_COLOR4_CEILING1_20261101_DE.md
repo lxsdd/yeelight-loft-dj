@@ -12,10 +12,10 @@
 | Lokale MD5 | `f13ec12c9d53573748054b36a709e75a` | `0324c98a9bfde8faf531ab9014231d99` |
 | Unabhängige Kataloggröße/MD5 | **Exakt gleich** | **Exakt gleich** |
 | Lokale SHA-256 | `67f075ca909ae9f5c08ff580a4847683d1899e8ba251a7cd75d275b9848f22aa` | `a19801c450c0bd9cd1a3539b6ef4eeabf399b9f99288f86b6b410453c709e3bf` |
-| Originalformat | ESP32 ESP-IDF App, sieben Segmente | proprietärer **`MMM\x00`**-Container, Headerkandidat 156 Bytes |
-| Eigenständige interne Integrität | ESP-IDF-XOR **PASS**, eingebetteter SHA-256 **PASS**, 4-Byte-Xiaomi-CRC **PASS** | Aus dem Container nicht allgemein bestimmbar; **die Color4-CRC-Variante über Gesamtdaten passt hier nicht** |
+| Originalformat | ESP32 ESP-IDF App, sieben Segmente | **`MMM`-FOTA mit drei erfolgreich entpackten LZMA-Abschnitten** |
+| Eigenständige interne Integrität | ESP-IDF-XOR **PASS**, eingebetteter SHA-256 **PASS**, 4-Byte-Xiaomi-CRC **PASS** | **Alle drei SHA-1-Checks und LZMA-Entpackungen PASS** |
 | Neue Original-Hardware-/Chipbehauptung möglich? | Chip-ID=0 im ESP-IDF-Header = ESP32 | Chip aus Container nicht gesichert; externe Community ordnet diese Produktversion MT7697 zu |
-| Aus Originaldatei ableitbarer Quota-Befund | Echte Meldung `client quota exceeded` im LAN-Fehlertext-Katalog | Verdeckter/nicht lesbarer Payload; keine Quota-Textsuche beweiskräftig |
+| Aus Originaldatei ableitbarer Quota-Befund | Echte Meldung `client quota exceeded` im LAN-Fehlertext-Katalog | **`client quota exceeded` im entpackten Hauptprogramm** |
 | Aktiver Firmware-Patch, OTA oder Rücksicherung geeignet? | **NEIN, ungeprüft** | **NEIN, ungeprüft** |
 
 ### Color4 – neue tatsächliche Code-Artefakte
@@ -25,25 +25,33 @@
 - Im Klartext sind eigene Yeelight-LAN-Handlernamen `lan_ctrl_start`, `lan_ctrl_init`, `lan_clnt_recv`, `handle_lan_command` und `lan_open_mchannel` vorhanden. **Nachgewiesen ist die OEM-LAN-Quota-Fehlerklasse, noch nicht deren Timer-Rearm-Code**. Der Bericht über den 49,7-Tage-Bug an einer anderen Produktlinie darf **nicht** als automatischer Beweis derselben Codefunktion in `color4` ausgegeben werden.
 - Obwohl das ESP-IDF-Image strukturell gültig und kataloggleich ist, sind die konkreten **Secure-Boot-eFuses, Originalsignatur-Prüfkette, OEM-OTA-Akzeptanz, NVS/Pairing-Sicherung und sichere Rücksicherung** der vorhandenen Nutzerlampen noch **NICHT** bestätigt. **Kein beliebiger Binär-Bytepatch, kein Abschalten des Quota-Limits.**
 
-### Ceiling1 – neuer Format-/Abnahmebefund
+## Wichtige Korrektur: Ceiling1-Originalcode ist vollständig LZMA-entpackbar
 
-- **`MMM\x00`** als Originalcontainer statt ESP32; nachfolgende 32-Bit-Headerfelder `3` und `156` (0x9C). Der Header enthält weitere Zeiger/Offsets, die sich nicht ohne weitere Formatbelege semantisch belegen lassen.
-- In den ersten 8192 Payloadbytes ab Offset 156 liegt die Entropie bei **7,9803 Bit/Byte**; keine lesbaren ASCII-Folgen über 15 Zeichen. **Kompression und Verschlüsselung sind damit beide möglich, aber keinesfalls unterschieden oder bewiesen.** Kein Klartextcode für sichere Patchentwicklung aus dieser Datei extrahierbar.
-- Der 4-Byte-Trailer stimmt **nicht** mit dem an ESP32 beobachteten Xiaomi-CRC32 über das Gesamtimage überein. Bei einem anderen Container bedeutet das **keine beschädigte Datei**. Die volle Datei stimmt gleichzeitig vollständig mit den **independently katalogisierten 650224 Bytes und MD5** überein.
-- Bemerkenswert: Im [Yeelight-Herstellerthread](https://forum.yeelight.com/t/topic/15756) wurden bei `ceiling1` **exakt `1.5.9_0189` und ca. 1199 h Uptime** genannt. Yeelight bestätigte am 07.06.2022 ausdrücklich einen **nicht erneut bewaffneten Refill-Timer nach `2^32` Millisekunden**. Damit liegt nun ein OEM-Image zur **gleichen Firmwareversion** wie in diesem Fehlerbericht vor. Es beweist aber noch nicht die genaue Routine oder ihre Reparierbarkeit.
-- Communityhardwarebeleg MT7697: https://community.openhab.org/t/xiaomi-and-yeelight-item-firmware-summary/87509 . MCU-Recovery, Container-/Schlüsselformat, Bootloader-Signaturen bleiben offen.
+**Dieser nachträglich verifizierte Befund ersetzt alle älteren Aussagen, der MMM-Container sei undekodierbar, eventuell verschlüsselt oder der Quota-Fehlertext nicht zugänglich.** Beim tatsächlichen Nutzer-Originalimage wurde das MediaTek-FOTA-Headerformat aus [dieser unabhängigen Formatdokumentation](https://gist.github.com/Intyre/d72fc40df079611ed78a4d8c18e45858) erkannt: Drei 32-Byte-Deskriptoren mit Dateioffset, Ladeadresse, komprimierter Länge, Partitionsgröße, 20-Byte-SHA-1-Feld und LZMA-Flag.
+
+| FOTA-Abschnitt | Datei-Offset | Header-Ladeadresse | komprimiert | entpackt | SHA-1 des komprimierten Abschnitts |
+|---|---|---|---:|---:|---|
+| 0 – Hauptfirmware | `0x9C` | `0x71000` | 445573 Bytes | **782928 Bytes** | **PASS** |
+| 1 – weiteres Image | `0x6CD35` | `0x8000` | 204349 Bytes | **288986 Bytes** | **PASS** |
+| 2 – Zusatz | `0x9EB86` | `0x20A000` | 86 Bytes | **64 Bytes** | **PASS** |
+
+Alle drei LZMA-Streams wurden **im Arbeitsspeicher vollständig dekomprimiert**, erreichten das Dateiende ohne überschüssige Bytes und blieben unter ihrer jeweiligen angegebenen Partitionsgröße. Die im FOTA-Header als „signature“ bezeichneten 20-Byte-Felder stimmen bytegenau mit **SHA-1 der komprimierten Sektionen** überein. **SHA-1 ist hier eine Integritätsprüfung, keine verifizierte Hersteller-Digitalsignatur.**
+
+**Direkter neuer Codebeleg:** Im entpackten Hauptimage liegt die Herstellerfehlermeldung `client quota exceeded` bei Offset **`0x9D2B3`**, zugehöriger *Header-Adressen-Kandidat* **`0x10E2B3`**. Daneben stehen `invalid command`, `method not supported`, `invalid parameter`, `out of memory` sowie `lan_ctrl_task`, `start_lan_ctrl`, `cfg_lan_ctrl`, `get_prop` und `set_music`. Damit ist **auf beiden tatsächlich vorliegenden OEM-Images** der LAN-Quota-Fehlertext nachgewiesen. Dieselbe Quota-Timerimplementierung oder der genaue 49,7-Tage-Bug im Maschinencode sind **noch nicht** belegt.
+
+Original-MTK-Binärinhalte werden **weder entpackt in GitHub noch als zusätzliches ZIP veröffentlicht**. Neues Skript `tools/mediatek_mmm_evidence.py` validiert rein offline LZMA/Segmentgrenzen/SHA-1 und berichtet ausschließlich Metadaten und ausgewählte bekannte Strings, keine Hersteller-Codebytes. 12 synthetische Regressionen in CI. **Kein Flashen, OTA, Secure-Boot-Bypass oder angeblich freigegebener Patch.**
 
 ## Neue reproduzierbare Offline-Analyse, ohne OEM-Code im Repo
 
-`tools/oem_image_evidence.py` erkennt die **beiden konkret verifizierten Hash-/Größen-Kombinationen** und untersucht ESP32-Imageheader, Segmentgrenzen, XOR, SHA, CRC, App-Deskriptor, Quota-String und direkte Referenzen; für `MMM` nur Formatindikatoren und Entropie. Alle Befunde werden über Standardausgabe als JSON ausgegeben, die Originaldateien werden nur gelesen. Keine Netzwerkbibliothek, keine Geräteadressen, keine OTA-/Flash-/Patch-Befehle. Bei jedem Resultat bleiben `installable=false`, `oem_signature_verified=false` und `quota_timer_root_cause_proven=false`.
+`tools/oem_image_evidence.py` erkennt die **beiden konkret verifizierten Hash-/Größen-Kombinationen** und untersucht ESP32-Imageheader, Segmentgrenzen, XOR, SHA, CRC, App-Deskriptor, Quota-String und direkte Referenzen; für MediaTek-`MMM` außerdem `tools/mediatek_mmm_evidence.py` mit kontrollierter LZMA-Dekompression und SHA-1-Kontrolle. Alle Befunde werden über Standardausgabe als JSON ausgegeben, die Originaldateien werden nur gelesen. Keine Netzwerkbibliothek, keine Geräteadressen, keine OTA-/Flash-/Patch-Befehle. Bei jedem Resultat bleiben `installable=false`, `oem_signature_verified=false` und `quota_timer_root_cause_proven=false`.
 
-Auf den beiden tatsächlichen Uploads wurde zusätzlich ein lokales, noch detaillierteres Prüfwerkzeug erfolgreich ausgeführt; **die Originalimages werden absichtlich NICHT Bestandteil der CI**. Die **15 synthetischen** positiven/negativen Tests des öffentlichen Skripts laufen in `.github/workflows/android.yml` zusammen mit allen bisherigen Color4-/Ceiling1- und Android-Regressionen.
+Auf den beiden tatsächlichen Uploads wurde zusätzlich ein lokales, noch detaillierteres Prüfwerkzeug erfolgreich ausgeführt; **die Originalimages werden absichtlich NICHT Bestandteil der CI**. Die **15 ESP32-/Katalog- und 12 zusätzlichen MediaTek-FOTA-Regressionsfälle** laufen in `.github/workflows/android.yml` zusammen mit allen bisherigen Color4-/Ceiling1- und Android-Regressionen.
 
 ## Priorisierter echter Reparaturpfad und unvermeidliche Nachweise
 
 1. **Color4 zuerst:** Die fehlerauslösende Firmwaremeldung ist im ESP32-Binary identifiziert; nun ist statisches **Xtensa-Disassembly und Code-/Daten-Xref** vom LAN-Dispatcher zum tatsächlichen Refill-Timer erforderlich. Quota-Schwellwerte und Cloud-/Herstellerfunktionen müssen erhalten bleiben.
-2. **Ceiling1:** `MMM`-Container und möglicherweise komprimierte/verschlüsselte Firmwarepayloads anhand verifizierter MediaTek-OTA-/Bootloaderreferenzen interpretieren. Ohne legitime Dekodierung kein scheinbarer Ersatz-ESP32-Patch.
+2. **Ceiling1:** Die nun **vollständig dekodierten** MediaTek-Teilimages mit Cortex-M4-/ARM-Disassembly und Code-/Daten-Xrefs zum Quota-Timer untersuchen. SHA-1 im FOTA-Header beweist weder OEM-Signaturakzeptanz noch sicheres Recovery.
 3. **Beide:** Signatur-/Secure-Boot-/Recovery-Gates und Tests der Original-Yeelight-/Google-/HomeKit-/BLE-Funktionen auf **separaten ausdrücklich freigegebenen Laborgeräten** abnehmen. Ohne verifizierten Rückweg bleibt **Flashen ausgeschlossen**.
 4. **Loft DJ:** Produktive Quota-Quarantäne-/Rate-Limit-Korrektur bleibt im separaten PR #31. **Ein konservativer Client heilt keinen nicht mehr neu bewaffneten Firmware-Timer.**
 
-**Fazit:** Die Originalimages sind authentisch im Sinn von **Kataloghash-/Größengleichheit**, nicht im strengeren Sinn einer bestätigten OEM-Signatur. Sie zeigen einen echten `color4`-LAN-Quota-Fehlerpfad und bei `ceiling1` einen nicht offen lesbaren Mediencontainer. **Eine modifizierte, sicher wiederherstellbare Originalfirmware kann derzeit noch nicht bereitgestellt werden.**
+**Fazit:** Die Originalimages sind authentisch im Sinn von **Kataloghash-/Größengleichheit**, nicht im strengeren Sinn einer bestätigten OEM-Signatur. Sie zeigen einen echten `color4`-LAN-Quota-Fehlerpfad und bei `ceiling1` **ebenfalls den echten LAN-Quota-Fehlertext nach erfolgreichem MediaTek-FOTA-LZMA-Entpacken**. **Eine modifizierte, sicher wiederherstellbare Originalfirmware kann derzeit noch nicht bereitgestellt werden.**

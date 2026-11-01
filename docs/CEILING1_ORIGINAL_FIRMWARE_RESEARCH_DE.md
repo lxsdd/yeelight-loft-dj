@@ -2,6 +2,22 @@
 
 Stand 2026-11-01. **Keine OTA-/Flash-Freigabe, keine Geräteanfrage.** Ziel ist die separate Erforschung der wiederkehrenden WLAN-/Cloud-Ausfälle der älteren Deckenlampen ohne Verlust von Yeelight-/Google-Home-/BLE-Funktionen.
 
+## Wichtige Korrektur: Ceiling1-Originalcode ist vollständig LZMA-entpackbar
+
+**Dieser nachträglich verifizierte Befund ersetzt alle älteren Aussagen, der MMM-Container sei undekodierbar, eventuell verschlüsselt oder der Quota-Fehlertext nicht zugänglich.** Beim tatsächlichen Nutzer-Originalimage wurde das MediaTek-FOTA-Headerformat aus [dieser unabhängigen Formatdokumentation](https://gist.github.com/Intyre/d72fc40df079611ed78a4d8c18e45858) erkannt: Drei 32-Byte-Deskriptoren mit Dateioffset, Ladeadresse, komprimierter Länge, Partitionsgröße, 20-Byte-SHA-1-Feld und LZMA-Flag.
+
+| FOTA-Abschnitt | Datei-Offset | Header-Ladeadresse | komprimiert | entpackt | SHA-1 des komprimierten Abschnitts |
+|---|---|---|---:|---:|---|
+| 0 – Hauptfirmware | `0x9C` | `0x71000` | 445573 Bytes | **782928 Bytes** | **PASS** |
+| 1 – weiteres Image | `0x6CD35` | `0x8000` | 204349 Bytes | **288986 Bytes** | **PASS** |
+| 2 – Zusatz | `0x9EB86` | `0x20A000` | 86 Bytes | **64 Bytes** | **PASS** |
+
+Alle drei LZMA-Streams wurden **im Arbeitsspeicher vollständig dekomprimiert**, erreichten das Dateiende ohne überschüssige Bytes und blieben unter ihrer jeweiligen angegebenen Partitionsgröße. Die im FOTA-Header als „signature“ bezeichneten 20-Byte-Felder stimmen bytegenau mit **SHA-1 der komprimierten Sektionen** überein. **SHA-1 ist hier eine Integritätsprüfung, keine verifizierte Hersteller-Digitalsignatur.**
+
+**Direkter neuer Codebeleg:** Im entpackten Hauptimage liegt die Herstellerfehlermeldung `client quota exceeded` bei Offset **`0x9D2B3`**, zugehöriger *Header-Adressen-Kandidat* **`0x10E2B3`**. Daneben stehen `invalid command`, `method not supported`, `invalid parameter`, `out of memory` sowie `lan_ctrl_task`, `start_lan_ctrl`, `cfg_lan_ctrl`, `get_prop` und `set_music`. Damit ist **auf beiden tatsächlich vorliegenden OEM-Images** der LAN-Quota-Fehlertext nachgewiesen. Dieselbe Quota-Timerimplementierung oder der genaue 49,7-Tage-Bug im Maschinencode sind **noch nicht** belegt.
+
+Original-MTK-Binärinhalte werden **weder entpackt in GitHub noch als zusätzliches ZIP veröffentlicht**. Neues Skript `tools/mediatek_mmm_evidence.py` validiert rein offline LZMA/Segmentgrenzen/SHA-1 und berichtet ausschließlich Metadaten und ausgewählte bekannte Strings, keine Hersteller-Codebytes. 12 synthetische Regressionen in CI. **Kein Flashen, OTA, Secure-Boot-Bypass oder angeblich freigegebener Patch.**
+
 ## Modellunterschied zum Color4
 
 - **ceiling1 = yeelink.light.ceiling1 / YLXD01YL**, ältere Dual-WLAN/BLE-Deckenlampe (Hersteller: https://www.mi.com/yeelight-ceilinglamp/specs).
