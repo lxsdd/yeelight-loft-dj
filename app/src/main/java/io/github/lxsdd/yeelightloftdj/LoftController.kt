@@ -46,6 +46,8 @@ class LoftController(context: Context) {
         private set
     var customSelectedIds by mutableStateOf(loadSelection())
         private set
+    var namedGroups by mutableStateOf(loadNamedGroups())
+        private set
     var lastSceneReport by mutableStateOf<List<SceneLampResult>>(emptyList())
         private set
     var lastRecoveryFailures by mutableStateOf<Map<String, String>>(emptyMap())
@@ -152,6 +154,70 @@ class LoftController(context: Context) {
             (0 until array.length()).map { array.getString(it) }.toSet()
         }.getOrDefault(emptySet())
 
+    private fun loadNamedGroups(): Map<String, Set<String>> = runCatching {
+        val saved = JSONArray(prefs.getString("named-lamp-groups", "[]") ?: "[]")
+        (0 until saved.length()).mapNotNull { index ->
+            val entry = saved.optJSONObject(index) ?: return@mapNotNull null
+            val name = entry.optString("name").trim()
+            val ids = entry.optJSONArray("ids") ?: return@mapNotNull null
+            if (name.isBlank()) null else name to
+                (0 until ids.length()).mapNotNull { j ->
+                    ids.optString(j).takeIf { it.isNotBlank() }
+                }.toSet()
+        }.toMap()
+    }.getOrDefault(emptyMap())
+
+    private fun writeNamedGroups(revised: Map<String, Set<String>>) {
+        val arr = JSONArray()
+        revised.forEach { (name, ids) ->
+            arr.put(JSONObject().put("name", name)
+                .put("ids", JSONArray(ids.toList())))
+        }
+        check(prefs.edit().putString("named-lamp-groups", arr.toString()).commit()) {
+            "Gruppen konnten nicht gespeichert werden"
+        }
+        namedGroups = revised
+    }
+
+    fun addGroup(name: String) {
+        val cleaned = name.trim()
+        if (!canOrganizeLamps || !NamedLampGroups.validName(cleaned) ||
+            namedGroups.keys.any { it.equals(cleaned, ignoreCase = true) } ||
+            namedGroups.size >= 24) {
+            status = "Ungültiger oder bereits verwendeter Gruppenname"
+            return
+        }
+        writeNamedGroups(namedGroups + (cleaned to emptySet()))
+        chooseTarget("Gruppe:" + cleaned)
+        status = "Gruppe angelegt: " + cleaned + " · bitte Lampen auswählen"
+    }
+
+    fun renameGroup(name: String, next: String) {
+        val clean = next.trim()
+        if (!canOrganizeLamps || name !in namedGroups || !NamedLampGroups.validName(clean) ||
+            namedGroups.keys.any { it != name && it.equals(clean, true) }) return
+        val revised = namedGroups.mapKeys { (key, _) -> if (key == name) clean else key }
+        writeNamedGroups(revised)
+        if (target == "Gruppe:" + name) chooseTarget("Gruppe:" + clean)
+        status = "Gruppe umbenannt: " + clean
+    }
+
+    fun deleteGroup(name: String) {
+        if (!canOrganizeLamps || name !in namedGroups) return
+        val wasTarget = target == "Gruppe:" + name
+        writeNamedGroups(namedGroups - name)
+        if (wasTarget) chooseTarget("Auswahl")
+        status = "Gruppe entfernt · Lampen bleiben gespeichert"
+    }
+
+    fun setGroupMember(name: String, deviceId: String, selected: Boolean) {
+        if (!canOrganizeLamps || name !in namedGroups ||
+            devices.none { it.id == deviceId }) return
+        val current = namedGroups[name].orEmpty()
+        val next = if (selected) current + deviceId else current - deviceId
+        writeNamedGroups(namedGroups + (name to next))
+    }
+
     private fun loadLoftMembers(): Set<String>? = runCatching {
         if (!prefs.getBoolean("loft-members-customized", false)) null
         else {
@@ -248,6 +314,7 @@ class LoftController(context: Context) {
 
     fun targetOptions(): List<String> =
         listOf("Auswahl", "Alle") +
+        namedGroups.keys.map { "Gruppe:" + it } +
         roomNames.filter { it != "Nicht zugeordnet" }.map { "Raum:$it" } +
         orderedDevices().map { "Lampe:" + it.id }
 
@@ -256,11 +323,14 @@ class LoftController(context: Context) {
             "Alle gespeicherten Lampen, auch offline. Beim Start werden Fehler je Lampe angezeigt."
         choice == "Auswahl" -> "Deine " + customSelectedIds.size +
             " ausgewählten Lampen. Offline-Lampen können separat fehlschlagen."
+        choice.startsWith("Gruppe:") -> namedGroups[choice.removePrefix("Gruppe:")]
+            ?.let { "Bearbeitbare Gruppe mit " + it.size + " Lampen." } ?: ""
         else -> ""
     }
 
     fun targetLabel(value: String): String = when {
         value.startsWith("Raum:") -> value.removePrefix("Raum:")
+        value.startsWith("Gruppe:") -> value.removePrefix("Gruppe:")
         value.startsWith("Lampe:") -> {
             devices.firstOrNull { it.id == value.removePrefix("Lampe:") }
                 ?.let(::displayName) ?: "Nicht bekannte Lampe"
@@ -531,6 +601,9 @@ class LoftController(context: Context) {
                     }
                     customSelectedIds = revised
                 }
+                val revisedGroups = NamedLampGroups.migrateId(namedGroups,
+                    previous.id, replacement.id)
+                if (revisedGroups != namedGroups) writeNamedGroups(revisedGroups)
                 val room = updatedRooms[previous.id] ?: prefs.getString("room." + previous.id, null)
                 if (room != null) {
                     updatedRooms[replacement.id] = room
@@ -708,6 +781,8 @@ class LoftController(context: Context) {
             }
             target = revisedTarget
         }
+        val prunedGroups = NamedLampGroups.removeId(namedGroups, device.id)
+        if (prunedGroups != namedGroups) writeNamedGroups(prunedGroups)
         devices = devices.filterNot { it.id == device.id }
         assignments = assignments - device.id
         lastSeenIps = lastSeenIps - device.ip
@@ -813,6 +888,9 @@ class LoftController(context: Context) {
     private fun chooseDevices(choice: String): List<YeelightDevice> = when {
         choice == "Alle" -> orderedDevices()
         choice == "Auswahl" -> orderedDevices().filter { it.id in customSelectedIds }
+        choice.startsWith("Gruppe:") -> orderedDevices().filter {
+            it.id in namedGroups[choice.removePrefix("Gruppe:")].orEmpty()
+        }
         choice.startsWith("Raum:") -> orderedDevices().filter {
             roomFor(it) == choice.removePrefix("Raum:")
         }
