@@ -677,7 +677,7 @@ class LoftController(context: Context) {
             // Multicast can fail to reach selected Wi-Fi clients even when
             // the same device responds to a directed Yeelight M-SEARCH.
             val tcp = try { YeelightLan.deepDiscover() } catch (_: Exception) { emptyList() }
-            val missing = tcp.filterNot { bulb -> udp.any { it.ip == bulb.ip } }
+            val missing = DirectedDiscoveryPlan.candidates(tcp, udp)
             val unicast = runCatching {
                 YeelightLan.directedUdpDiscover(app, missing)
             }.getOrDefault(emptyList())
