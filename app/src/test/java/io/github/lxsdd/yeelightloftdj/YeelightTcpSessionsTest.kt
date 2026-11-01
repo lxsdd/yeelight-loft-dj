@@ -102,6 +102,61 @@ class YeelightTcpSessionsTest {
         }
     }
 
+    @Test fun targetedPreflightSocketCloseDoesNotCloseOtherLampOrForceExtraCommand() {
+        ServerSocket(0).use { first ->
+            ServerSocket(0).use { second ->
+                val firstClosed = java.util.concurrent.atomic.AtomicBoolean(false)
+                val worker1 = thread {
+                    first.accept().use { socket ->
+                        socket.soTimeout = 2500
+                        val request=org.json.JSONObject(socket.getInputStream().bufferedReader().readLine())
+                        val ack=org.json.JSONObject().put("id",request.getInt("id"))
+                            .put("result",org.json.JSONArray().put("on"))
+                        socket.getOutputStream().write((ack.toString() + "\r\n").toByteArray())
+                        socket.getOutputStream().flush()
+                        firstClosed.set(socket.getInputStream().read() == -1)
+                    }
+                }
+                val worker2 = thread {
+                    second.accept().use { socket ->
+                        socket.soTimeout = 2500
+                        val reader=socket.getInputStream().bufferedReader()
+                        repeat(2) {
+                            val request=org.json.JSONObject(reader.readLine())
+                            val ack=org.json.JSONObject().put("id",request.getInt("id"))
+                                .put("result",org.json.JSONArray().put("on"))
+                            socket.getOutputStream().write((ack.toString() + "\r\n").toByteArray())
+                            socket.getOutputStream().flush()
+                        }
+                    }
+                }
+                val tcp=YeelightTcpSessions(
+                    trace={},
+                    connect={ip,port -> Socket(ip,port).apply { soTimeout=2000 }}
+                )
+                try {
+                    tcp.request("127.0.0.1",first.localPort,1,"get_prop",listOf("power"))
+                    tcp.request("127.0.0.1",second.localPort,2,"get_prop",listOf("power"))
+                    assertEquals(2,tcp.openCount())
+                    tcp.closeTarget("127.0.0.1",first.localPort)
+                    assertEquals(1,tcp.openCount())
+                    // The unaffected lamp keeps its own connection and only
+                    // receives the ONE request explicitly asked by caller.
+                    tcp.request("127.0.0.1",second.localPort,3,"get_prop",listOf("power"))
+                    assertEquals(1,tcp.openCount())
+                    worker1.join(2400)
+                    assertTrue("Preflight failed to free the target firmware slot",firstClosed.get())
+                } finally {
+                    tcp.closeAll()
+                    worker1.join(2500)
+                    worker2.join(2500)
+                    assertFalse(worker1.isAlive)
+                    assertFalse(worker2.isAlive)
+                }
+            }
+        }
+    }
+
     @Test fun firmwareQuotaIsQuarantinedEvenWhenCallerIgnoresErrorJson() {
         ServerSocket(0).use { server ->
             val worker = thread {

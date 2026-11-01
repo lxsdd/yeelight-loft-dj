@@ -1866,8 +1866,12 @@ class LoftController(context: Context) {
                 "Musiklicht: mindestens eine gewählte Lampe hat eine offene Wiederherstellung. " +
                     "Diese Lampe zuerst ausschließen."
             }
+            // A Music-Preflight is an admission check, never a fleet poll.
+            // Test one selected bulb at a time; stop at the FIRST refusal.
+            // This prevents an outstanding request to another bulb after
+            // the current bulb reports a firmware quota rejection.
             val snapshots = withContext(Dispatchers.IO) {
-                chosen.map { device -> async {
+                MusicPreflightSequence.capture(chosen) { device ->
                     val snapshot = try {
                         if (YeelightLan.supportsMusicMode(device)) {
                             YeelightLan.readMusicPreflight(device)
@@ -1902,8 +1906,8 @@ class LoftController(context: Context) {
                             "Musiklicht nicht von " + displayName(device) + " unterstützt"
                         }
                     }
-                    device.ip to snapshot
-                } }.awaitAll().toMap()
+                    snapshot
+                }
             }
             check(microphoneRunning || InternalAudioBridge.running) {
                 "Audioquelle wurde vor der Lichtaktivierung gestoppt"
