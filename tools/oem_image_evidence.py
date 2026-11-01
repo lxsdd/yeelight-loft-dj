@@ -101,25 +101,9 @@ def esp32(data):
 
 
 def mmm(data):
-    if len(data) < 12 or not data.startswith(b"MMM\x00"):
-        return {"format": "unknown"}
-    n, header = struct.unpack_from("<II", data, 4)
-    sane = n == 3 and 12 <= header <= min(4096, len(data))
-    sample = data[header:header+8192] if sane else b""
-    entropy = 0.0
-    if sample:
-        entropy = -sum((sample.count(x)/len(sample)) *
-                       math.log2(sample.count(x)/len(sample))
-                       for x in set(sample))
-    return {
-        "format": "proprietary_MMM_container",
-        "header_count_raw": n, "header_length_candidate": header,
-        "header_plausible": sane, "sample_entropy_bits_per_byte": round(entropy, 4),
-        "payload_encrypted_or_compressed": "UNKNOWN_NOT_PROVEN",
-        "cpu_from_container": "UNKNOWN_NOT_PROVEN",
-        "color4_style_crc_valid": (len(data) >= 4 and
-            data[-4:] == struct.pack("<I", xiaomi_crc(data[:-4]))),
-    }
+    """Bounded, SHA1-checked MediaTek-LZMA decoding; never exposes OEM bytes."""
+    from mediatek_mmm_evidence import analyze_mmm
+    return analyze_mmm(data)
 
 
 def inspect(data, model):

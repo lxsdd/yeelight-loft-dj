@@ -77,12 +77,26 @@ class OEMImageEvidenceTests(unittest.TestCase):
     def test_mmm_format_is_not_esp32(self):
         fixture = b"MMM\x00" + struct.pack("<II", 3, 156) + bytes(144) + b"Y"*1000
         r = mod.mmm(fixture)
-        self.assertTrue(r["header_plausible"])
-        self.assertEqual(r["cpu_from_container"], "UNKNOWN_NOT_PROVEN")
+        self.assertEqual(r["format"], "MediaTek_MMM_FOTA_LZMA")
+        self.assertFalse(r["complete_integrity"])
 
     def test_incorrect_mmm_header(self):
         fixture = b"MMM\x00" + struct.pack("<II", 3, 999999)
-        self.assertFalse(mod.mmm(fixture)["header_plausible"])
+        self.assertFalse(mod.mmm(fixture)["complete_integrity"])
+
+    def test_valid_compressed_mmm_reaches_shared_inspection_route(self):
+        import lzma
+        raw = b"synthetic fixture client quota exceeded\x00"
+        packed = lzma.compress(raw, format=lzma.FORMAT_ALONE)
+        header = bytearray(b"MMM\x00" + struct.pack("<I", 1) + bytes(32))
+        struct.pack_into("<8I", header, 8, 40, 0x71000, len(packed),
+                         4096, 40+len(packed), 20, 1, 0)
+        image = bytes(header) + packed + hashlib.sha1(packed).digest()
+        report = mod.inspect(image, "yeelink.light.ceiling1")
+        self.assertTrue(report["structure"]["complete_integrity"])
+        self.assertTrue(report["structure"]["local_lan_evidence"]["quota_string_found"])
+        self.assertFalse(report["installable"])
+        self.assertFalse(report["known_stock_catalogue_match"])
 
     def test_not_mmm_or_esp(self):
         self.assertEqual(mod.mmm(b"not a stock image")["format"], "unknown")
