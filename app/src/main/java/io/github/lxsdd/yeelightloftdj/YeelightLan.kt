@@ -730,10 +730,13 @@ object YeelightLan {
             // client quota exceeded is an *explicit* firmware rejection.
             // A second socket/get_prop only adds pressure to the quota and
             // does not establish whether a previous flow is running.
-            if (QuotaRecoveryPolicy.isQuotaRejection(failure.message)) {
+            if (QuotaRecoveryPolicy.isQuotaRejection(failure.message) ||
+                failure is DeviceCommandGate.Deferred
+            ) {
                 throw IllegalStateException(
-                    "Yeelight-LAN-Limit erreicht (client quota exceeded): " +
-                        "andere Steuer-Clients beenden und später erneut versuchen", failure)
+                    "Yeelight-LAN-Limit: Stopp nicht ausgeführt oder " +
+                        "nicht bestätigt. " + (failure.message ?: "") +
+                        " · später erneut versuchen", failure)
             }
             // A no-longer-running flow is already safely stopped. Only clear
             // the persisted stop marker when the bulb confirms flowing=0.
