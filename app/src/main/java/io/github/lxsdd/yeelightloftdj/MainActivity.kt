@@ -582,38 +582,6 @@ private fun TargetSelector(controller: LoftController) {
             Text(controller.targetDescription(controller.target),
                 color = muted, fontSize = 12.sp)
         }
-        if (controller.target == "Loft") {
-            var editLoft by rememberSaveable { mutableStateOf(false) }
-            TextButton(onClick = { editLoft = !editLoft }) {
-                Text(if (editLoft) "Loft-Gruppe schließen" else "Loft-Gruppe bearbeiten")
-            }
-            if (editLoft) {
-                Text("Loft-Mitglieder unabhängig von den Räumen auswählen.",
-                    color = muted, fontSize = 12.sp)
-                controller.orderedDevices().forEach { device ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = device.id in controller.loftMemberIds(),
-                            onCheckedChange = { controller.setLoftMember(device.id, it) },
-                            enabled = controller.canOrganizeLamps
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
-                            Text(controller.roomFor(device), color = muted, fontSize = 11.sp)
-                        }
-                        TextButton(
-                            onClick = { controller.identifyLamp(device) },
-                            enabled = controller.canIdentifyLamp(device)
-                        ) { Text("Identifizieren", fontSize = 11.sp) }
-                    }
-                }
-                OutlinedButton(
-                    onClick = controller::resetLoftMembers,
-                    enabled = controller.canOrganizeLamps,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Loft wieder nach Räumen zusammenstellen") }
-            }
-        }
     }
 }
 
