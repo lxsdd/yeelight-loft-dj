@@ -25,7 +25,7 @@ fun RoomAssignmentEditor(controller: LoftController) {
     var rename by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
     var confirmDelete by remember { mutableStateOf(false) }
-    val editable = !controller.busy && controller.runningDeviceIps.isEmpty()
+    val editable = controller.canOrganizeLamps
     val devices = controller.orderedDevices()
 
     Surface(color = Color(0xFF1D2232), shape = RoundedCornerShape(22.dp)) {
