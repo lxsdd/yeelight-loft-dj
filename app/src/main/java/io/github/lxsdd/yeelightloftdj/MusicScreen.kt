@@ -112,6 +112,11 @@ fun MusicScreen(controller: LoftController) {
                 Text("Cast auf einen externen Empfänger oder durch die Quell-App " +
                     "gesperrtes Audio liefern möglicherweise Stille. Dafür Mikrofon nutzen.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
+                Text("Direkte Audioanalyse mit 64-ms-Fenstern. Die App benötigt " +
+                    "aktuell einen lebenden Loft-DJ-Controller für Lampenlicht: " +
+                    "Hintergrundbetrieb nach App-Wechsel oder Prozessende " +
+                    "ist noch nicht dauerhaft abgesichert.",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp)
             }
         }
 
@@ -195,9 +200,15 @@ fun MusicScreen(controller: LoftController) {
                         MusicMetric("BPM", reading.estimatedBpm?.toString() ?: "–")
                     }
                     Text(
-                        if (reading.beat) "Bass-Transient erkannt" else
-                            "Audio wird gemessen · Beat nur bei erkanntem Bassimpuls",
-                        color = if (reading.beat) Color(0xFF67E1C8) else Color(0xFF98A6C0),
+                        when {
+                            reading.beat -> "Bass-Beat im digitalen Signal erkannt"
+                            reading.accent == MusicAccent.LOW -> "Tiefer Musikakzent gemessen · kein Beat behauptet"
+                            reading.accent == MusicAccent.MID -> "Mitten-Akzent gemessen · kein Beat behauptet"
+                            reading.accent == MusicAccent.HIGH -> "Höhen-Akzent gemessen · kein Beat behauptet"
+                            else -> "Audio wird gemessen · Beat nur bei erkanntem Bassimpuls"
+                        },
+                        color = if (reading.beat || reading.accent != null)
+                            Color(0xFF67E1C8) else Color(0xFF98A6C0),
                         fontSize = 12.sp
                     )
                 } else {
