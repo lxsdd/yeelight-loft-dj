@@ -480,6 +480,7 @@ private fun RecoveryBanner(controller: LoftController) {
     var releaseIp by rememberSaveable { mutableStateOf<String?>(null) }
     var acceptsRunningFlow by rememberSaveable { mutableStateOf(false) }
     var acceptsLoss by rememberSaveable { mutableStateOf(false) }
+    var recoveryDetails by rememberSaveable { mutableStateOf(false) }
     val closeDialog = {
         releaseIp = null
         acceptsRunningFlow = false
@@ -488,18 +489,38 @@ private fun RecoveryBanner(controller: LoftController) {
     Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF2C293B)) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("Einzelne Lampe noch nicht wiederhergestellt",
+            Text(controller.pendingRecoveryCount.toString() +
+                " Lampe(n) zur Prüfung vorgemerkt",
                 color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(controller.recoveryExplanation, color = Color(0xFFE1D7F6), fontSize = 12.sp)
-            controller.pendingLampDescriptions().forEach { desc ->
-                Text(desc, color = Color(0xFFFFC1A6), fontSize = 12.sp)
-            }
-            if (controller.quotaRecoveryHint) {
-                Text("Yeelight-LAN-Limit erreicht. Weitere Wiederholungen innerhalb " +
-                    "einer Minute sind kontraproduktiv. Bitte parallele Lichtsteuerungen " +
-                    "(z. B. andere Apps, Home Assistant oder Integrationen) für diese " +
-                    "Lampe prüfen. Die Wiederherstellung wird nicht gelöscht.",
-                    color = Color(0xFFFFC1A6), fontSize = 12.sp)
+            Text("Andere Lampen bleiben bedienbar.", color = muted, fontSize = 12.sp)
+            controller.pendingRecoveryIps().forEach { ip ->
+                val lamp = controller.devices.firstOrNull { it.ip == ip }
+                val lampName = lamp?.let(controller::displayName)
+                    ?: "Gespeicherte Lampe ." + ip.substringAfterLast('.')
+                Surface(shape = RoundedCornerShape(15.dp), color = Color(0xFF383345)) {
+                    Column(Modifier.fillMaxWidth().padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Lightbulb, null,
+                                tint = Color(0xFFFFC1A6), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text(lampName, color = Color.White,
+                                modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                        }
+                        controller.recoveryReadReports[ip]?.let {
+                            Text(it, color = Color(0xFFFFC1A6), fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { controller.checkRecoveryLamp(ip) },
+                            enabled = controller.canRetryRecovery && !controller.scannerRunning,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Search, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Zustand jetzt prüfen")
+                        }
+                    }
+                }
             }
             OutlinedButton(
                 onClick = controller::stop,
@@ -512,17 +533,22 @@ private fun RecoveryBanner(controller: LoftController) {
                     "Scanner stoppen & Lampen ausschalten"
                 else "Lichtshow stoppen & Licht wiederherstellen")
             }
-            Text("Tipp: Andere Lampen dürfen weiter benutzt und identifiziert werden. " +
-                "Die nicht bestätigte Lampe bleibt geschützt und kann später erneut geprüft werden.",
-                color = muted, fontSize = 11.sp)
-            if (controller.pendingRecoveryCount > 0) {
-                HorizontalDivider(color = Color(0xFF49455A))
-                Text("Erweiterte Option bei dauerhaft abgelehntem stop_cf:",
-                    color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                Text("Empfohlen ist zuerst der normale Wiederherstellungsversuch. " +
-                    "Alternativ kannst du nur den gespeicherten App-Eintrag verwerfen – " +
-                    "ohne Stromneustart. Achtung: Ein Lichtlauf kann dann noch aktiv sein.",
-                    color = muted, fontSize = 11.sp)
+            TextButton(onClick = { recoveryDetails = !recoveryDetails }) {
+                Text(if (recoveryDetails) "Details ausblenden" else "Fehlerdetails & weitere Optionen")
+            }
+            if (recoveryDetails) {
+                Text(controller.recoveryExplanation, color = muted, fontSize = 12.sp)
+                controller.pendingLampDescriptions().forEach { desc ->
+                    Text(desc, color = Color(0xFFFFC1A6), fontSize = 12.sp)
+                }
+                if (controller.quotaRecoveryHint) {
+                    Text("Gerät meldet Yeelight-Clientlimit. " +
+                        "Andere Steuerungen beenden und später erneut prüfen.",
+                        color = Color(0xFFFFC1A6), fontSize = 12.sp)
+                }
+                HorizontalDivider(color = Color(0xFF49475F))
+                Text("Nur als Ausnahme: alten App-Eintrag verwerfen.",
+                    color = muted, fontSize = 12.sp)
                 controller.pendingRecoveryIps().forEach { ip ->
                     val device = controller.devices.firstOrNull { it.ip == ip }
                     val bulbName = device?.let(controller::displayName)
