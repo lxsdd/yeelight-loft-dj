@@ -341,6 +341,104 @@ object YeelightLan {
 
     private class RejectedCommand(message: String) : IllegalStateException(message)
 
+    /**
+     * One TCP connection for a requested power change AND its verification.
+     * Never auto-retry a command when the ACK is missing: the bulb may already
+     * have switched and the ACK alone could have been lost.
+     */
+    fun setPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
+        require(isLocalIp(device.ip))
+        if (device.methods.isNotEmpty() && "set_power" !in device.methods) {
+            return PowerProbe(PowerOutcome.UNSUPPORTED,
+                message = "Gerät meldet set_power nicht als unterstützt")
+        }
+        val started = System.nanoTime()
+        fun ms(): Long = (System.nanoTime() - started) / 1_000_000L
+        var connectMs: Long? = null
+        var ackMs: Long? = null
+        try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(device.ip, device.port), 1800)
+                connectMs = ms()
+                socket.soTimeout = 1800
+                val input = socket.getInputStream().bufferedReader()
+                val output = socket.getOutputStream()
+
+                fun replyTo(id: Int, method: String): JSONObject {
+                    repeat(12) {
+                        val line = input.readLine() ?: error("Keine Antwort auf $method")
+                        val candidate = JSONObject(line)
+                        if (matchesReplyId(candidate, id)) return candidate
+                    }
+                    error("Keine passende Antwort auf $method")
+                }
+
+                fun sendRequest(id: Int, method: String, params: List<Any>) {
+                    val payload = JSONObject().put("id", id).put("method", method)
+                        .put("params", JSONArray(params)).toString() + "\r\n"
+                    output.write(payload.toByteArray(Charsets.UTF_8))
+                    output.flush()
+                }
+
+                val powerId = seq.getAndIncrement()
+                // "sudden" makes power toggling responsive; duration is
+                // ignored by the device for this effect, per Yeelight spec.
+                sendRequest(powerId, "set_power",
+                    listOf(if (on) "on" else "off", "sudden", 0))
+                val answer = replyTo(powerId, "set_power")
+                if (answer.has("error")) {
+                    return PowerProbe(PowerOutcome.REJECTED, connectMs = connectMs,
+                        totalMs = ms(),
+                        message = answer.optJSONObject("error")
+                            ?.optString("message", "Befehl zurückgewiesen")
+                            ?: "Befehl zurückgewiesen")
+                }
+                if (answer.optJSONArray("result")?.optString(0) != "ok") {
+                    return PowerProbe(PowerOutcome.NO_ACK, connectMs = connectMs,
+                        totalMs = ms(), message = "Keine gültige OK-Bestätigung")
+                }
+                ackMs = ms()
+
+                // Some TCP-only firmware does not expose get_prop; the ACK
+                // remains true but does not prove the physical light changed.
+                if (device.methods.isNotEmpty() && "get_prop" !in device.methods) {
+                    return PowerProbe(PowerOutcome.ACK_ONLY, connectMs, ackMs,
+                        totalMs = ms(), message = "Statusabfrage nicht gemeldet")
+                }
+                // A tiny settle delay avoids racing asynchronous power
+                // changes while keeping the total additional traffic at
+                // ONE read on the SAME connection.
+                Thread.sleep(75)
+                val status = runCatching {
+                    val readId = seq.getAndIncrement()
+                    sendRequest(readId, "get_prop", listOf("power"))
+                    val reply = replyTo(readId, "get_prop")
+                    check(!reply.has("error")) { "Statusabfrage abgelehnt" }
+                    when (reply.optJSONArray("result")?.optString(0)) {
+                        "on" -> true
+                        "off" -> false
+                        else -> null
+                    }
+                }
+                val observed = status.getOrNull()
+                val outcome = PowerVerificationPolicy.outcome(true, on, observed)
+                return PowerProbe(outcome, connectMs, ackMs,
+                    if (status.isSuccess) ms() else null,
+                    totalMs = ms(),
+                    message = status.exceptionOrNull()?.message.orEmpty())
+            }
+        } catch (failure: Exception) {
+            val outcome = when {
+                ackMs != null -> PowerOutcome.ACK_ONLY
+                connectMs == null -> PowerOutcome.UNREACHABLE
+                else -> PowerOutcome.NO_ACK
+            }
+            return PowerProbe(outcome, connectMs, ackMs,
+                totalMs = ms(),
+                message = failure.message ?: failure.javaClass.simpleName)
+        }
+    }
+
     /** Each command is CRLF-delimited and must return the matching explicit OK. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
