@@ -527,6 +527,56 @@ object YeelightLan {
         }
     }
 
+    /**
+     * A SINGLE Yeelight get_prop command reads flowing and all restorable
+     * power/colour properties on ONE TCP connection. No write, no retries.
+     * An empty/unsupported flowing response is UNKNOWN, never "off".
+     */
+    data class RecoveryObservation(
+        val flowing: Boolean?,
+        val snapshot: LampSnapshot?,
+    )
+
+    internal fun parseRecoveryProperties(values: List<String>): RecoveryObservation {
+        return RecoveryObservation(
+            flowing = flowStateFromValue(values.getOrNull(0)),
+            snapshot = LampSnapshot.fromValues(values.drop(1))
+        )
+    }
+
+    fun readRecoveryObservation(device: YeelightDevice): RecoveryObservation {
+        require(isLocalIp(device.ip))
+        val id = seq.getAndIncrement()
+        val properties = listOf("flowing") + LampSnapshot.properties
+        val payload = JSONObject().put("id", id).put("method", "get_prop")
+            .put("params", JSONArray(properties)).toString() + "\r\n"
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
+            socket.soTimeout = 1800
+            val output = socket.getOutputStream()
+            output.write(payload.toByteArray(Charsets.UTF_8))
+            output.flush()
+            val reader = socket.getInputStream().bufferedReader()
+            repeat(12) {
+                val line = reader.readLine() ?: error("Keine Antwort auf Zustandsprüfung")
+                val candidate = JSONObject(line)
+                if (matchesReplyId(candidate, id)) {
+                    if (candidate.has("error")) {
+                        error("Zustandsprüfung abgelehnt: " +
+                            candidate.getJSONObject("error")
+                                .optString("message", "Yeelight-Fehler"))
+                    }
+                    val array = candidate.optJSONArray("result")
+                        ?: error("Statuswerte fehlen")
+                    return parseRecoveryProperties(
+                        (0 until array.length()).map { array.optString(it) }
+                    )
+                }
+            }
+            error("Keine passende get_prop-Antwort")
+        }
+    }
+
     internal fun preferAtomicFlowStart(methods: Set<String>): Boolean =
         methods.isEmpty() || "set_scene" in methods
 
