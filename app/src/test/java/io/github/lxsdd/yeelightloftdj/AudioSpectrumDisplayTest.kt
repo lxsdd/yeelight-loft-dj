@@ -21,7 +21,11 @@ class AudioSpectrumDisplayTest {
         }
         val frame=analyzer.analyze(pcm,1064L)
         assertFalse(frame.beat)
-        assertTrue(frame.displayBands[5] >= frame.bands[5])
+        // 1875 Hz belongs to the actual 1400–3200 Hz presence band
+        // (index 4), NOT the >3200 Hz band (index 5). FFT leakage in
+        // the last band should not be boosted above the noise floor.
+        assertTrue(frame.bands[4] > .018f)
+        assertTrue(frame.displayBands[4] >= frame.bands[4])
         assertEquals(6,frame.displayBands.size)
         assertEquals(MusicAccent.HIGH,frame.accent)
         val silence=analyzer.analyze(ShortArray(1024),1128L)
