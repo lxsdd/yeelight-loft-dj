@@ -13,7 +13,7 @@ class Color4MusicAcceptancePolicyTest {
     @Test fun permitsOnlyOneExplicitlyIdentifiedMusicCapableColor4() {
         assertNull(Color4MusicAcceptancePolicy.refusal(
             listOf(lamp()), emptySet(), false))
-        assertEquals(8_000L, Color4MusicAcceptancePolicy.DURATION_MS)
+        assertEquals(15_000L, Color4MusicAcceptancePolicy.DURATION_MS)
     }
 
     @Test fun rejectsZeroOrMultiplePhysicalLampTargets() {

@@ -17,13 +17,19 @@ class MicrophoneCapture {
     private val stopped = AtomicBoolean(false)
     @Volatile private var recorder: AudioRecord? = null
     val sampleRate = 16000
-    val frameSize = 2048
+    val frameSize = 1024
+    @Volatile private var analysisGain = MicrophoneAnalysisGain.DEFAULT
+
+    fun setAnalysisGain(gain: Float) {
+        analysisGain = MicrophoneAnalysisGain.normalize(gain)
+    }
 
     @SuppressLint("MissingPermission")
     suspend fun run(onFrame: suspend (MusicFrame) -> Unit) = withContext(Dispatchers.IO) {
         check(!stopped.get()) { "Mikrofon wurde bereits gestoppt" }
         check(enabled.compareAndSet(false, true)) { "Mikrofon läuft bereits" }
-        val analyzer = MusicAnalyzer(sampleRate, frameSize)
+        var analyzer = MusicAnalyzer(sampleRate, frameSize)
+        var previousGain = analysisGain
         try {
             val minimum = AudioRecord.getMinBufferSize(
                 sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -55,7 +61,21 @@ class MicrophoneCapture {
                     count += n
                 }
                 if (enabled.get() && count == samples.size) {
-                    onFrame(analyzer.analyze(samples, android.os.SystemClock.elapsedRealtime()))
+                    val gain = analysisGain
+                    if (gain != previousGain) {
+                        // Reset transient history after a manual gain adjustment.
+                        // A sudden artificial change in PCM gain must never
+                        // be mistaken for a new musical beat.
+                        analyzer = MusicAnalyzer(sampleRate, frameSize)
+                        previousGain = gain
+                        analyzer.analyze(
+                            MicrophoneAnalysisGain.apply(samples, gain),
+                            android.os.SystemClock.elapsedRealtime()
+                        )
+                    } else {
+                        val measured = MicrophoneAnalysisGain.apply(samples, gain)
+                        onFrame(analyzer.analyze(measured, android.os.SystemClock.elapsedRealtime()))
+                    }
                 }
             }
         } finally {
