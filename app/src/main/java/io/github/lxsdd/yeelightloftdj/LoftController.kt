@@ -42,6 +42,8 @@ class LoftController(context: Context) {
     private var musicColorBeat = 0L
     private var musicAcceptanceEpoch = 0L
     private var dualAcceptanceActive = false
+    var lastAcceptanceWasDual by mutableStateOf(false)
+        private set
     private var dualAcceptanceIps = emptyList<String>()
     private var dualWritesByIp = emptyMap<String,Long>()
     private var dualFailuresByIp = emptyMap<String,Long>()
@@ -1913,6 +1915,7 @@ class LoftController(context: Context) {
             val streamingCount = chosen.count(YeelightLan::musicModeActive)
             acceptanceTestActive = acceptanceTest
             dualAcceptanceActive = acceptanceTest && dualTest
+            if (acceptanceTest) lastAcceptanceWasDual = dualAcceptanceActive
             if (dualAcceptanceActive) {
                 dualAcceptanceIps = chosen.map { it.ip }
                 dualWritesByIp = dualAcceptanceIps.associateWith { 0L }
@@ -1978,7 +1981,7 @@ class LoftController(context: Context) {
         val number = musicColorBeat
         scope.launch {
             try {
-                val (attempted, paused, problems) = withContext(Dispatchers.IO) {
+                val (attemptedIps, paused, problems) = withContext(Dispatchers.IO) {
                     // One busy or recently queried lamp must not deprive the
                     // others of their own safe beat budget. Preserve the
                     // ORIGINAL spatial index when skipping a quota-low lamp.
@@ -2003,23 +2006,25 @@ class LoftController(context: Context) {
                             }
                         }.exceptionOrNull()?.let { device.ip }
                     } }.awaitAll().filterNotNull()
-                    Triple(permitted.size, chosen.size - permitted.size, failures)
+                    // Snapshot the exact intended writes BEFORE any channel
+                    // can close. Never infer an attempt from socket.isActive
+                    // after an ambiguous TCP failure.
+                    Triple(permitted.map { it.value.ip },
+                        chosen.size - permitted.size, failures)
                 }
+                val attempted = attemptedIps.size
                 if (acceptanceTestActive) {
                     acceptanceStats = acceptanceStats.withWrites(attempted, problems.size, dispatch)
                     if (dual) {
-                        // Each dispatched frame only adds attempts for its
-                        // independently live channel; failures stay per IP.
-                        chosen.forEach { device ->
-                            if (device.ip in problems ||
-                                YeelightLan.musicModeActive(device)) {
-                                dualWritesByIp = dualWritesByIp +
-                                    (device.ip to ((dualWritesByIp[device.ip] ?: 0L) + 1L))
-                            }
-                            if (device.ip in problems) {
-                                dualFailuresByIp = dualFailuresByIp +
-                                    (device.ip to ((dualFailuresByIp[device.ip] ?: 0L) + 1L))
-                            }
+                        // A socket can close between attempt and telemetry.
+                        // Attribute each frame to the PRE-SEND receipt.
+                        attemptedIps.forEach { ip ->
+                            dualWritesByIp = dualWritesByIp +
+                                (ip to ((dualWritesByIp[ip] ?: 0L) + 1L))
+                        }
+                        problems.forEach { ip ->
+                            dualFailuresByIp = dualFailuresByIp +
+                                (ip to ((dualFailuresByIp[ip] ?: 0L) + 1L))
                         }
                     }
                 }

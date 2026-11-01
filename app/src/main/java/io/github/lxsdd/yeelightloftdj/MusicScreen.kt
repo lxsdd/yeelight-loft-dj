@@ -351,7 +351,10 @@ fun MusicScreen(controller: LoftController) {
                 // No dual-start action is exposed in this review-only build.
                 if (controller.lastColor4TestReport.isNotBlank()) {
                     HorizontalDivider(color = Color(0xFF323A50))
-                    Text("Letzter Color4-Einzeltest – keine Zwei-Lampen-Messung",
+                    Text(
+                        if (controller.lastAcceptanceWasDual)
+                            "Letzte Zwei-Color4-Session – noch keine optische Bestätigung"
+                        else "Letzter Color4-Einzeltest – keine Zwei-Lampen-Messung",
                         color = Color(0xFFAAB6CE), fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp)
                     Text(
