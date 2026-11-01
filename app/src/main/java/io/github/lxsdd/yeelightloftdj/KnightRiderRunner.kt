@@ -23,17 +23,19 @@ class KnightRiderRunner {
         var active: YeelightDevice? = null
         var steps = 0L
         var error: String? = null
+        var preflightReady = true
         try {
             // Only perform the show after every selected participant is
             // actually VERIFIED off. Never light next bulb on an unknown ACK.
             for (device in devices) {
                 if (!powerOff(device)) {
                     error = "Start nicht sicher: " + device.ip + " ist nicht als AUS bestätigt"
-                    return Result(unsafe, steps, error)
+                    preflightReady = false
+                    break
                 }
                 unsafe.remove(device.ip)
             }
-            if (isStopping()) return Result(unsafe,steps,null)
+            if (preflightReady && !isStopping()) {
             val path = KnightRiderPlan.path(
                 devices.size, config.direction == ChaseDirection.REVERSE, config.bounce
             )
@@ -60,6 +62,7 @@ class KnightRiderRunner {
                 steps++
                 onStep(path[((steps-1) % path.size).toInt()], steps)
                 waitStep(dwell)
+            }
             }
         } catch (e: Exception) {
             error = "Scanner abgebrochen: " + (e.message ?: e.javaClass.simpleName)
