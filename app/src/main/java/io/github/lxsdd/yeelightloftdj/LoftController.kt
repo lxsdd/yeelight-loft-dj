@@ -28,6 +28,9 @@ class LoftController(context: Context) {
     private val prefs = app.getSharedPreferences("local-room-map", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private var microphone: MicrophoneCapture? = null
+    private val internalAudioSink: (MusicFrame) -> Unit = { frame ->
+        if (!microphoneRunning && InternalAudioBridge.running) consumeMusicFrame(frame)
+    }
     private var musicSending = false
     private var musicStopPending = false
     private var lastMusicCommandAt = Long.MIN_VALUE / 2
@@ -95,6 +98,10 @@ class LoftController(context: Context) {
     private var recoveryJournal = SceneRecovery.decode(prefs.getString("pending-scene-recovery", null))
 
     init {
+        InternalAudioBridge.attach(internalAudioSink) {
+            musicFrame = null
+            if (musicLightArmed) disarmMusicLights()
+        }
         // Migrate old Test (1) and Loft targets without discarding lamp/room data.
         // No lights are modified by this one-time settings-only migration.
         val legacy = target
@@ -1004,6 +1011,10 @@ class LoftController(context: Context) {
 
     /** Only run after Android runtime permission is granted by the Activity. */
     fun startMicrophone() {
+        if (InternalAudioBridge.running) {
+            status = "Interne Audioanalyse zuerst stoppen, bevor das Mikrofon gestartet wird."
+            return
+        }
         if (microphoneRunning) return
         microphone = MicrophoneCapture()
         val capture = microphone ?: return
@@ -1016,13 +1027,7 @@ class LoftController(context: Context) {
             try {
                 capture.run { frame ->
                     withContext(Dispatchers.Main.immediate) {
-                        if (microphoneRunning) {
-                            musicFrame = frame
-                            if (frame.beat) {
-                                musicBeatCount++
-                                onMusicBeat(frame)
-                            }
-                        }
+                        if (microphoneRunning) consumeMusicFrame(frame)
                     }
                 }
             } catch (e: Exception) {
@@ -1038,11 +1043,38 @@ class LoftController(context: Context) {
         }
     }
 
+    private fun consumeMusicFrame(frame: MusicFrame) {
+        musicFrame = frame
+        if (frame.beat) {
+            musicBeatCount++
+            onMusicBeat(frame)
+        }
+    }
+
+    fun startInternalAudio(resultCode: Int, grant: android.content.Intent) {
+        if (microphoneRunning || InternalAudioBridge.running) {
+            status = "Zuerst die bisherige Audioquelle stoppen."
+            return
+        }
+        try {
+            musicFrame = null
+            musicBeatCount = 0L
+            InternalAudioCaptureService.start(app, resultCode, grant)
+            status = "Android-Freigabe erteilt · interne Audioquelle wird gestartet"
+        } catch (e: Exception) {
+            status = "Interne Audioanalyse konnte nicht starten: " + (e.message ?: "Fehler")
+        }
+    }
+
+    fun stopInternalAudio() {
+        InternalAudioCaptureService.stop(app)
+    }
+
     fun stopMicrophone() {
         microphoneRunning = false
         microphone?.stop()
         musicFrame = null
-        if (musicLightArmed) disarmMusicLights()
+        if (musicLightArmed && !InternalAudioBridge.running) disarmMusicLights()
     }
 
     /**
@@ -1051,7 +1083,7 @@ class LoftController(context: Context) {
      * Only explicitly selected user targets may control music lighting.
      */
     fun armMusicLights() {
-        if (!microphoneRunning || musicLightArmed) return
+        if (!(microphoneRunning || InternalAudioBridge.running) || musicLightArmed) return
         val chosen = selected()
         if (chosen.isEmpty()) {
             status = "Erst Lampen suchen und den Musik-Zielbereich wählen"
@@ -1080,7 +1112,9 @@ class LoftController(context: Context) {
                     device.ip to snapshot
                 } }.awaitAll().toMap()
             }
-            check(microphoneRunning) { "Mikrofon wurde vor der Lichtaktivierung gestoppt" }
+            check(microphoneRunning || InternalAudioBridge.running) {
+                "Audioquelle wurde vor der Lichtaktivierung gestoppt"
+            }
             setRecoveryJournal(snapshots)
             setRunningIps(chosen.map { it.ip }.toSet())
             check(prefs.edit().putBoolean("music-light-session", true).commit()) {
@@ -1099,9 +1133,9 @@ class LoftController(context: Context) {
             }
             musicLightStatus = chosen.size.toString() +
                 " Lampen gewählt · max. 1 Farbwechsel je 1,5 s / Lampe"
-            if (!microphoneRunning) {
+            if (!microphoneRunning && !InternalAudioBridge.running) {
                 val stopResult = haltRunning(false)
-                "Mikrofon beendet; Beleuchtung wiederhergestellt · " + stopResult
+                "Audioanalyse beendet; Beleuchtung wiederhergestellt · " + stopResult
             } else if (failed.isEmpty()) "Musiklicht aktiviert · vorheriger Zustand gesichert"
             else "Musiklicht aktiviert · " + failed.size + " Lampen nicht einschaltbar; Stoppen zum Zurücksetzen"
         }
@@ -1172,6 +1206,7 @@ class LoftController(context: Context) {
         }
     }
     fun close() {
+        InternalAudioBridge.detach(internalAudioSink)
         microphone?.stop()
         if (musicDeviceSession) {
             // Activity may be destroyed immediately after ON_STOP.
