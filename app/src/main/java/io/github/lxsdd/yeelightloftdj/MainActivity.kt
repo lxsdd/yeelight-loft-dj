@@ -1358,6 +1358,7 @@ private fun ChasePanel(controller: LoftController,
     var style by rememberSaveable { mutableStateOf(initialStyle) }
     // The top-level target selector controls ALL scene types, including chases.
     val choice = controller.target
+    val scannerEligible = controller.previewScannerEligibleCount(choice)
     var direction by rememberSaveable { mutableStateOf(ChaseDirection.FORWARD) }
     var bounce by rememberSaveable { mutableStateOf(initialStyle == ChaseStyle.KNIGHT_RIDER) }
     var palette by rememberSaveable { mutableStateOf(
@@ -1388,8 +1389,10 @@ private fun ChasePanel(controller: LoftController,
                 Button(
                     onClick = { if (config != null) controller.playChase(config, choice) },
                     enabled = !controller.busy && !controller.scannerRunning &&
-                        config != null && controller.previewCount(choice) in
-                            (if (style == ChaseStyle.KNIGHT_RIDER) 2..24 else 1..24),
+                        config != null &&
+                            (if (style == ChaseStyle.KNIGHT_RIDER)
+                                scannerEligible in 2..24
+                            else controller.previewCount(choice) in 1..24),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Rounded.PlayArrow, contentDescription = null)
@@ -1439,6 +1442,18 @@ private fun ChasePanel(controller: LoftController,
             Text("Lichtweg-Ziel: " + controller.targetLabel(choice) +
                 " · " + controller.previewCount(choice) + " Lampen",
                 color = Color.White, fontWeight = FontWeight.SemiBold)
+            if (style == ChaseStyle.KNIGHT_RIDER) {
+                Text("$scannerEligible für den Scanner geeignet · " +
+                    (controller.previewCount(choice) - scannerEligible) +
+                    " unbestätigt, inkompatibel oder mit offener Wiederherstellung",
+                    color = if (scannerEligible >= 2) Color(0xFF80D9C6)
+                        else Color(0xFFFFC1A6), fontSize = 12.sp)
+                if (scannerEligible < 2) {
+                    Text("Mindestens 2 kompatible RGB-Lampen auswählen und gegebenenfalls " +
+                        "über Geräte & Netzwerk neu erkennen.",
+                        color = muted, fontSize = 12.sp)
+                }
+            }
             Text("Ziel und Gruppen im Auswahlbereich oben ändern. " +
                 "Die Laufrichtung folgt der Sortierung unter Geräte.",
                 color = muted, fontSize = 11.sp)
@@ -1482,8 +1497,10 @@ private fun ChasePanel(controller: LoftController,
                     }
                 }
             }
-            if (config != null && controller.previewCount(choice) > 0) {
-                val lampCount = controller.previewCount(choice).coerceAtMost(24)
+            if (config != null && (if (style == ChaseStyle.KNIGHT_RIDER)
+                    scannerEligible > 0 else controller.previewCount(choice) > 0)) {
+                val lampCount = (if (style == ChaseStyle.KNIGHT_RIDER)
+                    scannerEligible else controller.previewCount(choice)).coerceAtMost(24)
                 val count = ChaseCompiler.frames(config, 0, lampCount).size
                 val step = previewStep.roundToInt().coerceIn(0, count - 1)
                 Text("Effektvorschau · Schritt ${step + 1} von $count",
@@ -1507,7 +1524,8 @@ private fun ChasePanel(controller: LoftController,
                 Text("Simulation der Reihenfolge – keine Statusanzeige der echten Lampen.",
                     color = muted, fontSize = 11.sp)
             }
-            val selectedCount = controller.previewCount(choice)
+            val selectedCount = if (style == ChaseStyle.KNIGHT_RIDER)
+                scannerEligible else controller.previewCount(choice)
             val effectiveMs = if (style == ChaseStyle.KNIGHT_RIDER &&
                 selectedCount in 2..24)
                     KnightRiderPlan.effectiveStepMs(ms.roundToInt(), selectedCount, bounce)
