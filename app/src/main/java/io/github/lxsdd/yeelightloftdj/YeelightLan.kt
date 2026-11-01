@@ -673,6 +673,8 @@ object YeelightLan {
      * speculative Music-Mode handshake against a real lamp.
      */
     private val musicChannels = ConcurrentHashMap<String, YeelightMusicChannel>()
+    // One compensating set_music(0) was already attempted on failed handshake.
+    private val failedStartDisableAcknowledged = ConcurrentHashMap<String, Boolean>()
 
     fun supportsMusicMode(device: YeelightDevice): Boolean =
         "set_music" in device.methods && "set_rgb" in device.methods
@@ -696,7 +698,14 @@ object YeelightLan {
                 send(device, "set_music", listOf(0))
             }
         )
-        channel.start(host)
+        failedStartDisableAcknowledged.remove(device.ip)
+        try {
+            channel.start(host)
+        } catch (failure: Exception) {
+            failedStartDisableAcknowledged[device.ip] =
+                channel.alreadyDisabledSuccessfully
+            throw failure
+        }
         musicChannels[device.ip] = channel
         return true
     }
@@ -728,9 +737,18 @@ object YeelightLan {
     @Synchronized
     fun stopMusicMode(device: YeelightDevice) {
         val channel = musicChannels.remove(device.ip)
+        val earlierDisable = failedStartDisableAcknowledged.remove(device.ip)
         if (channel != null) {
             channel.close()
+        } else if (earlierDisable != null) {
+            check(earlierDisable) {
+                "Music-Mode-Start gescheitert und einmaliges set_music(0) " +
+                    "nicht bestätigt. Keine automatische Wiederholung; " +
+                    "Wiederherstellung bleibt offen."
+            }
+            // Already acknowledged: do not spend an extra LAN command.
         } else if (supportsMusicMode(device)) {
+            // Explicit recovery of a persisted session after process restart.
             send(device, "set_music", listOf(0))
         }
     }
