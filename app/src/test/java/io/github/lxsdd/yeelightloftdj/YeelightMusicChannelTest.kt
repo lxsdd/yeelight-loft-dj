@@ -5,6 +5,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -58,6 +59,83 @@ class YeelightMusicChannelTest {
         assertEquals(1, enableCalls.get())
         assertEquals(1, disableCalls.get())
         assertFalse(channel.isActive)
+    }
+
+    @Test fun normalStopSendsDisableBeforeClosingReverseSocket() {
+        val peer = AtomicReference<Socket>()
+        val ready = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val disabled = AtomicInteger()
+        var worker: Thread? = null
+        val channel = YeelightMusicChannel(
+            "127.0.0.1",
+            enableOnDevice = { host, port ->
+                worker = thread {
+                    Socket(host, port).use { client ->
+                        peer.set(client)
+                        ready.countDown()
+                        release.await(3, TimeUnit.SECONDS)
+                    }
+                }
+            },
+            disableOnDevice = {
+                assertTrue(ready.await(2, TimeUnit.SECONDS))
+                // Before disabling, the bulb's reverse channel MUST be open.
+                // A premature server close returns EOF immediately, not timeout.
+                val bulbPeer = peer.get()
+                bulbPeer.soTimeout = 180
+                try {
+                    val result = bulbPeer.getInputStream().read()
+                    fail("Music socket was already closed before set_music(0): $result")
+                } catch (_: SocketTimeoutException) {
+                    // No bytes and no EOF: reverse connection remains open.
+                }
+                disabled.incrementAndGet()
+            },
+        )
+        try {
+            channel.start("127.0.0.1")
+            channel.close()
+            assertFalse(channel.isActive)
+            assertEquals(1, disabled.get())
+            channel.close()
+            assertEquals(1, disabled.get())
+        } finally {
+            release.countDown()
+            worker?.join(2500)
+        }
+    }
+
+    @Test fun rejectedStopStillClosesReverseSocketWithoutClaimingAck() {
+        val sawEof = CountDownLatch(1)
+        val ready = CountDownLatch(1)
+        var worker: Thread? = null
+        val channel = YeelightMusicChannel(
+            "127.0.0.1",
+            enableOnDevice = { host, port ->
+                worker = thread {
+                    Socket(host, port).use { client ->
+                        ready.countDown()
+                        client.soTimeout = 2_000
+                        if (client.getInputStream().read() == -1) sawEof.countDown()
+                    }
+                }
+            },
+            disableOnDevice = {
+                assertTrue(ready.await(2, TimeUnit.SECONDS))
+                error("set_music(0) abgelehnt: invalid params")
+            },
+        )
+        try {
+            channel.start("127.0.0.1")
+            assertTrue(runCatching { channel.close() }.isFailure)
+            assertTrue(sawEof.await(2, TimeUnit.SECONDS))
+            assertFalse(channel.alreadyDisabledSuccessfully)
+            assertFalse(channel.isActive)
+        } finally {
+            channel.close()
+            worker?.join(2500)
+        }
     }
 
     @Test fun interruptingReverseOutputSendsNoDuplicateLanDisable() {

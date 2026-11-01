@@ -119,22 +119,37 @@ class YeelightMusicChannel(
         }
     }
 
-    /** Close the reverse channel before restoring bulb state. */
+    /**
+     * For a normal stop, explicitly disable music mode WHILE the reverse
+     * socket is still connected, then close it. The Yeelight spec treats
+     * set_music(0) and closing the reverse socket as ALTERNATIVE stop paths.
+     * Closing first can make older firmware reject a subsequent stop as
+     * "invalid params" even though the music session has already ended.
+     *
+     * On an unacknowledged stop, close the reverse socket as a documented
+     * best-effort fallback, but NEVER claim that physical recovery succeeded.
+     * The caller retains its durable unresolved marker; no automatic retry.
+     */
     override fun close() {
         val shouldDisable: Boolean
+        val previousSocket: Socket?
         synchronized(lock) {
             if (closed) return
-            closed = true
-            runCatching { socket?.close() }
+            closed = true // no new RGB writes after stop begins
+            previousSocket = socket
             socket = null
             shouldDisable = enabledAttempted
             enabledAttempted = false
         }
-        // A single explicit set_music(0) is safer than assuming a lost
-        // connection always resets every firmware. Never retry automatically.
-        if (shouldDisable) {
-            disableOnDevice()
-            disableAcknowledged = true
+        try {
+            if (shouldDisable) {
+                disableOnDevice()
+                disableAcknowledged = true
+            }
+        } finally {
+            // The reverse stream is a fallback stop even on rejected/timeout
+            // set_music(0); it is NOT a verified firmware ACK.
+            runCatching { previousSocket?.close() }
         }
     }
 }
