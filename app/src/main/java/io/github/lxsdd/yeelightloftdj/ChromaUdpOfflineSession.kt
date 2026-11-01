@@ -73,8 +73,15 @@ class ChromaUdpOfflineSession(
      * virtual clock. Both are checked, plus method, request ID and token.
      * No token/error content is returned to callers or placed in exceptions.
      */
-    fun acceptReply(senderIp: String, payload: String, nowMs: Long): ChromaPreviewEvent {
-        if (senderIp != expectedSenderIp) return ChromaPreviewEvent.IGNORED_FOREIGN_SENDER
+    /** Backward-compatible simulator helper; new callers should pass the sender port. */
+    fun acceptReply(senderIp: String, payload: String, nowMs: Long): ChromaPreviewEvent =
+        acceptReply(senderIp, 55444, payload, nowMs)
+
+    fun acceptReply(
+        senderIp: String, senderPort: Int, payload: String, nowMs: Long,
+    ): ChromaPreviewEvent {
+        if (senderIp != expectedSenderIp || senderPort != 55444)
+            return ChromaPreviewEvent.IGNORED_FOREIGN_SENDER
         if (state != ChromaPreviewState.AWAITING_TOKEN &&
             state != ChromaPreviewState.ACTIVE) {
             return ChromaPreviewEvent.IGNORED_UNEXPECTED_REPLY
