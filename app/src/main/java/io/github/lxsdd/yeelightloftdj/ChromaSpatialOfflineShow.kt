@@ -116,7 +116,7 @@ class ChromaSpatialOfflineShow(
 
     private fun ready(): Boolean = lamps.all { lamp ->
         fleet.snapshot(lamp.key)?.let {
-            !it.safetyStopped && it.simulatedTokenHeld
+            !it.safetyStopped && it.simulatedTokenHeld && it.simulatedSceneAdvertised
         } == true
     }
 

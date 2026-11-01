@@ -15,6 +15,7 @@ data class ChromaOfflineLaneSnapshot(
     val framesAttempted: Int,
     val simulatedTokenHeld: Boolean,
     val safetyStopped: Boolean,
+    val simulatedSceneAdvertised: Boolean,
 )
 
 class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
@@ -104,8 +105,22 @@ class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
 
     fun snapshot(key: String): ChromaOfflineLaneSnapshot? =
         lanes[key]?.let {
-            ChromaOfflineLaneSnapshot(it.attempted, !it.stopped && it.session.tokenHeld, it.stopped)
+            ChromaOfflineLaneSnapshot(
+                it.attempted, !it.stopped && it.session.tokenHeld, it.stopped,
+                it.session.simulatedSceneAdvertised,
+            )
         }
+
+    /**
+     * Passive, clock-aware scene admission: no color, token, socket or command
+     * is emitted. Fail closed on deadline, unsupported method and lost token.
+     */
+    fun canStageColor(key: String, nowMs: Long): Boolean {
+        val lane = lanes[key] ?: return false
+        return allow(lane, nowMs) &&
+            lane.session.state == ChromaPreviewState.ACTIVE &&
+            lane.session.tokenHeld && lane.session.simulatedSceneAdvertised
+    }
 
     private fun allow(lane: Lane, nowMs: Long): Boolean {
         if (lane.stopped) return false

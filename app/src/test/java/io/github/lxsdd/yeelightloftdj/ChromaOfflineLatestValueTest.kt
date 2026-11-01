@@ -127,7 +127,7 @@ class ChromaOfflineLatestValueTest {
     @Test fun supportWithoutSetSceneDoesNotProduceOutput() {
         val (fleet, fake) = create(methods = setOf("chroma", "udp_sess_new"))
         val buffer = ChromaOfflineLatestValue(fleet)
-        assertTrue(buffer.offer("lamp", 100, 70, 30))
+        assertFalse(buffer.offer("lamp", 100, 70, 30))
         assertNull(buffer.poll("lamp", 30))
         assertNull(buffer.poll("lamp", 130))
         assertEquals(0, fake.acceptedColorFrames)
@@ -160,6 +160,15 @@ class ChromaOfflineLatestValueTest {
         assertTrue(buffer.offer("b", 0x00FF00, 70, 140))
         assertNotNull(buffer.poll("b", 140))
         assertEquals(1, buffer.snapshot("b")!!.supersededSamples + 1L)
+    }
+
+    @Test fun expiredSessionRejectsNewSamplesBeforeAFrameCanBeBuffered() {
+        val (fleet, _) = create()
+        val buffer = ChromaOfflineLatestValue(fleet)
+        assertFalse(buffer.offer("lamp", 1234, 70, 15_000))
+        assertTrue(fleet.snapshot("lamp")!!.safetyStopped)
+        assertFalse(buffer.snapshot("lamp")!!.pending)
+        assertNull(buffer.poll("lamp", 15_001))
     }
 
     @Test fun cannotSetUnsafePendingTtlOrDiscloseColorsThroughSnapshots() {

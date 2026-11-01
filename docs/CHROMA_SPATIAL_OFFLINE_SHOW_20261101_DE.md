@@ -20,3 +20,15 @@ Chroma-RGB-Set-Scene bei Helligkeit 1 bedeutet NICHT physisches AUS. Ein echtes 
 JVM-Suites prüfen nichtlineare Abstände (auch y-Koordinate), horizontale Vergleichspositionen, 14 gemischte v1/v2-Lampen mit individuellen synthetischen Tokens, vollständige Gruppen-Vorprüfung, Quarantäneausbreitung, Tokenverlust, Uhrzeit-Rücksprung, 15-Sekunden-Frist und 45 Versuche pro Lampe.
 
 Die Simulation beweist keine reale Color4-Unterstützung, keine optische Gleichzeitigkeit, kein Paketverlustverhalten und keine Umgehung von client quota exceeded. Keine private Grundrissdatei, Netzwerkadresse, Firmwaredatei, aktive UDP/TCP-Verbindung, Hardwareaktion, signierte APK, kein Merge oder Flash.
+## Zusätzliche End-to-End-Sicherheitskorrektur
+
+Die Startbereitschaft für eine räumliche Show verlangt jetzt **dreierlei**:
+synthetisch aktives Sitzungstoken, nicht gesperrte Lane und exakt als SSDP
+SUPPORT gespeichertes `set_scene`. Ein Token ohne Farbkommando ist **kein**
+positiver Startnachweis. Der in-memory Letztwert-Koaleszierer prüft bei
+**jedem** Angebot zusätzlich das aktuelle 15-Sekunden-Sitzungsbudget
+vor dem Ablegen eines Farbwertes. Im abgelaufenen Zustand werden
+eingehende Werte verworfen, statt trotz Ablauf eine wartende Farbe
+anzuzeigen. Zusätzliche negative JVM-Regressionen prüfen den
+bereits tokenisierten, aber RGB-unfähigen Teilnehmer und den
+verfallenen Session-Zeitpunkt.

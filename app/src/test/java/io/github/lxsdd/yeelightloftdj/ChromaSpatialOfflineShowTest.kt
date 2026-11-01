@@ -210,6 +210,32 @@ class ChromaSpatialOfflineShowTest {
         assertTrue(h.show.allQuarantinedOrStopped())
     }
 
+    @Test fun groupRefusesTokenizedSessionWithoutAdvertisedSceneCommand() {
+        val ipA = "192.168.1.21"
+        val ipB = "192.168.1.22"
+        val specs = listOf(
+            ChromaOfflineLampSpec("a", ChromaUdpOfflineSession(ipA, supportV2)),
+            ChromaOfflineLampSpec("b", ChromaUdpOfflineSession(ipB,
+                setOf("chroma", "udp_sess_new"))))
+        val fleet = ChromaUdpOfflineFleet(specs)
+        val fakes = mapOf("a" to ChromaFakeDevice(clientIp, 2, ipA),
+            "b" to ChromaFakeDevice(clientIp, 2, ipB))
+        for ((key, ip) in listOf("a" to ipA, "b" to ipB)) {
+            val hello = fleet.begin(key, 0)!!
+            val reply = fakes.getValue(key).process(ChromaFakeDatagram(
+                clientIp, 51000, hello.forSimulatorOnly()))!!
+            assertEquals(ChromaPreviewEvent.ACCEPTED_TOKEN,
+                fleet.acceptReply(key, ip, reply.senderPort, reply.payload, 20))
+        }
+        val show = ChromaSpatialOfflineShow(
+            listOf(ChromaSpatialLamp("a", 0, 0),
+                ChromaSpatialLamp("b", 500, 500)), ChromaSpatialSettings(),
+            fleet, ChromaOfflineLatestValue(fleet))
+        assertFalse(show.arm(30))
+        assertTrue(show.allQuarantinedOrStopped())
+        assertTrue(show.tick(30).isEmpty())
+    }
+
     @Test fun spatialPreviewNeverUsesAnyRealSocketOrBackgroundTimer() {
         val declared = ChromaSpatialOfflineShow::class.java.declaredMethods
             .map { it.name.lowercase() }
