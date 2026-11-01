@@ -942,18 +942,31 @@ class LoftController(context: Context) {
                     }
                 } }.awaitAll()
             }
-            val started = results.count { it.second.isSuccess }
+            val verified = results.count {
+                it.second.getOrNull() == FlowStartState.VERIFIED
+            }
+            val unverified = results.count {
+                it.second.getOrNull() == FlowStartState.UNVERIFIED
+            }
             val failed = results.filter { it.second.isFailure }.map { (device, result) ->
                 SceneLampResult(displayName(device), "Fehler",
                     result.exceptionOrNull()?.message ?: "Start nicht bestätigt")
             }
             lastSceneReport = skipped + failedPreflight +
-                results.filter { it.second.isSuccess }.map { (device, _) ->
-                    SceneLampResult(displayName(device), "Läuft", "Animation über flowing bestätigt")
+                results.mapNotNull { (device, result) ->
+                    when (result.getOrNull()) {
+                        FlowStartState.VERIFIED ->
+                            SceneLampResult(displayName(device), "Läuft", "flowing=1 bestätigt")
+                        FlowStartState.UNVERIFIED ->
+                            SceneLampResult(displayName(device), "Unbestätigt",
+                                "Startbefehl mit OK akzeptiert, flowing nicht eindeutig lesbar")
+                        null -> null
+                    }
                 } + failed
-            activeScene = if (started > 0) id else null
-            val missed = uniqueCount - started
-            name + ": " + started + "/" + uniqueCount + " Lampen bestätigt" +
+            activeScene = if (verified + unverified > 0) id else null
+            val missed = uniqueCount - verified - unverified
+            name + ": " + verified + "/" + uniqueCount + " Lampen bestätigt" +
+                (if (unverified > 0) " · " + unverified + " Start(s) noch unbestätigt" else "") +
                 (if (missed > 0) " · " + missed + " nicht gestartet – Bericht ansehen" else "") +
                 (if (restoreAfterStop) " · vorheriger Lichtzustand gespeichert" else "")
         }
