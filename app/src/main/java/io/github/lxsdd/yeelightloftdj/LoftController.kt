@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
@@ -82,6 +84,14 @@ class LoftController(context: Context) {
         private set
     var activeScene by mutableStateOf<String?>(null)
         private set
+    var scannerRunning by mutableStateOf(false)
+        private set
+    var scannerActiveIndex by mutableStateOf<Int?>(null)
+        private set
+    var scannerSteps by mutableStateOf(0L)
+        private set
+    @Volatile private var scannerStopRequested = false
+    private var scannerJob: Job? = null
     var lastSeenIps by mutableStateOf<Set<String>>(emptySet())
         private set
     var lastMulticastIps by mutableStateOf<Set<String>>(emptySet())
@@ -108,6 +118,7 @@ class LoftController(context: Context) {
     var restoreAfterStop by mutableStateOf(prefs.getBoolean("restore-after-stop", false))
         private set
     private var recoveryJournal = SceneRecovery.decode(prefs.getString("pending-scene-recovery", null))
+    private var scannerOffIps = readScannerOffIps()
     // Session-local cooldown: a quota rejection cannot cause a retry storm.
     private val lastQuotaRejectionAt = mutableMapOf<String, Long>()
 
@@ -463,6 +474,7 @@ class LoftController(context: Context) {
         val saved = prefs.edit()
             .putString("running-flow-ips", JSONArray(nextRunning.toList()).toString())
             .putString("pending-scene-recovery", SceneRecovery.encode(nextJournal))
+            .putString("scanner-off-ips", JSONArray((scannerOffIps - ip).toList()).toString())
             .commit()
         if (!saved) {
             status = "Wiederherstellungsfreigabe konnte nicht gespeichert werden"
@@ -470,6 +482,7 @@ class LoftController(context: Context) {
         }
         runningDeviceIps = nextRunning
         recoveryJournal = nextJournal
+        scannerOffIps = scannerOffIps - ip
         lastRecoveryFailures = lastRecoveryFailures - ip
         lastQuotaRejectionAt.remove(ip)
         if (nextRunning.isEmpty() && nextJournal.isEmpty()) activeScene = null
@@ -556,6 +569,22 @@ class LoftController(context: Context) {
         val arr = JSONArray(prefs.getString("running-flow-ips", "[]") ?: "[]")
         (0 until arr.length()).map { arr.getString(it) }.filter(YeelightLan::isLocalIp).toSet()
     }.getOrDefault(emptySet())
+
+    private fun readScannerOffIps(): Set<String> = runCatching {
+        val json = JSONArray(prefs.getString("scanner-off-ips", "[]") ?: "[]")
+        (0 until json.length()).map { json.getString(it) }
+            .filter(YeelightLan::isLocalIp).toSet()
+    }.getOrDefault(emptySet())
+
+    /** Write all scanner/off markers together, before touching a bulb. */
+    private fun setScannerTracking(scannerIps: Set<String>, trackedIps: Set<String>) {
+        check(prefs.edit()
+            .putString("scanner-off-ips", JSONArray(scannerIps.toList()).toString())
+            .putString("running-flow-ips", JSONArray(trackedIps.toList()).toString())
+            .commit()) { "Scanner-Sicherheitsstatus konnte nicht gespeichert werden" }
+        scannerOffIps = scannerIps
+        runningDeviceIps = trackedIps
+    }
 
     private fun setRunningIps(ips: Set<String>) {
         check(prefs.edit().putString("running-flow-ips", JSONArray(ips.toList()).toString()).commit()) {
@@ -1018,6 +1047,13 @@ class LoftController(context: Context) {
     fun selectedCount() = selected().size
     fun previewCount(choice: String): Int = chooseDevices(choice).size
 
+    fun previewScannerEligibleCount(choice: String): Int {
+        val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        return chooseDevices(choice).distinctBy { it.ip }.count {
+            it.ip !in pending && KnightRiderPlan.scannerCompatible(it)
+        }
+    }
+
 
     /**
      * Stop every tracked lamp, then restore the previously captured static state.
@@ -1047,7 +1083,14 @@ class LoftController(context: Context) {
                         IllegalStateException("Yeelight-LAN-Limit: erneuter Versuch in " +
                             ((waitMs + 999L) / 1000L) + " Sekunden möglich")
                     } else runCatching {
-                        if (!musicDeviceSession) YeelightLan.stop(device)
+                        if (device.ip in scannerOffIps) {
+                            check(YeelightLan.setPowerVerified(device, false).outcome ==
+                                PowerOutcome.VERIFIED) {
+                                "Scanner-Lampe konnte nicht sicher ausgeschaltet werden"
+                            }
+                        } else if (!musicDeviceSession) {
+                            YeelightLan.stop(device)
+                        }
                         recoveryJournal[device.ip]?.let { snapshot ->
                             SceneRecovery.commands(snapshot).forEach { command ->
                                 YeelightLan.manualControl(device, command)
@@ -1076,7 +1119,7 @@ class LoftController(context: Context) {
         }
         val failed = failures.keys
         val beforeCount = recoveryJournal.size
-        setRunningIps(failed)
+        setScannerTracking(scannerOffIps.intersect(failed), failed)
         setRecoveryJournal(recoveryJournal.filterKeys { it in failed })
         lastRecoveryFailures = failures
         if (failed.isEmpty()) {
@@ -1239,12 +1282,128 @@ class LoftController(context: Context) {
         startFlow(scene.id, scene.name, selected()) { index, _ -> scene.expression(index) }
 
     fun playChase(config: ChaseConfig, choice: String, name: String = "Lichtlauf") {
-        startFlow("chase", name, chooseDevices(choice)) { index, count ->
-            ChaseCompiler.expression(config, index, count)
+        if (config.style == ChaseStyle.KNIGHT_RIDER) {
+            playKnightRider(config, choice)
+        } else {
+            startFlow("chase", name, chooseDevices(choice)) { index, count ->
+                ChaseCompiler.expression(config, index, count)
+            }
         }
     }
 
+    /** Scanner is a host-driven strict black/off effect, NOT a native RGB
+     * colour-flow with brightness=1 masquerading as darkness.
+     * It deliberately requires confirmed firmware capabilities.
+     */
+    fun playKnightRider(config: ChaseConfig, choice: String) {
+        if (busy || scannerRunning) {
+            status = "Ein anderer Vorgang läuft bereits"
+            return
+        }
+        if (musicDeviceSession || musicLightArmed || musicStopPending) {
+            status = "Musiklicht bitte zuerst stoppen und wiederherstellen"
+            return
+        }
+        val chosen = chooseDevices(choice).distinctBy { it.ip }
+        val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        val eligible = chosen.filter {
+            it.ip !in pending && KnightRiderPlan.scannerCompatible(it)
+        }
+        lastSceneReport = chosen.filterNot { it in eligible }.map {
+            SceneLampResult(displayName(it), "Übersprungen",
+                if (it.ip in pending) "Offene Wiederherstellung"
+                else "Erforderlich: bestätigtes set_scene, set_power, get_prop, set_rgb")
+        }
+        if (eligible.size !in 2..24) {
+            status = "Scanner braucht 2–24 geeignete Lampen; nach einer " +
+                "Gerätesuche zunächst bestätigte Funktionen prüfen"
+            return
+        }
+        val previouslyTracked = runningDeviceIps
+        val previouslyScanner = scannerOffIps
+        try {
+            // Commit the expected cleanup before the very first power OFF.
+            setScannerTracking(previouslyScanner + eligible.map { it.ip },
+                previouslyTracked + eligible.map { it.ip })
+        } catch (ex: Exception) {
+            status = "Scanner nicht gestartet: " + (ex.message ?: "Speicherfehler")
+            return
+        }
+        busy = true
+        scannerRunning = true
+        scannerStopRequested = false
+        scannerActiveIndex = null
+        scannerSteps = 0L
+        activeScene = "knight_rider"
+        status = "Scanner bereitet " + eligible.size + " Lampen vor: alle zunächst AUS …"
+        scannerJob = scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    KnightRiderRunner().execute(
+                        eligible, config,
+                        isStopping = { scannerStopRequested },
+                        powerOff = { device ->
+                            YeelightLan.setPowerVerified(device, false).outcome ==
+                                PowerOutcome.VERIFIED
+                        },
+                        lightOn = { device, rgb, intensity ->
+                            YeelightLan.send(device, "set_scene",
+                                listOf("color", rgb, intensity))
+                        },
+                        waitStep = { time -> delay(time) },
+                        onStep = { index, step ->
+                            withContext(Dispatchers.Main.immediate) {
+                                scannerActiveIndex = index
+                                scannerSteps = step
+                                status = "Knight Rider: Lampe " + (index + 1) +
+                                    "/" + eligible.size + " · Schritt " + step
+                            }
+                        }
+                    )
+                }
+                // Never clear unknown/offline bulbs just because a cleanup
+                // command was sent. Keep only those uncertain in the journal.
+                setScannerTracking(previouslyScanner + result.unresolved,
+                    previouslyTracked + result.unresolved)
+                lastSceneReport = lastSceneReport +
+                    eligible.map { bulb ->
+                        val unconfirmed = bulb.ip in result.unresolved
+                        SceneLampResult(displayName(bulb),
+                            if (unconfirmed) "Stopp unbestätigt" else "AUS bestätigt",
+                            if (unconfirmed) "Bitte die Wiederherstellung erneut prüfen"
+                            else "get_prop(power)=off bestätigt")
+                    }
+                status = result.error ?: ("Knight Rider beendet · " +
+                    (eligible.size - result.unresolved.size) + "/" +
+                    eligible.size + " Lampen als AUS bestätigt")
+            } catch (ex: Exception) {
+                status = "Scannerfehler: " + (ex.message ?: ex.javaClass.simpleName) +
+                    " · unbestätigte Lampen zur Wiederherstellung vorgemerkt"
+            } finally {
+                scannerRunning = false
+                scannerActiveIndex = null
+                scannerStopRequested = false
+                scannerJob = null
+                busy = false
+                if (activeScene == "knight_rider") activeScene = null
+            }
+        }
+    }
+
+    fun requestStopScanner() {
+        if (scannerRunning) {
+            scannerStopRequested = true
+            status = "Scanner wird gestoppt · sichere AUS-Bestätigung läuft …"
+        }
+    }
+
+
+
     fun stop() {
+        if (scannerRunning) {
+            requestStopScanner()
+            return
+        }
         // Live microphone lighting can still have in-flight RGB writes.
         // Disarm and wait for them before restoring original lamp states.
         if (musicLightArmed || musicDeviceSession) {
@@ -1453,6 +1612,20 @@ class LoftController(context: Context) {
         }
     }
     fun close() {
+        if (scannerRunning) {
+            requestStopScanner()
+            scope.launch {
+                // Give the scanner a bounded chance to finish OFF verification.
+                // Persisted per-bulb recovery remains after a process kill.
+                withTimeoutOrNull(40_000L) {
+                    while (scannerRunning) delay(100)
+                }
+                scope.cancel()
+            }
+            InternalAudioBridge.detach(internalAudioSink)
+            microphone?.stop()
+            return
+        }
         InternalAudioBridge.detach(internalAudioSink)
         microphone?.stop()
         if (musicDeviceSession) {

@@ -3,7 +3,7 @@ package io.github.lxsdd.yeelightloftdj
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-enum class ChaseStyle { METEOR, RAINBOW_TAIL, COLOR_WAVE }
+enum class ChaseStyle { METEOR, RAINBOW_TAIL, COLOR_WAVE, KNIGHT_RIDER }
 enum class ChaseDirection { FORWARD, REVERSE }
 
 data class ChaseConfig(
@@ -64,16 +64,20 @@ object ChaseCompiler {
                 ChaseStyle.METEOR -> palette[step % palette.size]
                 ChaseStyle.RAINBOW_TAIL -> palette[Math.floorMod(step - travel, palette.size)]
                 ChaseStyle.COLOR_WAVE -> palette[Math.floorMod(step + lampIndex, palette.size)]
+                ChaseStyle.KNIGHT_RIDER -> palette[step % palette.size]
             }
             val light = when (config.style) {
                 ChaseStyle.COLOR_WAVE -> config.brightness
+                ChaseStyle.KNIGHT_RIDER -> if (head == lampIndex) config.brightness else 1
                 ChaseStyle.METEOR, ChaseStyle.RAINBOW_TAIL -> when {
                     travel == 0 -> config.brightness
                     travel >= length -> 1
                     else -> max(1, (config.brightness * (length - travel).toFloat() / length).roundToInt())
                 }
             }
-            FlowFrame(config.stepMs, rgb, light)
+            FlowFrame(config.stepMs,
+                if (config.style == ChaseStyle.KNIGHT_RIDER && head != lampIndex) 0 else rgb,
+                light)
         }
     }
 
