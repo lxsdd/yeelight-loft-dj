@@ -14,11 +14,11 @@ object KnightRiderPlan {
         else order
     }
 
-    /** 55 commands/minute per lamp is a conservative limit below Yeelight
-     * 60 per TCP connection and 144 overall. A bouncing interior lamp receives
+    /** 35 planned commands/minute per lamp leaves headroom under the shared
+     * 45-command device gate and firmware's 60-per-connection quota. A bouncing interior lamp receives
      * at most 4 commands each 2*(count-1) steps; two lamps each receive 2 per
      * 2-step cycle. One readback per OFF adds another command. We conservatively
-     * budget 3 commands per ON/OFF visit, despite new sockets in current code.
+     * budget 3 commands per ON/OFF visit, including the shared TCP readback.
      */
     fun minimumStepMs(count: Int, bounce: Boolean): Int {
         require(count in 2..24)
@@ -28,7 +28,7 @@ object KnightRiderPlan {
         }
         // Each visit has an ON plus an OFF and a readback = 3 commands.
         val raw = ceil((60_000.0 * 3 * worstVisits) /
-            (55.0 * cycle.size)).toInt()
+            (35.0 * cycle.size)).toInt()
         return raw.coerceIn(250, 4000)
     }
 
