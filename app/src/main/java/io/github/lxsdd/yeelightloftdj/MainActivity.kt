@@ -947,6 +947,55 @@ private fun TargetPowerControls(controller: LoftController) {
                     modifier = Modifier.weight(1f)
                 ) { Text("Ausschalten") }
             }
+            if (controller.lastPowerResults.isNotEmpty()) {
+                HorizontalDivider(color = Color(0xFF394156))
+                Text("Letzte Schaltmessung · " +
+                    if (controller.lastPowerDesiredOn == true) "EIN" else "AUS",
+                    color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(controller.lastPowerSummary, color = muted, fontSize = 12.sp)
+                controller.orderedDevices().filter {
+                    it.ip in controller.lastPowerResults
+                }.forEach { device ->
+                    PowerTrace(
+                        controller.displayName(device),
+                        controller.lastPowerResults.getValue(device.ip)
+                    )
+                }
+                Text("Zeiten ab Betätigung der einzelnen Lampe, nicht ab dem " +
+                    "ersten Gruppenbefehl. Kein automatischer Retry bei unbekanntem Status.",
+                    color = muted, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PowerTrace(name: String, probe: PowerProbe) {
+    val outcome = when (probe.outcome) {
+        PowerOutcome.VERIFIED -> "Schaltzustand bestätigt"
+        PowerOutcome.ACK_ONLY -> "Befehl angenommen, Zustand unbekannt"
+        PowerOutcome.MISMATCH -> "Zustand weicht vom Ziel ab"
+        PowerOutcome.REJECTED -> "Befehl abgelehnt"
+        PowerOutcome.NO_ACK -> "Geräteantwort fehlt"
+        PowerOutcome.UNREACHABLE -> "TCP nicht erreichbar"
+        PowerOutcome.PROTECTED -> "Durch Wiederherstellung geschützt"
+        PowerOutcome.UNSUPPORTED -> "Gerät unterstützt Ein/Aus nicht"
+    }
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(name + " · " + outcome,
+            color = if (probe.outcome == PowerOutcome.VERIFIED)
+                Color(0xFF80D9C6) else Color(0xFFFFC1A6),
+            fontSize = 12.sp)
+        if (probe.totalMs > 0) {
+            Text("TCP: " + (probe.connectMs?.let { "$it ms" } ?: "keine Verbindung") +
+                " · OK: " + (probe.ackMs?.let { "$it ms" } ?: "keine Bestätigung") +
+                " · Status: " + (probe.statusMs?.let { "$it ms" } ?: "nicht verifiziert") +
+                " · Gesamt: " + probe.totalMs + " ms",
+                color = muted, fontSize = 11.sp)
+        }
+        if (probe.message.isNotBlank()) {
+            Text(probe.message.take(140), color = muted, fontSize = 11.sp)
         }
     }
 }
@@ -1024,6 +1073,11 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
         if (!controller.canIdentifyLamp(device)) {
             Text("Nur diese Lampe ist wegen Lichtshow/Wiederherstellung derzeit geschützt.",
                 color = muted, fontSize = 11.sp)
+        }
+        controller.lastPowerResults[device.ip]?.let { probe ->
+            Text("Letzte Ein/Aus-Messung", color = Color.White,
+                fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            PowerTrace(controller.displayName(device), probe)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
