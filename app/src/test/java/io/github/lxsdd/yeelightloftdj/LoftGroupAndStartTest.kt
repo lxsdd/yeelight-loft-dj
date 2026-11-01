@@ -11,6 +11,37 @@ class LoftGroupAndStartTest {
     private val white = YeelightDevice("white", "192.168.1.29",
         model = "lamp", methods = setOf("set_bright"))
 
+    @Test fun quarantinedColor4NeverEntersFlowOrRestoreTargets() {
+        val wellness = dining[1]
+        val result = SceneTargetPolicy.flowTargets(dining, setOf(wellness.ip))
+        assertEquals(dining.filterNot { it.ip == wellness.ip }, result.supported)
+        assertEquals(listOf(wellness), result.blocked)
+        assertTrue(result.unsupported.isEmpty())
+    }
+
+    @Test fun duplicateQuarantinedAliasesNeverEnterSceneTwice() {
+        val wellness = dining[1]
+        val aliases = dining + wellness.copy(id = "manual-Wellness")
+        val result = SceneTargetPolicy.flowTargets(aliases, setOf(wellness.ip))
+        assertEquals(2, result.supported.size)
+        assertEquals(1, result.blocked.size)
+        assertEquals(wellness.ip, result.blocked.single().ip)
+    }
+
+    @Test fun blockedAndUnsupportedCategoriesRemainSeparate() {
+        val blocked = dining[0]
+        val result = SceneTargetPolicy.flowTargets(dining + white, setOf(blocked.ip))
+        assertEquals(2, result.supported.size)
+        assertEquals(listOf(blocked), result.blocked)
+        assertEquals(listOf(white), result.unsupported)
+    }
+
+    @Test fun allQuarantinedDoesNotYieldAnyRunnableBulb() {
+        val result = SceneTargetPolicy.flowTargets(dining, dining.map { it.ip }.toSet())
+        assertTrue(result.supported.isEmpty())
+        assertEquals(3, result.blocked.size)
+    }
+
     @Test fun threeDiningLampsRemainStartable() {
         val targets = SceneTargetPolicy.flowTargets(dining)
         assertEquals(3, targets.supported.size)

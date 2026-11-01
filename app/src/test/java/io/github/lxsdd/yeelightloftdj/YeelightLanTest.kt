@@ -16,6 +16,40 @@ class YeelightLanTest {
         support: set_power set_rgb start_cf stop_cf set_music
     """.trimIndent()
 
+    @Test fun firmwareRejectionIdentifiesMusicStartVersusStopAndCode() {
+        val error = JSONObject("""{"code":-5001,"message":"invalid params"}""")
+        assertEquals(
+            "set_music(1) abgelehnt (Fehlercode -5001): invalid params",
+            YeelightLan.rejectionMessage("set_music",
+                listOf(1, "192.168.1.20", 43000), error))
+        assertEquals(
+            "set_music(0) abgelehnt (Fehlercode -5001): invalid params",
+            YeelightLan.rejectionMessage("set_music", listOf(0), error))
+    }
+
+    @Test fun musicPreflightNeverAssumesUnsupportedPropertyMeansOff() {
+        assertEquals(false, YeelightLan.musicStateFromValue("0"))
+        assertEquals(true, YeelightLan.musicStateFromValue("1"))
+        assertNull(YeelightLan.musicStateFromValue(""))
+        assertNull(YeelightLan.musicStateFromValue(null))
+        assertNull(YeelightLan.musicPreflightRefusal(false))
+        assertNotNull(YeelightLan.musicPreflightRefusal(true))
+        assertNotNull(YeelightLan.musicPreflightRefusal(null))
+    }
+
+    @Test fun recoveryParserKeepsMusicEvidenceIndependentOfPower() {
+        val readings = listOf("0", "off", "50", "1", "16711680", "2700",
+            "0", "100", "0")
+        val observation = YeelightLan.parseRecoveryProperties(readings)
+        assertEquals(false, observation.flowing)
+        assertEquals(false, observation.powerOn)
+        assertEquals(false, observation.musicOn)
+        assertNotNull(observation.snapshot)
+        assertNull(YeelightLan.parseRecoveryProperties(readings.dropLast(1)).musicOn)
+        assertEquals(true, YeelightLan.parseRecoveryProperties(
+            readings.dropLast(1) + "1").musicOn)
+    }
+
     @Test fun discoveryParsesColor4() {
         val device = YeelightLan.parseAnnouncement(response)
         assertNotNull(device)
