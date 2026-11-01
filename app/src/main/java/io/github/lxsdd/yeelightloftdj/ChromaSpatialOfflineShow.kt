@@ -161,18 +161,36 @@ class ChromaSpatialOfflineShow(
             }
             lastFrameStep = step
         }
-        // Without this group-wide preflight, a lane already inside its
-        // 100-ms pacing window would silently produce a partial group tick
-        // while the other lamps still emitted frames. Keep the newest values
-        // staged, and retry only when the caller explicitly supplies a later
-        // virtual tick. Terminal failures stop everyone, not just one lane.
-        if (lamps.any { !fleet.canIssueColor(it.key, nowMs) }) {
-            if (!ready()) stop()
+        // Admission is a *group* decision. A rate-limited lane postpones the
+        // entire tick; an expired pending value or terminal lane cancels the
+        // group. Unchanged colors are explicit NO_CHANGE, not a failed frame.
+        // This remains only an offline output transaction: a real network
+        // cannot guarantee atomic delivery across independent devices.
+        val admissions = lamps.associate { lamp ->
+            lamp.key to coalescer.preflight(lamp.key, nowMs)
+        }
+        if (admissions.values.any {
+                it == ChromaOfflinePollReadiness.TERMINAL ||
+                    it == ChromaOfflinePollReadiness.STALE_DROPPED
+            }) {
+            stop()
             return emptyList()
         }
+        if (admissions.values.any { it == ChromaOfflinePollReadiness.RATE_DEFERRED })
+            return emptyList()
+
         val results = mutableListOf<SimulatedFrame>()
-        lamps.forEach { lamp ->
-            coalescer.poll(lamp.key, nowMs)?.let { results.add(SimulatedFrame(lamp.key, it)) }
+        for (lamp in lamps) {
+            if (admissions.getValue(lamp.key) == ChromaOfflinePollReadiness.READY) {
+                val frame = coalescer.poll(lamp.key, nowMs)
+                if (frame == null) {
+                    // Never publish a partially constructed synthetic batch.
+                    // In-memory attempts already consumed are not replayed.
+                    stop()
+                    return emptyList()
+                }
+                results.add(SimulatedFrame(lamp.key, frame))
+            }
         }
         // The strict 45-frame ceiling can stop a lane during this tick.
         // Finish the simulated group immediately, without a later retry.

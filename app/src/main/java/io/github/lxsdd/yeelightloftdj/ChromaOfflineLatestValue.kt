@@ -8,6 +8,11 @@ package io.github.lxsdd.yeelightloftdj
  * The caller must explicitly invoke poll() to preview the newest color.
  * No intermediate color history can be replayed after network loss.
  */
+/** Group preflight results; no raw payload, IP, token or color leaves this API. */
+enum class ChromaOfflinePollReadiness {
+    READY, NO_CHANGE, RATE_DEFERRED, STALE_DROPPED, TERMINAL
+}
+
 class ChromaOfflineLatestValue(
     private val fleet: ChromaUdpOfflineFleet,
     private val maxPendingAgeMs: Long = 250L,
@@ -63,33 +68,59 @@ class ChromaOfflineLatestValue(
      * Zero background work. Call explicitly from a synthetic event loop only.
      * Rate rejection retains the latest sample (until expiry) with no queue.
      */
-    fun poll(key: String, nowMs: Long): ChromaPreviewFrame? {
-        val lane = lanes[key] ?: return null
-        if (!advance(key, lane, nowMs)) return null
-        val state = fleet.snapshot(key)
-        if (state == null || !state.simulatedTokenHeld || state.safetyStopped) {
-            lane.pending = null
-            return null
+    /**
+     * Deterministic admission for one pending sample. Called by the group
+     * before *any* frame is emitted. RATE_DEFERRED keeps only the latest
+     * value; STALE_DROPPED is terminal for an orchestrated group, while a
+     * standalone coalescer may accept a new, fresh user sample later.
+     *
+     * This is an in-memory state check, not an actual network reservation.
+     */
+    fun preflight(key: String, nowMs: Long): ChromaOfflinePollReadiness {
+        val lane = lanes[key] ?: return if (fleet.canStageColor(key, nowMs)) {
+            ChromaOfflinePollReadiness.NO_CHANGE
+        } else {
+            ChromaOfflinePollReadiness.TERMINAL
         }
-        val desired = lane.pending ?: return null
+        if (!advance(key, lane, nowMs) || !fleet.canStageColor(key, nowMs)) {
+            lane.pending = null
+            return ChromaOfflinePollReadiness.TERMINAL
+        }
+        val desired = lane.pending ?: return ChromaOfflinePollReadiness.NO_CHANGE
         if (nowMs - desired.offeredAtMs > maxPendingAgeMs) {
             lane.pending = null
             lane.expired++
-            return null
+            return ChromaOfflinePollReadiness.STALE_DROPPED
         }
-        val pair = desired.rgb to desired.brightness
-        if (pair == lane.lastSent) {
+        if (desired.rgb to desired.brightness == lane.lastSent) {
             lane.pending = null
-            return null
+            return ChromaOfflinePollReadiness.NO_CHANGE
         }
+        if (!fleet.canIssueColor(key, nowMs)) {
+            if (fleet.snapshot(key)?.safetyStopped != false) {
+                lane.pending = null
+                return ChromaOfflinePollReadiness.TERMINAL
+            }
+            return ChromaOfflinePollReadiness.RATE_DEFERRED
+        }
+        return ChromaOfflinePollReadiness.READY
+    }
+
+    /** One simulator frame at most; no retry on an unexpected failed commit. */
+    fun poll(key: String, nowMs: Long): ChromaPreviewFrame? {
+        if (preflight(key, nowMs) != ChromaOfflinePollReadiness.READY) return null
+        val lane = lanes[key] ?: return null
+        val desired = lane.pending ?: return null
         val frame = fleet.color(key, desired.rgb, desired.brightness, nowMs)
-        if (frame != null) {
-            lane.frames++
-            lane.lastSent = pair
-            lane.pending = null
-        } else if (fleet.snapshot(key)?.safetyStopped != false) {
-            lane.pending = null
+        lane.pending = null
+        if (frame == null) {
+            // Preflight had approved the exact value at this clock. A failed
+            // commit is ambiguous, never a reason to replay it.
+            fleet.stop(key)
+            return null
         }
+        lane.frames++
+        lane.lastSent = desired.rgb to desired.brightness
         return frame
     }
 
