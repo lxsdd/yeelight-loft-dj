@@ -18,6 +18,10 @@ class MusicStopSafetyTest {
 
     @Test fun unrelatedErrorsDoNotClaimFailedMusicStop() {
         assertFalse(MusicStopSafety.unconfirmed(null))
+        assertFalse(MusicStopSafety.unconfirmed(
+            "set_music(1) abgelehnt (Fehlercode -5001): invalid params"))
+        assertFalse(MusicStopSafety.unconfirmed(
+            "set_music(1) wurde ausdrücklich abgelehnt; kein automatischer Deaktivierungsbefehl gesendet"))
         assertFalse(MusicStopSafety.unconfirmed("set_rgb: invalid params"))
         assertFalse(MusicStopSafety.unconfirmed("client quota exceeded"))
     }
