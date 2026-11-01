@@ -483,7 +483,7 @@ object YeelightLan {
     internal fun matchesReplyId(response: JSONObject, id: Int): Boolean =
         response.has("id") && response.optInt("id", -1) == id
 
-    private class RejectedCommand(message: String) : IllegalStateException(message)
+    internal class RejectedCommand(message: String) : IllegalStateException(message)
 
     /**
      * Power and verification use one TCP session, but are TWO distinct LAN
@@ -630,7 +630,21 @@ object YeelightLan {
         val flowing: Boolean?,
         val snapshot: LampSnapshot?,
         val powerOn: Boolean?,
+        /** Firmware-reported 0/1; never interpret missing property as off. */
+        val musicOn: Boolean? = null,
     )
+
+    internal fun musicStateFromValue(raw: String?): Boolean? =
+        flowStateFromValue(raw)
+
+    /** Refuse a new music session if another controller may own it. */
+    internal fun musicPreflightRefusal(musicOn: Boolean?): String? = when (musicOn) {
+        false -> null
+        true -> "Musikmodus der Lampe ist bereits aktiv (music_on=1). " +
+            "Keine fremde Sitzung überschreiben oder erneut starten."
+        null -> "Musikmodus der Lampe nicht lesbar (music_on unbekannt). " +
+            "Keine LAN-Steuerbefehle für einen ungeprüften Musikstart."
+    }
 
     internal fun parseRecoveryProperties(values: List<String>): RecoveryObservation {
         val powerOn = when (values.getOrNull(1)) {
@@ -643,7 +657,8 @@ object YeelightLan {
         return RecoveryObservation(
             flowing = flowStateFromValue(values.getOrNull(0)),
             snapshot = LampSnapshot.fromValues(values.drop(1)),
-            powerOn = powerOn
+            powerOn = powerOn,
+            musicOn = musicStateFromValue(values.getOrNull(1 + LampSnapshot.properties.size))
         )
     }
 
@@ -653,7 +668,7 @@ object YeelightLan {
     private fun directReadRecoveryObservation(device: YeelightDevice): RecoveryObservation {
         require(isLocalIp(device.ip))
         val reply=tcp.request(device.ip,device.port,seq.getAndIncrement(),"get_prop",
-            listOf("flowing")+LampSnapshot.properties)
+            listOf("flowing")+LampSnapshot.properties+listOf("music_on"))
         if(reply.has("error"))error("Zustandsprüfung abgelehnt: " +
             reply.getJSONObject("error").optString("message","Yeelight-Fehler"))
         val values=reply.optJSONArray("result")?:error("Statuswerte fehlen")
@@ -679,13 +694,38 @@ object YeelightLan {
     }
 
     /**
+     * One read-only get_prop snapshot with music_on for safe music preflight.
+     * An unavailable value is UNKNOWN, never interpreted as idle.
+     * This is a single command, not a background poll or automatic retry.
+     */
+    fun readMusicPreflight(device: YeelightDevice): LampSnapshot =
+        commandGate.run(device.ip) {
+            require(isLocalIp(device.ip))
+            val response = tcp.request(device.ip, device.port, seq.getAndIncrement(),
+                "get_prop", LampSnapshot.properties + listOf("music_on"))
+            if (response.has("error")) error("Music-Preflight abgelehnt: " +
+                response.getJSONObject("error").optString("message", "Gerätefehler"))
+            val values = response.optJSONArray("result")
+                ?: error("Music-Preflight: keine Statusantwort")
+            val musicOn = musicStateFromValue(
+                values.optString(LampSnapshot.properties.size, "")
+            )
+            musicPreflightRefusal(musicOn)?.let { error(it) }
+            LampSnapshot.fromValues((0 until LampSnapshot.properties.size).map {
+                values.optString(it)
+            }) ?: error("Music-Preflight: ursprünglicher Lichtzustand unvollständig")
+        }
+
+    /**
      * Only devices that EXPLICITLY advertise set_music and set_rgb can use
      * the reverse stream. Unknown device capabilities never trigger a
      * speculative Music-Mode handshake against a real lamp.
      */
     private val musicChannels = ConcurrentHashMap<String, YeelightMusicChannel>()
-    // One compensating set_music(0) was already attempted on failed handshake.
-    private val failedStartDisableAcknowledged = ConcurrentHashMap<String, Boolean>()
+    // A failed start must not be confused with a failed stop. The three
+    // outcomes have different recovery safety requirements.
+    private enum class MusicStartFailure { REJECTED_BEFORE_START, COMPENSATION_ACKED, COMPENSATION_UNCONFIRMED }
+    private val failedMusicStarts = ConcurrentHashMap<String, MusicStartFailure>()
 
     fun supportsMusicMode(device: YeelightDevice): Boolean =
         "set_music" in device.methods && "set_rgb" in device.methods
@@ -709,12 +749,15 @@ object YeelightLan {
                 send(device, "set_music", listOf(0))
             }
         )
-        failedStartDisableAcknowledged.remove(device.ip)
+        failedMusicStarts.remove(device.ip)
         try {
             channel.start(host)
         } catch (failure: Exception) {
-            failedStartDisableAcknowledged[device.ip] =
-                channel.alreadyDisabledSuccessfully
+            failedMusicStarts[device.ip] = when {
+                channel.enableDefinitelyNotAccepted -> MusicStartFailure.REJECTED_BEFORE_START
+                channel.alreadyDisabledSuccessfully -> MusicStartFailure.COMPENSATION_ACKED
+                else -> MusicStartFailure.COMPENSATION_UNCONFIRMED
+            }
             throw failure
         }
         musicChannels[device.ip] = channel
@@ -748,19 +791,26 @@ object YeelightLan {
     @Synchronized
     fun stopMusicMode(device: YeelightDevice) {
         val channel = musicChannels.remove(device.ip)
-        val earlierDisable = failedStartDisableAcknowledged.remove(device.ip)
+        val failedStart = failedMusicStarts.remove(device.ip)
         if (channel != null) {
             channel.close()
-        } else if (earlierDisable != null) {
-            check(earlierDisable) {
-                "Music-Mode-Start gescheitert und einmaliges set_music(0) " +
-                    "nicht bestätigt. Keine automatische Wiederholung; " +
-                    "Wiederherstellung bleibt offen."
+        } else when (failedStart) {
+            MusicStartFailure.REJECTED_BEFORE_START -> error(
+                "set_music(1) wurde ausdrücklich abgelehnt; " +
+                    "kein automatischer Deaktivierungsbefehl gesendet. " +
+                    "Vorheriger Musikmodus bleibt unklar; nur lesend prüfen."
+            )
+            MusicStartFailure.COMPENSATION_UNCONFIRMED -> error(
+                "set_music(0) nach unbestätigtem Start nicht bestätigt; " +
+                    "kein weiterer Stoppversuch. Nur lesend prüfen."
+            )
+            MusicStartFailure.COMPENSATION_ACKED -> Unit
+            null -> if (supportsMusicMode(device)) {
+                // A persisted journal is not proof a firmware session still
+                // exists. Never send a second stop after process death.
+                error("Kein bestätigter Live-Musikrückkanal; kein automatischer " +
+                    "Deaktivierungsbefehl. Nur lesend prüfen.")
             }
-            // Already acknowledged: do not spend an extra LAN command.
-        } else if (supportsMusicMode(device)) {
-            // Explicit recovery of a persisted session after process restart.
-            send(device, "set_music", listOf(0))
         }
     }
 
