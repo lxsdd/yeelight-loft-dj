@@ -637,10 +637,20 @@ object YeelightLan {
         return true
     }
 
-    /** Close reverse TCP before reading and restoring original properties. */
+    /**
+     * Stop live music mode, or explicitly disable a persisted music session
+     * after an Android process restart. The old reverse socket is then already
+     * gone, but the bulb's firmware might still believe music mode is active.
+     * Send at most ONE quota-accounted set_music(0) on explicit recovery.
+     */
     @Synchronized
     fun stopMusicMode(device: YeelightDevice) {
-        musicChannels.remove(device.ip)?.close()
+        val channel = musicChannels.remove(device.ip)
+        if (channel != null) {
+            channel.close()
+        } else if (supportsMusicMode(device)) {
+            send(device, "set_music", listOf(0))
+        }
     }
 
     // For lamps without set_music, music beats still use the normal LAN channel. Never spend the commands
