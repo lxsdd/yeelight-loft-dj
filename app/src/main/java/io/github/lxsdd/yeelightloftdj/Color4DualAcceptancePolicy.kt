@@ -5,7 +5,9 @@ package io.github.lxsdd.yeelightloftdj
  * Does not authorize unlimited multi-lamp operation or untested bulbs.
  */
 internal object Color4DualAcceptancePolicy {
-    const val LIVE_TEST_APPROVED = true
+    // Safety pause following three actual Esstisch LAN lockouts:
+    // The earlier RC7 authorization does not justify more live tests.
+    const val LIVE_TEST_APPROVED = false
     const val DURATION_MS = 10_000L
     const val MAX_TOTAL_RGB_WRITES = 40
     const val MIN_FRAME_INTERVAL_MS = 500L

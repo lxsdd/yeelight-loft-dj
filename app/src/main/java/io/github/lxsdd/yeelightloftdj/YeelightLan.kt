@@ -702,19 +702,26 @@ object YeelightLan {
     fun readMusicPreflight(device: YeelightDevice): LampSnapshot =
         commandGate.run(device.ip) {
             require(isLocalIp(device.ip))
-            val response = tcp.request(device.ip, device.port, seq.getAndIncrement(),
-                "get_prop", LampSnapshot.properties + listOf("music_on"))
-            if (response.has("error")) error("Music-Preflight abgelehnt: " +
-                response.getJSONObject("error").optString("message", "Gerätefehler"))
-            val values = response.optJSONArray("result")
-                ?: error("Music-Preflight: keine Statusantwort")
-            val musicOn = musicStateFromValue(
-                values.optString(LampSnapshot.properties.size, "")
-            )
-            musicPreflightRefusal(musicOn)?.let { error(it) }
-            LampSnapshot.fromValues((0 until LampSnapshot.properties.size).map {
-                values.optString(it)
-            }) ?: error("Music-Preflight: ursprünglicher Lichtzustand unvollständig")
+            try {
+                val response = tcp.request(device.ip, device.port, seq.getAndIncrement(),
+                    "get_prop", LampSnapshot.properties + listOf("music_on"))
+                if (response.has("error")) error("Music-Preflight abgelehnt: " +
+                    response.getJSONObject("error").optString("message", "Gerätefehler"))
+                val values = response.optJSONArray("result")
+                    ?: error("Music-Preflight: keine Statusantwort")
+                val musicOn = musicStateFromValue(
+                    values.optString(LampSnapshot.properties.size, "")
+                )
+                musicPreflightRefusal(musicOn)?.let { error(it) }
+                LampSnapshot.fromValues((0 until LampSnapshot.properties.size).map {
+                    values.optString(it)
+                }) ?: error("Music-Preflight: ursprünglicher Lichtzustand unvollständig")
+            } finally {
+                // A successful read is not a reason to reserve a firmware
+                // TCP client slot. No retry or additional command here.
+                // Still inside DeviceCommandGate's per-IP lock.
+                tcp.closeTarget(device.ip, device.port)
+            }
         }
 
     /**

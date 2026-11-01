@@ -125,6 +125,13 @@ class YeelightTcpSessions(
         traceSafe("event=close target=.${key.ip.substringAfterLast('.')} port=${key.port}")
     }
 
+    /** Close exactly this bulb's TCP slot, never adjacent bulbs or music sockets. */
+    fun closeTarget(ip: String, port: Int) {
+        val key = Key(ip,port)
+        val session = sessions[key] ?: return
+        synchronized(session) { invalidate(key, session) }
+    }
+
     fun closeAll() {
         sessions.entries.toList().forEach { (key, session) ->
             synchronized(session) { invalidate(key, session) }
