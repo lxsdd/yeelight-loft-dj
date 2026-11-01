@@ -188,10 +188,13 @@ class LoftController(context: Context) {
             if (room == old) editor.putString("room." + id, clean)
         }
         val updated = roomNames.map { if (it == old) clean else it }
+        val revisedTarget = TargetReference.roomRenamed(target, old, clean)
         editor.putString("room-list", JSONArray(updated).toString())
+        editor.putString("selected-target", revisedTarget)
         check(editor.commit()) { "Raumänderungen konnten nicht gespeichert werden" }
         assignments = assignments.mapValues { (_, v) -> if (v == old) clean else v }
         roomNames = updated
+        target = revisedTarget
         status = "Raum umbenannt: " + clean
         return true
     }
@@ -204,9 +207,12 @@ class LoftController(context: Context) {
             if (room == name) editor.putString("room." + id, "Nicht zugeordnet")
         }
         val updated = roomNames - name
+        val revisedTarget = TargetReference.roomRemoved(target, name)
         editor.putString("room-list", JSONArray(updated).toString())
+        editor.putString("selected-target", revisedTarget)
         check(editor.commit()) { "Raum konnte nicht entfernt werden" }
         roomNames = updated
+        target = revisedTarget
         assignments = assignments.mapValues { (_, room) ->
             if (room == name) "Nicht zugeordnet" else room
         }
@@ -505,6 +511,15 @@ class LoftController(context: Context) {
             val previous = prior.firstOrNull { it.id == discovered.id || it.ip == discovered.ip }
             val replacement = merged.firstOrNull { it.id == discovered.id || it.ip == discovered.ip }
             if (previous != null && replacement != null && previous.id != replacement.id) {
+                val revisedTarget = TargetReference.deviceRenamed(
+                    target, previous.id, replacement.id
+                )
+                if (revisedTarget != target) {
+                    check(prefs.edit().putString("selected-target", revisedTarget).commit()) {
+                        "Geräte-Ziel konnte nicht auf neue ID übertragen werden"
+                    }
+                    target = revisedTarget
+                }
                 if (previous.id in lampOrder) {
                     lampOrder = lampOrder.map { if (it == previous.id) replacement.id else it }.distinct()
                     prefs.edit().putString("lamp-order", JSONArray(lampOrder).toString()).apply()
@@ -657,6 +672,13 @@ class LoftController(context: Context) {
         if (device.ip in LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)) {
             status = "Zustand dieser Lampe noch ungeklärt. Erst Wiederherstellung prüfen."
             return
+        }
+        val revisedTarget = TargetReference.deviceRemoved(target, device.id)
+        if (revisedTarget != target) {
+            check(prefs.edit().putString("selected-target", revisedTarget).commit()) {
+                "Geräte-Ziel konnte nicht zurückgesetzt werden"
+            }
+            target = revisedTarget
         }
         devices = devices.filterNot { it.id == device.id }
         assignments = assignments - device.id
