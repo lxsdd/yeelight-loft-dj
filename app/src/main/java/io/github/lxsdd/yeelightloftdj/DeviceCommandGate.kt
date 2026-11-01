@@ -127,9 +127,12 @@ class DeviceCommandGate(
             s.lastProbeAt = now
             pacedAdmission(s, 1)
             val result = action() // never retry an ambiguous attempt
+            // Commit removal of the persisted firmware block FIRST.
+            // If storage fails, keep the in-memory gate quarantined as well:
+            // no new control request may pass a half-recovered state.
+            onRecovered(ip)
             s.quarantined = false
             s.lastProbeAt = null
-            onRecovered(ip)
             return result
         }
     }
