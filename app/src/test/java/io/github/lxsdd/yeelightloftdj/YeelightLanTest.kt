@@ -124,6 +124,11 @@ class YeelightLanTest {
         assertFalse(YeelightLan.preferAtomicFlowStart(setOf("start_cf", "stop_cf")))
     }
 
+    @Test fun successfulCommandWithUnknownFlowingIsUnverifiedNotDefiniteFailure() {
+        assertEquals(FlowStartState.VERIFIED, YeelightLan.classifyFlowStart(true))
+        assertEquals(FlowStartState.UNVERIFIED, YeelightLan.classifyFlowStart(null))
+    }
+
     @Test fun flowingPropertyNeedsAnExplicitDeviceState() {
         assertEquals(true, YeelightLan.flowStateFromValue("1"))
         assertEquals(false, YeelightLan.flowStateFromValue("0"))
