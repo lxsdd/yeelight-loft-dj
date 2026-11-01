@@ -17,7 +17,7 @@ internal object Color4MusicAcceptancePolicy {
         recoveryPending: Boolean,
     ): String? {
         val distinct = selected.distinctBy { it.ip }
-        if (distinct.size != 1) return "Für den Color4-Test genau eine Lampe auswählen (Couchtisch)."
+        if (distinct.size != 1) return "Für den Color4-Test genau eine Lampe auswählen."
         if (recoveryPending) return "Zuerst eine offene Wiederherstellung abschließen – keine neuen Befehle."
         val device = distinct.single()
         if (device.ip in blockedIps) return "Firmware-LAN-Sperre: diese Lampe darf nicht getestet werden."
