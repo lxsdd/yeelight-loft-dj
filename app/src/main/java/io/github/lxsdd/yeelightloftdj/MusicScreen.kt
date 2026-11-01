@@ -27,7 +27,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 
 private val shades = listOf(
     Color(0xFF49E0D0), Color(0xFF5DC9FF), Color(0xFF9F9DFB),
@@ -68,6 +67,7 @@ fun MusicScreen(controller: LoftController) {
     val internalRunning = InternalAudioBridge.running
     val audioRunning = controller.microphoneRunning || internalRunning
     val reading = controller.musicFrame ?: InternalAudioBridge.frame
+    val signal = reading?.let { AudioLevelDisplay.from(it.rms, it.peak) }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Musik im Loft", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -171,14 +171,32 @@ fun MusicScreen(controller: LoftController) {
                         }
                     }
                     HorizontalDivider(color = Color(0xFF323A50))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Eingangssignal", color = Color(0xFFAAB6CE),
+                            fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text(signal?.rmsLabel ?: "–",
+                            color = Color.White, fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold)
+                    }
+                    LinearProgressIndicator(
+                        progress = { signal?.displayLevel ?: 0f },
+                        modifier = Modifier.fillMaxWidth().height(11.dp),
+                        color = Color(0xFF67E1C8), trackColor = Color(0xFF323A50)
+                    )
+                    Text(
+                        "Relative digitale Signalanzeige (−60 bis −6 dBFS). " +
+                            "3–4 % des PCM-Vollpegels sind bereits etwa −30 bis −28 dBFS – " +
+                            "kein Maß für die Lautstärke im Raum.",
+                        color = Color(0xFF98A6C0), fontSize = 11.sp
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        MusicMetric("Pegel", (reading.rms * 100).roundToInt().toString() + " %")
+                        MusicMetric("Spitze", signal?.peakLabel ?: "–")
                         MusicMetric("Beats", controller.musicBeatCount.toString())
                         MusicMetric("BPM", reading.estimatedBpm?.toString() ?: "–")
                     }
                     Text(
                         if (reading.beat) "Bass-Transient erkannt" else
-                            "Erkannte Audio-Transienten · BPM nur bei stabilen Ereignissen",
+                            "Audio wird gemessen · Beat nur bei erkanntem Bassimpuls",
                         color = if (reading.beat) Color(0xFF67E1C8) else Color(0xFF98A6C0),
                         fontSize = 12.sp
                     )
