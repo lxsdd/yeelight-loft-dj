@@ -29,6 +29,26 @@ class RecoveryObservationTest {
         val obs = YeelightLan.parseRecoveryProperties(
             listOf("","off","50","1","0","","",""))
         assertEquals(RecoveryReadDecision.SCANNER_OFF,
-            RecoveryReadPolicy.decide(obs.flowing,obs.snapshot,null,true))
+            RecoveryReadPolicy.decide(obs.flowing,obs.snapshot,null,true,
+                reportedPowerOn=obs.powerOn))
+    }
+
+    @Test fun scannerCanClearWithOffPowerEvenWhenBrightnessReturnsZero() {
+        val obs = YeelightLan.parseRecoveryProperties(
+            listOf("","off","0","","","","",""))
+        assertNull(obs.snapshot)
+        assertEquals(false, obs.powerOn)
+        assertEquals(RecoveryReadDecision.SCANNER_OFF,
+            RecoveryReadPolicy.decide(obs.flowing,obs.snapshot,null,true,
+                reportedPowerOn=obs.powerOn))
+    }
+
+    @Test fun originallyOffCanBeProvenWithoutValidColorSnapshot() {
+        val obs = YeelightLan.parseRecoveryProperties(
+            listOf("0","off","0","","","","",""))
+        val original = LampSnapshot(false,50,1,0xFF0000,null,null,null)
+        assertEquals(RecoveryReadDecision.ALREADY_RESTORED,
+            RecoveryReadPolicy.decide(obs.flowing,obs.snapshot,original,false,
+                reportedPowerOn=obs.powerOn))
     }
 }
