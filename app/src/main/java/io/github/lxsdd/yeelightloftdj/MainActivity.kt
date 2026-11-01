@@ -144,7 +144,10 @@ private fun LoftApp(controller: LoftController) {
             item { Header() }
             item { Status(controller) }
             if (controller.recoveryPending) {
-                item(key = "recovery-action") { RecoveryBanner(controller) }
+                item(key = "recovery-action") {
+                    if (controller.scannerRunning) ScannerRunningBanner(controller)
+                    else RecoveryBanner(controller)
+                }
             }
             if (detailRoute != null) {
                 item(key = "detail-back") {
@@ -434,6 +437,31 @@ private fun Header() {
         Spacer(Modifier.weight(1f))
         Text("v" + BuildConfig.VERSION_NAME + " · " + BuildConfig.VERSION_CODE,
             color = lavender, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ScannerRunningBanner(controller: LoftController) {
+    Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF242D39)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Knight-Rider-Scanner läuft", color = Color.White,
+                fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text("Aktuell: Lampe " +
+                (controller.scannerActiveIndex?.plus(1)?.toString() ?: "vorbereiten") +
+                " · " + controller.scannerSteps + " Schritte",
+                color = Color(0xFF80D9C6), fontSize = 13.sp)
+            Text("Andere ausgewählte Lampen werden nur nach bestätigtem " +
+                "Ausschalten der vorherigen Lampe eingeschaltet. Beim Stopp " +
+                "werden alle Teilnehmer ausgeschaltet und geprüft.",
+                color = muted, fontSize = 12.sp)
+            Button(onClick = controller::requestStopScanner,
+                modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Stop, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Scanner stoppen · Licht AUS")
+            }
+        }
     }
 }
 
