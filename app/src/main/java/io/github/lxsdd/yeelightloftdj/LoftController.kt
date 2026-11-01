@@ -67,7 +67,8 @@ class LoftController(context: Context) {
         private set
     var busy by mutableStateOf(false)
         private set
-    var target by mutableStateOf("Test (1)")
+    var target by mutableStateOf(prefs.getString("selected-target", "Test (1)")
+        ?.takeIf { it.isNotBlank() } ?: "Test (1)")
         private set
     var activeScene by mutableStateOf<String?>(null)
         private set
@@ -535,7 +536,15 @@ class LoftController(context: Context) {
     }
 
     fun chooseTarget(value: String) {
-        if (value in targetOptions()) target = value
+        if (value !in targetOptions()) {
+            status = "Ziel ist nicht mehr verfügbar. Auswahl prüfen."
+            return
+        }
+        if (!prefs.edit().putString("selected-target", value).commit()) {
+            status = "Lampen-Ziel konnte nicht gespeichert werden"
+            return
+        }
+        target = value
     }
     fun roomFor(device: YeelightDevice): String = assignments[device.id] ?: "Nicht zugeordnet"
     fun aliasFor(device: YeelightDevice): String =
@@ -664,6 +673,21 @@ class LoftController(context: Context) {
         val current = withContext(Dispatchers.IO) { YeelightLan.readStatus(device) }
         lampSnapshots = lampSnapshots + (device.ip to current)
         displayName(device) + ": " + if (current.isOn) "Ein · " + current.brightness + "%" else "Aus"
+    }
+
+    /** Read-only real-world check without trying an unsupported colour command. */
+    fun inspectLamp(device: YeelightDevice) = task("Prüfe " + displayName(device) + " nur lesend …") {
+        val live = withContext(Dispatchers.IO) { YeelightLan.readStatus(device) }
+        lampSnapshots = lampSnapshots + (device.ip to live)
+        val known = DeviceCapabilities.capabilities(device).count {
+            it.evidence == CapabilityEvidence.CONFIRMED
+        }
+        val capabilityText = if (device.methods.isEmpty()) {
+            "SUPPORT-Liste nicht bekannt: volle Fähigkeiten erst nach Multicast-Suche prüfbar"
+        } else "$known Befehle aus Yeelight-SUPPORT bestätigt"
+        displayName(device) + " erreichbar · " +
+            if (live.isOn) "Ein · " + live.brightness + "% · " + capabilityText
+            else "Aus · " + capabilityText
     }
 
     fun controlLamp(device: YeelightDevice, command: LampCommand, description: String) {
