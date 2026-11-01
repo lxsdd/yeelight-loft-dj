@@ -83,3 +83,38 @@ nicht übernommen. Die Android-App enthält durch diese Erweiterung
 weiterhin **keinen** aktiven Chroma-UDP-Socket, keinen Backgroundsender,
 keinen automatisch ausgelösten Discovery-Scan und keinen TCP-RGB-Fallback.
 Hardwarequalifikation nur nach eigenständiger Freigabe.
+
+
+## Dritter Block: Letzter-Wert-Koaleszierung und gerätegetrennte Tokens
+
+\`ChromaOfflineLatestValue\` ergänzt die bisherige strikte UDP-Simulations-Fleet
+um einen **einzelnen, höchstens 250 ms alten RGB-Sollwert pro Lampe**.
+Schnelle Farbregler- und Musikereignisse überschreiben den alten Sollwert,
+statt Befehle für jedes Zwischenergebnis oder eine verzögerte Warteschlange
+anzulegen. Erst ein **expliziter** Aufruf von \`poll(key, nowMs)\`
+erzeugt ein simuliertes Frame, wenn die bereits vorhandene Fleet-Rate/Quote,
+Session-ID, Token und Frist es zulassen. Kein Scheduler und keine Hardware-I/O.
+
+Eigenschaften und Grenzen:
+
+- Das gewünschte *letzte* Ergebnis kann nach einem 100-ms-Ratefenster
+  verarbeitet werden. Wird länger als 250 ms nicht abgeholt, wird es bewusst
+  verworfen, damit ein alter Show-Frame nicht nach einer Störung aufblitzt.
+- Identische aufeinanderfolgende Sollwerte verursachen keine Duplikate.
+  Nur tatsächlich ausgegebene **simulierte** Frames erhöhen die Versuchszahl.
+- Quarantäne, Stop, Zeitrücksprung, Sitzungsfehler und Ablauf löschen den
+  jeweils wartenden Sollwert; andere Lampen bleiben getrennt.
+- Das Offline-Fake kann nun **unterschiedliche 32-stellige synthetische
+  Sitzungstoken pro Lampe** besitzen. Vertauschte Token werden verworfen,
+  ohne die gültige Anfragen-ID des Zielgeräts zu verbrauchen. Unzulässige
+  JSON-IDs, falsche Token und fremde Absender bleiben Negativtests.
+- Ein Erfolg in der In-Memory-Simulation ist ausdrücklich weder Messung von
+  UDP-Paketverlust noch Hardware-Latenz, noch ein Nachweis einer durch
+  UDP umgangenen Color4-Firmware-Quota.
+
+Die neuen JVM-Tests prüfen 5.000 Slider-Updates, letzte Farbausgabe nach
+temporärer Drosselung, Zeitablauf, Doppelwertunterdrückung, Fehlwerte,
+Quarantäne, Uhrzeitumkehr, fehlenden Handshake, fehlendes \`set_scene\`,
+V1/V2-Mehrlampen-Isolation, getauschte Token sowie Replay-/ID-Manipulation.
+Geräte- und Netzwerkzugriffe bleiben weiterhin nicht implementiert. Die
+sichere produktive Color4-Quota-Steuerung und Musik-PRs sind unangetastet.
