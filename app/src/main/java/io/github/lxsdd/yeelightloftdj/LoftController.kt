@@ -608,6 +608,41 @@ class LoftController(context: Context) {
     fun missingMulticastCount(): Int =
         (lastDirectIps - lastMulticastIps).size
 
+    /** Expanded read-only A/B trial with 12 send windows instead of the usual 5. */
+    fun extendedMulticastDiagnostic() =
+        task("12-Runden-Multicast-Diagnose, nur Netzwerkverkehr …") {
+            val replies = withContext(Dispatchers.IO) {
+                YeelightLan.discover(app, rounds = 12, listenMs = 1600L)
+            }
+            lastMulticastIps = replies.map { it.ip }.toSet()
+            val both = lastMulticastIps.intersect(lastDirectIps).size
+            val directOnly = lastDirectIps - lastMulticastIps
+            searchDiagnostics = "Erweiterte UDP-Diagnose: " + lastMulticastIps.size +
+                " eindeutige Multicast-Antworter in 12 Suchrunden" +
+                "\nTCP bestätigt: " + lastDirectIps.size +
+                " · Beide: " + both + " · Nur TCP: " + directOnly.size +
+                "\nPro Runde UDP-Antworter: " +
+                YeelightLan.lastSearchRoundUnique.joinToString("/") +
+                "\nAntwortpakete insgesamt: " + YeelightLan.lastSearchPackets +
+                " · nicht lesbar: " + YeelightLan.lastSearchInvalidPackets +
+                "\nAbsender-IP: " + YeelightLan.lastSearchSourceAddress +
+                " · Absender/Location-Abweichungen: " +
+                YeelightLan.lastSearchSourceMismatches
+            mergeFound(replies, "12-Runden-Multicast-Gegenprobe")
+            searchDiagnostics
+        }
+
+    fun discoveryDetail(device: YeelightDevice): String {
+        val rounds = YeelightLan.lastSearchRoundResponders
+        val responseRounds = rounds.count { device.ip in it }
+        val packets = YeelightLan.lastSearchRepliesPerIp[device.ip] ?: 0
+        val tcp = if (device.ip in lastDirectIps) "TCP bestätigt" else "TCP nicht geprüft"
+        val udp = if (device.ip in lastMulticastIps) "UDP geantwortet"
+            else "UDP keine Antwort"
+        return tcp + " · " + udp + " · " + responseRounds + "/" + rounds.size +
+            " Runden · " + packets + " Antwortpakete"
+    }
+
     fun compareDirectedUdp() {
         val missing = devices.filter {
             it.ip in lastDirectIps && it.ip !in lastMulticastIps
