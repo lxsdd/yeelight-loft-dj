@@ -1646,8 +1646,14 @@ class LoftController(context: Context) {
         val number = musicColorBeat
         scope.launch {
             try {
-                val problems = withContext(Dispatchers.IO) {
-                    chosen.mapIndexed { index, device -> async {
+                val (attempted, paused, problems) = withContext(Dispatchers.IO) {
+                    // One busy or recently queried lamp must not deprive the
+                    // others of their own safe beat budget. Preserve the
+                    // ORIGINAL spatial index when skipping a quota-low lamp.
+                    val permitted = chosen.withIndex().filter {
+                        YeelightLan.canSendMusicBeat(it.value)
+                    }
+                    val failures = permitted.map { (index, device) -> async {
                         runCatching {
                             YeelightLan.manualControl(
                                 device,
@@ -1657,12 +1663,16 @@ class LoftController(context: Context) {
                             )
                         }.exceptionOrNull()?.let { device.ip }
                     } }.awaitAll().filterNotNull()
+                    Triple(permitted.size, chosen.size - permitted.size, failures)
                 }
-                musicLightStatus = if (problems.isEmpty()) {
-                    chosen.size.toString() + " Lampen · echter Bassimpuls · gedrosselte RGB-Farbwechsel"
-                } else {
-                    (chosen.size - problems.size).toString() + "/" + chosen.size +
-                        " Lampen reagieren · " + problems.size + " Fehler"
+                musicLightStatus = when {
+                    attempted == 0 ->
+                        "Musikimpulse pausiert · Befehlsreserve für Stopp/Wiederherstellung geschützt"
+                    problems.isEmpty() && paused == 0 ->
+                        "$attempted Lampen · echter Bassimpuls · regulärer LAN-Modus"
+                    else ->
+                        "${attempted - problems.size}/${chosen.size} Lampen reagierten · " +
+                            "$paused pausiert (Stoppreserve) · ${problems.size} Fehler"
                 }
             } finally {
                 musicSending = false
