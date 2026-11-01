@@ -483,7 +483,7 @@ object YeelightLan {
     internal fun matchesReplyId(response: JSONObject, id: Int): Boolean =
         response.has("id") && response.optInt("id", -1) == id
 
-    private class RejectedCommand(message: String) : IllegalStateException(message)
+    internal class RejectedCommand(message: String) : IllegalStateException(message)
 
     /**
      * Power and verification use one TCP session, but are TWO distinct LAN
@@ -684,8 +684,10 @@ object YeelightLan {
      * speculative Music-Mode handshake against a real lamp.
      */
     private val musicChannels = ConcurrentHashMap<String, YeelightMusicChannel>()
-    // One compensating set_music(0) was already attempted on failed handshake.
-    private val failedStartDisableAcknowledged = ConcurrentHashMap<String, Boolean>()
+    // A failed start must not be confused with a failed stop. The three
+    // outcomes have different recovery safety requirements.
+    private enum class MusicStartFailure { REJECTED_BEFORE_START, COMPENSATION_ACKED, COMPENSATION_UNCONFIRMED }
+    private val failedMusicStarts = ConcurrentHashMap<String, MusicStartFailure>()
 
     fun supportsMusicMode(device: YeelightDevice): Boolean =
         "set_music" in device.methods && "set_rgb" in device.methods
@@ -709,12 +711,15 @@ object YeelightLan {
                 send(device, "set_music", listOf(0))
             }
         )
-        failedStartDisableAcknowledged.remove(device.ip)
+        failedMusicStarts.remove(device.ip)
         try {
             channel.start(host)
         } catch (failure: Exception) {
-            failedStartDisableAcknowledged[device.ip] =
-                channel.alreadyDisabledSuccessfully
+            failedMusicStarts[device.ip] = when {
+                channel.enableDefinitelyNotAccepted -> MusicStartFailure.REJECTED_BEFORE_START
+                channel.alreadyDisabledSuccessfully -> MusicStartFailure.COMPENSATION_ACKED
+                else -> MusicStartFailure.COMPENSATION_UNCONFIRMED
+            }
             throw failure
         }
         musicChannels[device.ip] = channel
@@ -748,19 +753,26 @@ object YeelightLan {
     @Synchronized
     fun stopMusicMode(device: YeelightDevice) {
         val channel = musicChannels.remove(device.ip)
-        val earlierDisable = failedStartDisableAcknowledged.remove(device.ip)
+        val failedStart = failedMusicStarts.remove(device.ip)
         if (channel != null) {
             channel.close()
-        } else if (earlierDisable != null) {
-            check(earlierDisable) {
-                "Music-Mode-Start gescheitert und einmaliges set_music(0) " +
-                    "nicht bestätigt. Keine automatische Wiederholung; " +
-                    "Wiederherstellung bleibt offen."
+        } else when (failedStart) {
+            MusicStartFailure.REJECTED_BEFORE_START -> error(
+                "set_music(1) wurde ausdrücklich abgelehnt; " +
+                    "kein set_music(0) als vermeintliche Reparatur gesendet. " +
+                    "Vorheriger Musikmodus bleibt unklar; nur lesend prüfen."
+            )
+            MusicStartFailure.COMPENSATION_UNCONFIRMED -> error(
+                "set_music(0) nach unbestätigtem Start nicht bestätigt; " +
+                    "kein weiterer Stoppversuch. Nur lesend prüfen."
+            )
+            MusicStartFailure.COMPENSATION_ACKED -> Unit
+            null -> if (supportsMusicMode(device)) {
+                // A persisted journal is not proof a firmware session still
+                // exists. Never send a second stop after process death.
+                error("Kein bestätigter Live-Musikrückkanal; kein automatischer " +
+                    "set_music(0)-Wiederholungsbefehl. Nur lesend prüfen.")
             }
-            // Already acknowledged: do not spend an extra LAN command.
-        } else if (supportsMusicMode(device)) {
-            // Explicit recovery of a persisted session after process restart.
-            send(device, "set_music", listOf(0))
         }
     }
 
