@@ -576,13 +576,24 @@ object YeelightLan {
         commandGate.run(device.ip) { directSend(device, method, params) }
     }
 
+    internal fun rejectionMessage(
+        method: String, params: List<Any>, error: JSONObject,
+    ): String {
+        val phase = if (method == "set_music") "set_music(${params.firstOrNull()})" else method
+        val code = error.optInt("code", Int.MIN_VALUE)
+        val codeLabel = if (code == Int.MIN_VALUE) "" else " (Fehlercode $code)"
+        return "$phase abgelehnt$codeLabel: " +
+            error.optString("message", "Yeelight-Fehler")
+    }
+
     private fun directSend(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
         require(method in setOf("set_power","start_cf","stop_cf","set_scene",
             "set_bright","set_rgb","set_ct_abx","set_hsv","set_music"))
         val result=tcp.request(device.ip,device.port,seq.getAndIncrement(),method,params)
-        if(result.has("error"))throw RejectedCommand("$method abgelehnt: " +
-            result.getJSONObject("error").optString("message","Yeelight-Fehler"))
+        if(result.has("error"))throw RejectedCommand(
+            rejectionMessage(method, params, result.getJSONObject("error"))
+        )
         check(result.optJSONArray("result")?.optString(0)=="ok") {
             "Keine OK-Bestätigung für $method"
         }

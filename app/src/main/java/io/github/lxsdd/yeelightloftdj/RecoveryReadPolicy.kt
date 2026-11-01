@@ -50,7 +50,10 @@ object RecoveryReadPolicy {
         }
     }
 
-    fun canClear(d: RecoveryReadDecision): Boolean = d in setOf(
+    fun canClear(
+        d: RecoveryReadDecision,
+        musicSessionUnconfirmed: Boolean = false,
+    ): Boolean = !musicSessionUnconfirmed && d in setOf(
         RecoveryReadDecision.ALREADY_RESTORED,
         RecoveryReadDecision.FLOW_STOPPED_NO_SNAPSHOT,
         RecoveryReadDecision.SCANNER_OFF

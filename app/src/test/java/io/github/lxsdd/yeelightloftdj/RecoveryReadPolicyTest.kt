@@ -37,6 +37,15 @@ class RecoveryReadPolicyTest {
         assertEquals(RecoveryReadDecision.UNKNOWN,
             RecoveryReadPolicy.decide(null,snap(true),null,true))
     }
+    @Test fun failedMusicStopNeverAutoClearsEvenMatchingReadback() {
+        assertFalse(RecoveryReadPolicy.canClear(
+            RecoveryReadDecision.ALREADY_RESTORED, musicSessionUnconfirmed = true))
+        assertFalse(RecoveryReadPolicy.canClear(
+            RecoveryReadDecision.SCANNER_OFF, musicSessionUnconfirmed = true))
+        assertTrue(RecoveryReadPolicy.canClear(
+            RecoveryReadDecision.ALREADY_RESTORED, musicSessionUnconfirmed = false))
+    }
+
     @Test fun unknownPropertyDoesNotReleaseSavedSnapshot() {
         assertEquals(RecoveryReadDecision.UNKNOWN,
             RecoveryReadPolicy.decide(false,null,snap(true),false))

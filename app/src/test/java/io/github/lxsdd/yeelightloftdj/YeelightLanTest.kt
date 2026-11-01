@@ -16,6 +16,17 @@ class YeelightLanTest {
         support: set_power set_rgb start_cf stop_cf set_music
     """.trimIndent()
 
+    @Test fun firmwareRejectionIdentifiesMusicStartVersusStopAndCode() {
+        val error = JSONObject("""{"code":-5001,"message":"invalid params"}""")
+        assertEquals(
+            "set_music(1) abgelehnt (Fehlercode -5001): invalid params",
+            YeelightLan.rejectionMessage("set_music",
+                listOf(1, "192.168.1.20", 43000), error))
+        assertEquals(
+            "set_music(0) abgelehnt (Fehlercode -5001): invalid params",
+            YeelightLan.rejectionMessage("set_music", listOf(0), error))
+    }
+
     @Test fun discoveryParsesColor4() {
         val device = YeelightLan.parseAnnouncement(response)
         assertNotNull(device)

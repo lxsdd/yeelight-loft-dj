@@ -596,8 +596,9 @@ private fun RecoveryBanner(controller: LoftController) {
                         ". Dies entfernt ausschließlich den lokalen " +
                         "Lichtshow-/Wiederherstellungseintrag dieser Lampe. " +
                         "Es sendet KEINEN Stoppbefehl. Ein eventuell laufender " +
-                        "Lichtlauf wird dadurch nicht beendet. Der frühere Lichtzustand " +
-                        "kann anschließend nicht mehr automatisch wiederhergestellt werden.")
+                        "Lichtlauf oder Musikmodus wird dadurch nicht beendet. " +
+                        "Der frühere Lichtzustand kann anschließend nicht mehr " +
+                        "automatisch wiederhergestellt werden.")
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = acceptsRunningFlow,
                             onCheckedChange = { acceptsRunningFlow = it })

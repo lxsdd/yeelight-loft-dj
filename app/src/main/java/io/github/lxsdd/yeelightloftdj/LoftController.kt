@@ -124,6 +124,10 @@ class LoftController(context: Context) {
         private set
     private var recoveryJournal = SceneRecovery.decode(prefs.getString("pending-scene-recovery", null))
     private var scannerOffIps = readScannerOffIps()
+    // A failed set_music(0) must survive Activity/process death. Never silently
+    // replay a rejected firmware command when "Stop" is pressed again.
+    private var unconfirmedMusicStopIps =
+        prefs.getStringSet("music-stop-unconfirmed-ips", emptySet()).orEmpty().toSet()
     // Session-local cooldown: a quota rejection cannot cause a retry storm.
     private val lastQuotaRejectionAt = mutableMapOf<String, Long>()
 
@@ -465,10 +469,18 @@ class LoftController(context: Context) {
      */
     fun checkRecoveryLamp(ip: String) {
         val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
-        if (busy || scannerRunning || musicDeviceSession || musicStopPending || musicSending ||
+        if (busy || scannerRunning || musicLightArmed || musicStopPending || musicSending ||
             !YeelightLan.isLocalIp(ip) || ip !in pending
         ) {
             status = "Prüfung nicht möglich: Lampe nicht offen oder ein Lichtvorgang aktiv"
+            return
+        }
+        // Music-session persistence alone is not evidence of a live stream.
+        // Permit ONE user-requested read, but never clear a marker when the
+        // firmware's music-mode stop was not confirmed.
+        val targetDevice = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
+        if (YeelightLan.musicModeActive(targetDevice)) {
+            status = "Aktiver Musik-Rückkanal: keine parallele Statusabfrage"
             return
         }
         val now = SystemClock.elapsedRealtime()
@@ -479,7 +491,7 @@ class LoftController(context: Context) {
         }
         lastRecoveryReadAt[ip] = now
         task("Prüfe die Lampe ." + ip.substringAfterLast('.') + " lesend …") {
-            val device = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
+            val device = targetDevice
             val scannerMode = ip in scannerOffIps
             val snapshot = recoveryJournal[ip]
             val result = withContext(Dispatchers.IO) {
@@ -498,7 +510,7 @@ class LoftController(context: Context) {
                 reportedPowerOn = read.powerOn
             )
             val label = displayName(device)
-            if (RecoveryReadPolicy.canClear(decision)) {
+            if (RecoveryReadPolicy.canClear(decision, musicSessionUnconfirmed = musicDeviceSession)) {
                 val nextRunning = runningDeviceIps - ip
                 val nextJournal = recoveryJournal - ip
                 val nextScanner = scannerOffIps - ip
@@ -526,6 +538,11 @@ class LoftController(context: Context) {
                 "$label: bereits sicher · lokale Vormerkung automatisch entfernt"
             } else {
                 val reason = when(decision) {
+                    RecoveryReadDecision.ALREADY_RESTORED,
+                    RecoveryReadDecision.FLOW_STOPPED_NO_SNAPSHOT,
+                    RecoveryReadDecision.SCANNER_OFF ->
+                        "Lichtzustand lesend geprüft; Musikmodus-Stopp wurde noch nicht " +
+                            "bestätigt. Schutz bleibt bestehen. Keine automatischen Befehle."
                     RecoveryReadDecision.FLOW_STILL_RUNNING ->
                         "Farbfluss läuft noch. Bitte normal stoppen."
                     RecoveryReadDecision.RESTORE_REQUIRED ->
@@ -552,9 +569,13 @@ class LoftController(context: Context) {
         acceptsLostRestore: Boolean,
     ): Boolean {
         val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        val liveReverseChannel = pending.any { pendingIp ->
+            val lamp = devices.firstOrNull { it.ip == pendingIp }
+            lamp != null && YeelightLan.musicModeActive(lamp)
+        }
         if (!RecoveryAbandonPolicy.canDiscard(
                 ip, pending, acceptsPossibleRunningFlow, acceptsLostRestore,
-                busy || musicDeviceSession || musicStopPending || musicSending
+                busy || musicLightArmed || musicStopPending || musicSending || liveReverseChannel
             )) {
             status = "Freigabe abgelehnt: Beide Folgen des Verwerfens müssen " +
                 "ausdrücklich bestätigt werden."
@@ -562,10 +583,15 @@ class LoftController(context: Context) {
         }
         val nextRunning = runningDeviceIps - ip
         val nextJournal = recoveryJournal - ip
+        val remaining = LampOperationGate.pendingIps(nextRunning, nextJournal.keys)
+        val keepMusicSession = musicDeviceSession && remaining.isNotEmpty()
+        val nextUnconfirmedStops = unconfirmedMusicStopIps - ip
         val saved = prefs.edit()
             .putString("running-flow-ips", JSONArray(nextRunning.toList()).toString())
             .putString("pending-scene-recovery", SceneRecovery.encode(nextJournal))
             .putString("scanner-off-ips", JSONArray((scannerOffIps - ip).toList()).toString())
+            .putStringSet("music-stop-unconfirmed-ips", nextUnconfirmedStops)
+            .putBoolean("music-light-session", keepMusicSession)
             .commit()
         if (!saved) {
             status = "Wiederherstellungsfreigabe konnte nicht gespeichert werden"
@@ -574,12 +600,18 @@ class LoftController(context: Context) {
         runningDeviceIps = nextRunning
         recoveryJournal = nextJournal
         scannerOffIps = scannerOffIps - ip
+        unconfirmedMusicStopIps = nextUnconfirmedStops
+        if (!keepMusicSession) {
+            musicDeviceSession = false
+            musicLightArmed = false
+            musicLightStatus = "Musikmodus-Status der verworfenen Lampe NICHT bestätigt"
+        }
         lastRecoveryFailures = lastRecoveryFailures - ip
         lastQuotaRejectionAt.remove(ip)
         if (nextRunning.isEmpty() && nextJournal.isEmpty()) activeScene = null
         status = "Lokale Wiederherstellung für Lampe ." +
             ip.substringAfterLast('.') + " bewusst verworfen. " +
-            "Ein eventuell noch laufender Farbfluss wurde NICHT gestoppt; " +
+            "Ein eventuell noch laufender Farbfluss/Musikmodus wurde NICHT gestoppt; " +
             "frühere Farbe/Helligkeit wurde NICHT wiederhergestellt."
         return true
     }
@@ -1197,6 +1229,10 @@ class LoftController(context: Context) {
                         IllegalStateException("Yeelight-LAN-Limit: erneuter Versuch in " +
                             ((waitMs + 999L) / 1000L) + " Sekunden möglich")
                     } else runCatching {
+                        if (!MusicStopSafety.permitsStop(device.ip, unconfirmedMusicStopIps)) {
+                            error("Music-Mode-Stopp für diese Lampe wurde zuvor nicht bestätigt; " +
+                                "keine erneuten set_music-Befehle. Nur lesend prüfen.")
+                        }
                         if (device.ip in scannerOffIps) {
                             check(YeelightLan.setPowerVerified(device, false).outcome ==
                                 PowerOutcome.VERIFIED) {
@@ -1236,6 +1272,15 @@ class LoftController(context: Context) {
             }
         }
         val failed = failures.keys
+        val newUnconfirmedStops = (
+            unconfirmedMusicStopIps +
+                failures.filterValues(MusicStopSafety::unconfirmed).keys
+            ) - outcomes.filter { it.second == null }.map { it.first }.toSet()
+        check(prefs.edit().putStringSet("music-stop-unconfirmed-ips",
+            newUnconfirmedStops).commit()) {
+            "Musikmodus-Stopp-Schutz konnte nicht gespeichert werden"
+        }
+        unconfirmedMusicStopIps = newUnconfirmedStops
         val beforeCount = recoveryJournal.size
         setScannerTracking(scannerOffIps.intersect(failed), failed)
         setRecoveryJournal(recoveryJournal.filterKeys { it in failed })
