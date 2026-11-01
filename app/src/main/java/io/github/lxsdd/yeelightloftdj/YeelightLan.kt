@@ -759,7 +759,7 @@ object YeelightLan {
         } else when (failedStart) {
             MusicStartFailure.REJECTED_BEFORE_START -> error(
                 "set_music(1) wurde ausdrücklich abgelehnt; " +
-                    "kein set_music(0) als vermeintliche Reparatur gesendet. " +
+                    "kein automatischer Deaktivierungsbefehl gesendet. " +
                     "Vorheriger Musikmodus bleibt unklar; nur lesend prüfen."
             )
             MusicStartFailure.COMPENSATION_UNCONFIRMED -> error(
@@ -771,7 +771,7 @@ object YeelightLan {
                 // A persisted journal is not proof a firmware session still
                 // exists. Never send a second stop after process death.
                 error("Kein bestätigter Live-Musikrückkanal; kein automatischer " +
-                    "set_music(0)-Wiederholungsbefehl. Nur lesend prüfen.")
+                    "Deaktivierungsbefehl. Nur lesend prüfen.")
             }
         }
     }
