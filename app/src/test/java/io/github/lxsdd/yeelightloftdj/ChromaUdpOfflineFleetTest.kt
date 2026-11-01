@@ -153,6 +153,26 @@ class ChromaUdpOfflineFleetTest {
         assertFalse(fleet.stop("missing"))
     }
 
+    @Test fun exhaustedBudgetClosesAtExactFortyFifthFrame() {
+        val fleet = ChromaUdpOfflineFleet(listOf(
+            ChromaOfflineLampSpec("a", ChromaUdpOfflineSession(aIp, v2))))
+        activate(fleet, "a", ChromaFakeDevice(client, 2, aIp))
+        for (n in 0 until 45)
+            assertNotNull(fleet.color("a", n, 60, 30L + n * 100))
+        assertEquals(45, fleet.snapshot("a")!!.framesAttempted)
+        assertTrue(fleet.snapshot("a")!!.safetyStopped)
+        assertFalse(fleet.snapshot("a")!!.simulatedTokenHeld)
+    }
+
+    @Test fun unsupportedSessionEndsWithoutImplicitRetry() {
+        val fleet = ChromaUdpOfflineFleet(listOf(
+            ChromaOfflineLampSpec("a", ChromaUdpOfflineSession(aIp,
+                setOf("not_chroma", "udp_sess_new", "set_scene")))))
+        assertNull(fleet.begin("a", 0))
+        assertNull(fleet.begin("a", 5000))
+        assertTrue(fleet.snapshot("a")!!.safetyStopped)
+    }
+
     @Test fun invalidTopologyFailsWithoutUsingAnyTransport() {
         val session = ChromaUdpOfflineSession(aIp, v2)
         assertThrows(IllegalArgumentException::class.java) { ChromaUdpOfflineFleet(emptyList()) }
