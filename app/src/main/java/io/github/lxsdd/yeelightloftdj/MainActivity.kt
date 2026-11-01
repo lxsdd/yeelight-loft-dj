@@ -780,19 +780,19 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                 Text("Aktualisieren")
             }
         }
-        if (controller.runningDeviceIps.isNotEmpty()) {
-            Text("Lichtshow zuerst stoppen, bevor du einzelne Farben oder Helligkeit änderst.",
+        if (!controller.canIdentifyLamp(device)) {
+            Text("Nur diese Lampe ist wegen Lichtshow/Wiederherstellung derzeit geschützt.",
                 color = muted, fontSize = 11.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { controller.controlLamp(device, LampCommands.power(true), "Einschalten") },
-                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+                enabled = controller.canIdentifyLamp(device),
                 modifier = Modifier.weight(1f)
             ) { Text("Ein") }
             OutlinedButton(
                 onClick = { controller.controlLamp(device, LampCommands.power(false), "Ausschalten") },
-                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+                enabled = controller.canIdentifyLamp(device),
                 modifier = Modifier.weight(1f)
             ) { Text("Aus") }
         }
@@ -807,7 +807,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                 controller.controlLamp(device, LampCommands.brightness(brightness.roundToInt()), "Helligkeit")
             },
             valueRange = 1f..100f,
-            enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+            enabled = controller.canIdentifyLamp(device),
         )
         val colors = listOf(
             Triple("Warm", 0xFFAE62, Color(0xFFFFAE62)),
@@ -822,7 +822,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                     FilterChip(
                         selected = live?.colorMode == 1 && live.rgb == rgb,
                         onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
-                        enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+                        enabled = controller.canIdentifyLamp(device),
                         label = { Text(name) },
                         leadingIcon = {
                             Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
@@ -843,16 +843,16 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                     controller.controlLamp(device, LampCommands.temperature(kelvin.roundToInt()), "Weißtemperatur")
                 },
                 valueRange = 1700f..6500f,
-                enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+                enabled = controller.canIdentifyLamp(device),
             )
         }
         OutlinedButton(
             onClick = { controller.identifyLamp(device) },
-            enabled = !controller.busy && controller.runningDeviceIps.isEmpty(),
+            enabled = controller.canIdentifyLamp(device),
             modifier = Modifier.fillMaxWidth()
         ) { Text("Diese Lampe kurz identifizieren") }
         Text(
-            "Identifikation nur ohne laufende Lichtshow. Vorherigen Zustand lesen und anschließend wiederherstellen. Bei unvollständig lesbarem Farbzustand wird kein Testsignal gesendet.",
+            "Identifikation nur auf dieser Lampe ohne laufende Lichtshow. Andere Lampen mit offener Wiederherstellung werden nicht verändert.",
             color = muted, fontSize = 11.sp
         )
     }
@@ -1050,11 +1050,13 @@ private fun SceneRestoreOption(controller: LoftController) {
                 Switch(
                     checked = controller.restoreAfterStop,
                     onCheckedChange = controller::configureRestoreAfterStop,
-                    enabled = !controller.busy && controller.runningDeviceIps.isEmpty()
+                    enabled = controller.canOrganizeLamps
                 )
             }
             Text(
-                "Wenn ein Zustand nicht sicher gelesen werden kann, startet die Szene nicht. Wiederherstellung erfolgt beim Stoppen, nicht automatisch nach einer festen Zeit.",
+                "Nur Lampen mit sicher lesbarem Ausgangszustand werden gestartet. " +
+                    "Offline- und nicht wiederherstellbare Geräte werden übersprungen. " +
+                    "Die Wiederherstellung erfolgt nach dem Stoppen.",
                 color = muted, fontSize = 11.sp
             )
         }
