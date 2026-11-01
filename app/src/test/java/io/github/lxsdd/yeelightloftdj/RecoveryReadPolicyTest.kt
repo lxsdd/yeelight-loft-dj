@@ -46,6 +46,19 @@ class RecoveryReadPolicyTest {
             RecoveryReadDecision.ALREADY_RESTORED, musicSessionUnconfirmed = false))
     }
 
+    @Test fun musicRecoveryNeedsExplicitMusicOffAndStaticMatch() {
+        assertTrue(RecoveryReadPolicy.musicStillUnconfirmed(true, null))
+        assertTrue(RecoveryReadPolicy.musicStillUnconfirmed(true, true))
+        assertFalse(RecoveryReadPolicy.musicStillUnconfirmed(true, false))
+        assertFalse(RecoveryReadPolicy.musicStillUnconfirmed(false, null))
+        assertTrue(RecoveryReadPolicy.canClear(RecoveryReadDecision.ALREADY_RESTORED,
+            musicSessionUnconfirmed = RecoveryReadPolicy.musicStillUnconfirmed(true, false)))
+        assertFalse(RecoveryReadPolicy.canClear(RecoveryReadDecision.RESTORE_REQUIRED,
+            musicSessionUnconfirmed = RecoveryReadPolicy.musicStillUnconfirmed(true, false)))
+        assertFalse(RecoveryReadPolicy.canClear(RecoveryReadDecision.FLOW_STILL_RUNNING,
+            musicSessionUnconfirmed = RecoveryReadPolicy.musicStillUnconfirmed(true, false)))
+    }
+
     @Test fun unknownPropertyDoesNotReleaseSavedSnapshot() {
         assertEquals(RecoveryReadDecision.UNKNOWN,
             RecoveryReadPolicy.decide(false,null,snap(true),false))
