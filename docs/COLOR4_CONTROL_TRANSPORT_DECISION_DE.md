@@ -25,7 +25,7 @@ Offizielle Links:
 
 ## 3. Verbindliche Routing-Regeln
 
-1. Normale Lampensuche: **UDP-Multicast + maximal 24 gezielte UDP-Abfragen an bekannte, noch nicht antwortende IPs**; keine automatischen TCP-`get_prop`-Anfragen und kein /24-Scan.
+1. Normale Lampensuche: **UDP-Multicast + gezielte UDP-Abfragen an höchstens 24 bekannte, noch nicht antwortende IPs (bis zu zwei Datagrams je IP)**; keine automatischen TCP-`get_prop`-Anfragen und kein /24-Scan.
 2. Intensiver TCP-Suchlauf: nur separate, ausdrücklich angeforderte Diagnose; nicht als normale Geräteaktualisierung.
 3. Manuelle Color4-Steuerung: derzeit nur über offiziellen Classic-LAN-Kanal; jeder tatsächlich gesendete Befehl wird getrennt seriell getaktet. Ein `client quota exceeded` der **Firmware** quarantänisiert ausschließlich diese Geräte-IP.
 4. Laufende Lichtshows und Musik: Firmware-gesperrte Geräte vor jeder Statusabfrage, Sessionmarkierung oder Zustandsänderung aus der Zielmenge entfernen. Nicht automatisch wiederholen und nicht im Hintergrund mit `get_prop` „gesund prüfen“.
