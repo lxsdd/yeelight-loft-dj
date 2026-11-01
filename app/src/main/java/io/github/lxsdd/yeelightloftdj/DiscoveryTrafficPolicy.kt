@@ -9,6 +9,27 @@ package io.github.lxsdd.yeelightloftdj
  * the user-visible advanced / deep-diagnostic action.
  */
 object DiscoveryTrafficPolicy {
+    data class NormalDiscovery(
+        val multicast: List<YeelightDevice>,
+        val directed: List<YeelightDevice>,
+    )
+
+    /**
+     * The ordinary discovery API does not even accept a TCP-connection
+     * callback: an accidental full subnet scan cannot silently return here.
+     * Both transport callbacks must speak SSDP-like UDP only.
+     */
+    fun normalSearch(
+        known: List<YeelightDevice>,
+        quarantinedIps: Set<String>,
+        multicast: () -> List<YeelightDevice>,
+        directed: (List<YeelightDevice>) -> List<YeelightDevice>,
+    ): NormalDiscovery {
+        val announced = multicast()
+        val targets = directedUdpTargets(known, announced, quarantinedIps)
+        return NormalDiscovery(announced, if (targets.isEmpty()) emptyList() else directed(targets))
+    }
+
     fun directedUdpTargets(
         known: List<YeelightDevice>,
         multicast: List<YeelightDevice>,
