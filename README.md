@@ -27,7 +27,7 @@ Android-first, local-first Yeelight-Steuerung mit Kotlin, Jetpack Compose und Ma
 ## Bekannte Lücken
 
 - 6/13/7 Multicast-vs.-TCP-vs.-gerichtetes-UDP: Ursache der Multicast-Nichtantworter weiterhin nicht abschließend bewiesen.
-- Lampe .134: Yeelight-Firmware meldete `client quota exceeded`; die App begrenzt Retries, kann diese Gerätebegrenzung aber nicht grundsätzlich verhindern.
+- Eine Yeelight-Lampe: Die Firmware meldete `client quota exceeded`; die App begrenzt Retries, kann diese Gerätebegrenzung aber nicht grundsätzlich verhindern.
 - Native Schweif-Effekte dimmen angeblich inaktive Lampen bisher auf **1 %** – das ist sichtbar und **nicht AUS**. Nur der neue Scanner-PR verwendet explizit bestätigtes AUS.
 - Echter Grundriss (Wände/Türen/x/y/z), Hintergrund-/Segmentsteuerung, Zeitpläne, weitere Musik-DJ-Funktionen, dauerhafte technische Quota-Ursachenbehebung und konsequentes modernes UI bleiben im verbindlichen Backlog.
 
