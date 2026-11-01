@@ -40,11 +40,24 @@ class ChromaUdpOfflineSession(
      * exceptions; it prevents two logical lanes from sharing one physical
      * target and silently doubling a per-device simulated command budget.
      */
-    internal val offlineEndpointIdentity: String =
-        expectedSenderIp.trim().lowercase(java.util.Locale.ROOT)
+    internal val offlineEndpointIdentity: String = expectedSenderIp.trim()
 
     init {
-        require(offlineEndpointIdentity.isNotEmpty()) { "Simulated endpoint required" }
+        // Canonical dotted-decimal IPv4 only. Never resolve a hostname or
+        // infer an address through a network lookup. Reject octal-looking
+        // aliases, IPv6, multicast, loopback, unspecified and broadcast.
+        // Otherwise separate session objects could represent one endpoint
+        // with different spellings and silently multiply the safety budget.
+        val octets = offlineEndpointIdentity.split(".")
+        require(octets.size == 4 && octets.all { part ->
+            part.isNotEmpty() && part.length <= 3 &&
+                part.all { it in '0'..'9' } &&
+                (part.length == 1 || part[0] != '0') &&
+                (part.toIntOrNull() ?: -1) in 0..255
+        } && octets[0].toInt() in 1..223 && octets[0] != "127" &&
+            offlineEndpointIdentity != "255.255.255.255") {
+            "Canonical unicast IPv4 simulated endpoint required"
+        }
     }
 
     private val evidence = ChromaUdpResearch.fromSupport(support)
@@ -97,7 +110,7 @@ class ChromaUdpOfflineSession(
     fun acceptReply(
         senderIp: String, senderPort: Int, payload: String, nowMs: Long,
     ): ChromaPreviewEvent {
-        if (senderIp != expectedSenderIp || senderPort != 55444)
+        if (senderIp != offlineEndpointIdentity || senderPort != 55444)
             return ChromaPreviewEvent.IGNORED_FOREIGN_SENDER
         if (state != ChromaPreviewState.AWAITING_TOKEN &&
             state != ChromaPreviewState.ACTIVE) {
