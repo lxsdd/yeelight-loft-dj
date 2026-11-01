@@ -48,6 +48,8 @@ class LoftController(context: Context) {
         private set
     var lastSceneReport by mutableStateOf<List<SceneLampResult>>(emptyList())
         private set
+    var lastRecoveryFailures by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
     var status by mutableStateOf("Bereit · lokales WLAN")
         private set
     var microphoneRunning by mutableStateOf(false)
@@ -159,7 +161,7 @@ class LoftController(context: Context) {
 
     fun addRoom(name: String): Boolean {
         val clean = name.trim()
-        if (busy || runningDeviceIps.isNotEmpty() || clean.isEmpty() || clean.length > 40 ||
+        if (!canOrganizeLamps || clean.isEmpty() || clean.length > 40 ||
             clean.any { it.isISOControl() } || roomNames.any { it.equals(clean, true) } ||
             roomNames.size >= 32) {
             status = "Raumname unzulässig, bereits vorhanden oder Lichtshow aktiv"
@@ -173,7 +175,7 @@ class LoftController(context: Context) {
 
     fun renameRoom(old: String, fresh: String): Boolean {
         val clean = fresh.trim()
-        if (busy || runningDeviceIps.isNotEmpty() || old == "Nicht zugeordnet" ||
+        if (!canOrganizeLamps || old == "Nicht zugeordnet" ||
             old !in roomNames || clean.isEmpty() || clean.length > 40 ||
             clean.any { it.isISOControl() } ||
             roomNames.any { it != old && it.equals(clean, true) }) {
@@ -194,7 +196,7 @@ class LoftController(context: Context) {
     }
 
     fun deleteRoom(name: String): Boolean {
-        if (busy || runningDeviceIps.isNotEmpty() || name == "Nicht zugeordnet" ||
+        if (!canOrganizeLamps || name == "Nicht zugeordnet" ||
             name !in roomNames) return false
         val editor = prefs.edit()
         assignments.forEach { (id, room) ->
@@ -212,7 +214,7 @@ class LoftController(context: Context) {
     }
 
     fun assignMany(ids: Set<String>, room: String): Int {
-        if (busy || runningDeviceIps.isNotEmpty() || room !in roomNames) return 0
+        if (!canOrganizeLamps || room !in roomNames) return 0
         val eligible = devices.filter { it.id in ids }
         val editor = prefs.edit()
         eligible.forEach { editor.putString("room." + it.id, room) }
@@ -306,18 +308,36 @@ class LoftController(context: Context) {
         get() = when {
             musicStopPending -> "Musiklicht wird bereits gestoppt und wiederhergestellt."
             pendingRecoveryCount > 0 ->
-                "$pendingRecoveryCount Lampen aus einer Lichtshow sind noch nicht sicher " +
-                    "gestoppt oder wiederhergestellt. Bitte die Wiederherstellung erneut ausführen."
+                "$pendingRecoveryCount Lampe(n) konnten nicht sicher gestoppt bzw. " +
+                    "wiederhergestellt werden. Nur diese Geräte bleiben geschützt; " +
+                    "andere Lampen kannst du weiterhin identifizieren und für Shows nutzen."
             musicDeviceSession -> "Frühere Musiklicht-Sitzung benötigt eine Wiederherstellung."
-            activeScene != null -> "Eine Lichtshow ist aktiv. Vor dem Identifizieren bitte stoppen."
+            activeScene != null -> "Lichtshow aktiv. Betroffene Lampen vor dem Identifizieren stoppen."
             else -> ""
         }
 
-    /** No reorder or identification during a running or unconfirmed session. */
+    /** Editing local groups and the lamp order never sends bulb commands. */
     val canOrganizeLamps: Boolean
-        get() = LampOperationGate.canIdentify(
-            busy, activeScene, runningDeviceIps, recoveryJournal.keys, musicDeviceSession
+        get() = LampOperationGate.canEditConfiguration(
+            busy, musicDeviceSession, musicStopPending || musicSending
         )
+
+    fun canIdentifyLamp(device: YeelightDevice): Boolean =
+        LampOperationGate.canIdentifyLamp(
+            busy, device.ip, runningDeviceIps, recoveryJournal.keys,
+            musicDeviceSession, musicStopPending || musicSending
+        )
+
+    fun pendingLampDescriptions(): List<String> =
+        LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+            .sorted().map { ip ->
+                val device = devices.firstOrNull { it.ip == ip }
+                val display = device?.let(::displayName) ?: "Nicht mehr gespeicherte Lampe"
+                val reason = lastRecoveryFailures[ip]
+                display + " · " + ip.substringAfterLast('.') +
+                    if (reason.isNullOrBlank()) " · Zustand ungeklärt"
+                    else " · " + reason.take(120)
+            }
 
     /** Position is zero-based, all changes are committed before updating the UI. */
     fun placeLampAt(device: YeelightDevice, position: Int): Boolean {
@@ -383,7 +403,7 @@ class LoftController(context: Context) {
 
     fun configureRestoreAfterStop(enabled: Boolean) {
         // The choice is frozen for the full duration of a running scene.
-        if (busy || runningDeviceIps.isNotEmpty()) return
+        if (!canOrganizeLamps) return
         restoreAfterStop = enabled
         prefs.edit().putBoolean("restore-after-stop", enabled).apply()
     }
@@ -535,7 +555,7 @@ class LoftController(context: Context) {
     }
 
     fun assign(device: YeelightDevice, room: String) {
-        if (room !in roomNames) return
+        if (!canOrganizeLamps || room !in roomNames) return
         assignments = assignments + (device.id to room)
         prefs.edit().putString("room." + device.id, room).apply()
     }
@@ -620,8 +640,8 @@ class LoftController(context: Context) {
     }
 
     fun forget(device: YeelightDevice) {
-        if (device.ip in runningDeviceIps) {
-            status = "Bitte zuerst den Lichtlauf auf dieser Lampe stoppen"
+        if (device.ip in LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)) {
+            status = "Zustand dieser Lampe noch ungeklärt. Erst Wiederherstellung prüfen."
             return
         }
         devices = devices.filterNot { it.id == device.id }
@@ -646,7 +666,12 @@ class LoftController(context: Context) {
         displayName(device) + ": " + if (current.isOn) "Ein · " + current.brightness + "%" else "Aus"
     }
 
-    fun controlLamp(device: YeelightDevice, command: LampCommand, description: String) =
+    fun controlLamp(device: YeelightDevice, command: LampCommand, description: String) {
+        if (!canIdentifyLamp(device)) {
+            status = "Diese Lampe ist noch in einer Lichtshow/Wiederherstellung. " +
+                "Bitte zuerst gezielt stoppen."
+            return
+        }
         task(description + " …") {
             val current = withContext(Dispatchers.IO) {
                 YeelightLan.manualControl(device, command)
@@ -657,11 +682,13 @@ class LoftController(context: Context) {
             displayName(device) + ": " + description +
                 if (current != null) " · bestätigt" else " · Befehl akzeptiert, Status unbekannt"
         }
+    }
 
     fun identifyLamp(device: YeelightDevice) {
-        if (!canOrganizeLamps) {
+        if (!canIdentifyLamp(device)) {
             status = if (busy) "Bitte den laufenden Vorgang abschließen"
-                else "Identifizieren gesperrt: Lichtshow zuerst stoppen und wiederherstellen"
+                else "Nur diese Lampe ist noch in einer Lichtshow/Wiederherstellung. " +
+                    "Andere Lampen können identifiziert werden."
             return
         }
         task("Identifiziere " + displayName(device) + " …") {
@@ -680,18 +707,25 @@ class LoftController(context: Context) {
             return
         }
         task(if (on) "Schalte Zielbereich ein …" else "Schalte Zielbereich aus …") {
-            if (runningDeviceIps.isNotEmpty()) haltRunning(false)
+            if (recoveryPending && !musicDeviceSession) haltRunning(false)
+            val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+            val permitted = chosen.filterNot { it.ip in pending }
+            val skipped = chosen.size - permitted.size
+            val gate = Semaphore(3)
             val errors = withContext(Dispatchers.IO) {
-                chosen.map { device -> async {
-                    try { YeelightLan.manualControl(device, LampCommands.power(on)); null }
-                    catch (e: Exception) { displayName(device) + ": " + (e.message ?: "Fehler") }
+                permitted.map { device -> async {
+                    gate.withPermit {
+                        try { YeelightLan.manualControl(device, LampCommands.power(on)); null }
+                        catch (e: Exception) { displayName(device) + ": " + (e.message ?: "Fehler") }
+                    }
                 } }.awaitAll().filterNotNull()
             }
-            lampSnapshots = lampSnapshots - chosen.map { it.ip }.toSet()
-            activeScene = null
-            val successful = chosen.size - errors.size
+            lampSnapshots = lampSnapshots - permitted.map { it.ip }.toSet()
+            if (pending.isEmpty()) activeScene = null
+            val successful = permitted.size - errors.size
             successful.toString() + "/" + chosen.size + " Lampen " +
                 (if (on) "eingeschaltet" else "ausgeschaltet") +
+                (if (skipped > 0) " · " + skipped + " wegen offener Wiederherstellung geschützt" else "") +
                 (if (errors.isEmpty()) "" else " · " + errors.first())
         }
     }
@@ -751,10 +785,14 @@ class LoftController(context: Context) {
                 }
             } }.awaitAll()
         }
-        val failed = outcomes.filter { it.second != null }.map { it.first }.toSet()
+        val failures = outcomes.mapNotNull { (ip, problem) ->
+            problem?.let { ip to (it.message ?: it.javaClass.simpleName) }
+        }.toMap()
+        val failed = failures.keys
         val beforeCount = recoveryJournal.size
         setRunningIps(failed)
         setRecoveryJournal(recoveryJournal.filterKeys { it in failed })
+        lastRecoveryFailures = failures
         if (failed.isEmpty()) {
             activeScene = null
             musicDeviceSession = false
@@ -766,14 +804,12 @@ class LoftController(context: Context) {
         val result = "Gestoppt" + (if (beforeCount > 0)
             " und ursprünglicher Zustand wiederhergestellt" else "") +
             ": $success/" + chosen.size + " Lampen"
-        if (failed.isNotEmpty()) {
-            val first = outcomes.first { it.second != null }
-            val reason = first.second?.message ?: "Geräteantwort unbekannt"
-            error(result + " · " + failed.size + " Fehler, zuerst " +
-                first.first.substringAfterLast('.') + ": " + reason +
-                " · erneuter Stopp möglich")
-        }
-        return result
+        // Do not report a total failure for ONE offline bulb or destroy its
+        // persisted snapshot. Other lamps remain available for future shows.
+        return if (failures.isEmpty()) result
+        else result + " · " + failures.size +
+            " ungeklärt, z. B. Lampe " + failures.keys.first().substringAfterLast('.') +
+            " – nur diese Lampen bleiben geschützt"
     }
 
     /**
@@ -803,14 +839,22 @@ class LoftController(context: Context) {
         task("Prüfe " + chosen.size + " Lampen für " + name + " …") {
             // Preserve a previous unconfirmed stop journal. Never discard it
             // on a second scene start or race a stop with new light commands.
+            if (musicDeviceSession || musicStopPending) {
+                return@task "Musiklicht zuerst stoppen und wiederherstellen"
+            }
             if (recoveryPending) haltRunning(false)
             val targets = SceneTargetPolicy.flowTargets(chosen)
+            val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
             val incompatible = targets.unsupported
-            val eligible = targets.supported
-            val uniqueCount = eligible.size + incompatible.size
+            val eligible = targets.supported.filterNot { it.ip in pending }
+            val stillPending = targets.supported.filter { it.ip in pending }
+            val uniqueCount = targets.supported.size + incompatible.size
             val skipped = incompatible.map {
                 SceneLampResult(displayName(it), "Übersprungen",
                     "start_cf wird vom Gerät nicht unterstützt")
+            } + stillPending.map {
+                SceneLampResult(displayName(it), "Geschützt",
+                    "Vorheriger Stopp/Wiederherstellung nicht bestätigt; nur diese Lampe ausgenommen")
             }
             val failedPreflight = mutableListOf<SceneLampResult>()
             val safe = if (restoreAfterStop) {
@@ -852,10 +896,10 @@ class LoftController(context: Context) {
                     " Lampen startbereit. Gerätebericht unter Szenen prüfen."
             }
             // Durable safety state is committed before the first light command.
-            setRecoveryJournal(safe.mapNotNull { (device, snap) ->
+            setRecoveryJournal(recoveryJournal + safe.mapNotNull { (device, snap) ->
                 snap?.let { device.ip to it }
             }.toMap())
-            setRunningIps(runnable.map { it.ip }.toSet())
+            setRunningIps(runningDeviceIps + runnable.map { it.ip }.toSet())
 
             var completed = 0
             val gate = Semaphore(3)
@@ -968,7 +1012,12 @@ class LoftController(context: Context) {
             return
         }
         task("Lese vorherige Lampenzustände für musikreaktives Licht …") {
-            if (runningDeviceIps.isNotEmpty()) haltRunning(false)
+            if (recoveryPending) haltRunning(false)
+            val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+            check(chosen.none { it.ip in pending }) {
+                "Musiklicht: mindestens eine gewählte Lampe hat eine offene Wiederherstellung. " +
+                    "Diese Lampe zuerst ausschließen."
+            }
             val snapshots = withContext(Dispatchers.IO) {
                 chosen.map { device -> async {
                     val snapshot = YeelightLan.readStatus(device)
