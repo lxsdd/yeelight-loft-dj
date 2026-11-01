@@ -20,17 +20,17 @@ import java.util.concurrent.TimeUnit
  * props notifications are skipped using the matching command ID.
  */
 class YeelightTcpSessions(
+    private val trace: (String) -> Unit = { event ->
+        // Android logcat can be captured without rooting the phone.
+        // No user data, RGB values, cloud tokens or credentials are logged.
+        runCatching { android.util.Log.i("LoftDjLan", event) }
+    },
     private val connect: (String, Int) -> Socket = { ip, port ->
         Socket().apply {
             connect(InetSocketAddress(ip, port), 1800)
             soTimeout = 1800
             keepAlive = true
         }
-    },
-    private val trace: (String) -> Unit = { event ->
-        // Android logcat can be captured without rooting the phone.
-        // No user data, RGB values, cloud tokens or credentials are logged.
-        runCatching { android.util.Log.i("LoftDjLan", event) }
     },
 ) {
     private fun traceSafe(message: String) { runCatching { trace(message) } }
