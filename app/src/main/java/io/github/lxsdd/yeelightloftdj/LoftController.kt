@@ -835,41 +835,37 @@ class LoftController(context: Context) {
         prefs.edit().putString("room." + device.id, room).apply()
     }
 
-    fun discover() = task("Suche Yeelights automatisch (WLAN + LAN) …") {
-        val (multicast, direct, directed) = withContext(Dispatchers.IO) {
+    fun discover() = task("Suche Yeelights schonend über WLAN (UDP) …") {
+        // Normal discovery must NEVER open 254 TCP sockets or send get_prop.
+        // The previous "Alle Lampen suchen" silently did exactly that.
+        // Deep TCP diagnostics remain a separately chosen, advanced action.
+        val (multicast, directed) = withContext(Dispatchers.IO) {
             val udp = YeelightLan.discover(app)
-            // Multicast can fail to reach selected Wi-Fi clients even when
-            // the same device responds to a directed Yeelight M-SEARCH.
-            val tcp = try { YeelightLan.deepDiscover() } catch (_: Exception) { emptyList() }
-            val missing = DirectedDiscoveryPlan.candidates(tcp, udp)
+            val targets = DiscoveryTrafficPolicy.directedUdpTargets(
+                devices, udp, devices.filter(YeelightLan::isLanQuarantined)
+                    .map { it.ip }.toSet()
+            )
             val unicast = runCatching {
-                YeelightLan.directedUdpDiscover(app, missing)
+                YeelightLan.directedUdpDiscover(app, targets)
             }.getOrDefault(emptyList())
-            Triple(udp, tcp, unicast)
+            udp to unicast
         }
         directedUdpDiagnostics = ""
         lastMulticastIps = multicast.map { it.ip }.toSet()
-        lastDirectIps = direct.map { it.ip }.toSet()
+        lastDirectIps = emptySet() // no TCP probing occurred in this search
         lastDirectedUdpIps = directed.map { it.ip }.toSet()
-        val both = lastMulticastIps.intersect(lastDirectIps)
-        val directOnly = lastDirectIps - lastMulticastIps
-        searchDiagnostics = "Multicast: " + lastMulticastIps.size +
-            " · TCP: " + lastDirectIps.size +
-            " · Multicast + TCP: " + both.size +
-            " · Nur TCP: " + directOnly.size +
-            " · davon Direkt-UDP mit vollständiger Geräteantwort: " + lastDirectedUdpIps.size +
+        searchDiagnostics = "Schonende UDP-Gerätesuche: " + lastMulticastIps.size +
+            " Multicast-Treffer · " + lastDirectedUdpIps.size +
+            " gezielte Antworten bekannter Lampen" +
+            "\nTCP-LAN-Steuerverbindungen/Get-Prop-Abfragen: 0 (absichtlich)" +
             "\nUDP-Antwortpakete: " + YeelightLan.lastSearchPackets +
             " · davon nicht auswertbar: " + YeelightLan.lastSearchInvalidPackets +
             "\nWLAN-Sendeadresse: " + YeelightLan.lastSearchSourceAddress +
             " · Wi-Fi-Netzbindung: " + YeelightLan.lastSearchBoundToWifiNetwork +
             " · Treffer je Suchrunde: " + YeelightLan.lastSearchRoundUnique.joinToString("/") +
             " · Absender-/Location-Abweichungen: " + YeelightLan.lastSearchSourceMismatches
-        // Directed UDP contributes real model/ID/support, but never inflates
-        // the count of packets that physically arrived from multicast.
-        val merged = YeelightLan.mergeDevices(
-            YeelightLan.mergeDevices(multicast, direct), directed
-        )
-        mergeFound(merged, "Multicast + TCP + gezieltes UDP")
+        val merged = YeelightLan.mergeDevices(multicast, directed)
+        mergeFound(merged, "Multicast + gezieltes UDP (ohne TCP)")
     }
 
     fun missingMulticastCount(): Int =
