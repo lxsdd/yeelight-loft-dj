@@ -958,7 +958,8 @@ private fun TargetPowerControls(controller: LoftController) {
                 }.forEach { device ->
                     PowerTrace(
                         controller.displayName(device),
-                        controller.lastPowerResults.getValue(device.ip)
+                        controller.lastPowerResults.getValue(device.ip),
+                        discoverySource(controller, device)
                     )
                 }
                 Text("Zeiten ab Betätigung der einzelnen Lampe, nicht ab dem " +
@@ -970,7 +971,17 @@ private fun TargetPowerControls(controller: LoftController) {
 }
 
 @Composable
-private fun PowerTrace(name: String, probe: PowerProbe) {
+private fun discoverySource(controller: LoftController, device: YeelightDevice): String =
+    when {
+        device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps ->
+            "UDP + TCP erkannt"
+        device.ip in controller.lastMulticastIps -> "UDP erkannt"
+        device.ip in controller.lastDirectIps -> "nur TCP erkannt"
+        else -> "letzte Erkennung nicht bestätigt"
+    }
+
+@Composable
+private fun PowerTrace(name: String, probe: PowerProbe, discovery: String) {
     val outcome = when (probe.outcome) {
         PowerOutcome.VERIFIED -> "Schaltzustand bestätigt"
         PowerOutcome.ACK_ONLY -> "Befehl angenommen, Zustand unbekannt"
@@ -983,7 +994,7 @@ private fun PowerTrace(name: String, probe: PowerProbe) {
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 3.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(name + " · " + outcome,
+        Text(name + " · " + discovery + " · " + outcome,
             color = if (probe.outcome == PowerOutcome.VERIFIED)
                 Color(0xFF80D9C6) else Color(0xFFFFC1A6),
             fontSize = 12.sp)
@@ -1077,7 +1088,8 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
         controller.lastPowerResults[device.ip]?.let { probe ->
             Text("Letzte Ein/Aus-Messung", color = Color.White,
                 fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-            PowerTrace(controller.displayName(device), probe)
+            PowerTrace(controller.displayName(device), probe,
+                discoverySource(controller, device))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
