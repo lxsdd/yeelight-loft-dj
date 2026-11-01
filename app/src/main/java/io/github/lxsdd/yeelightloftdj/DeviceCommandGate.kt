@@ -11,7 +11,9 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class DeviceCommandGate(
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
-    private val maxCommandsPerMinute: Int = 110,
+    // One persistent Yeelight TCP connection allows 60/min; reserve capacity
+    // for delayed confirmations, firmware notifications and other clients.
+    private val maxCommandsPerMinute: Int = 45,
     private val windowMs: Long = 60_000L,
     private val quotaCooldownMs: Long = 60_000L,
 ) {
