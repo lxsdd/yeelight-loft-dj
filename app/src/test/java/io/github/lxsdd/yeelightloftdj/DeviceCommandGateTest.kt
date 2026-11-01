@@ -29,6 +29,21 @@ class DeviceCommandGateTest {
         assertEquals(1, gate.consumed("Wellness"))
     }
 
+    @Test fun blockedLocalAdmissionNeverExecutesUnderlyingPowerCommand() {
+        val gate = DeviceCommandGate(nowMs = { 10_000L }, minSpacingMs = 0)
+        gate.markQuarantined("Wellness")
+        var socketWrites = 0
+        val error = runCatching {
+            gate.run("Wellness") { socketWrites++ }
+        }.exceptionOrNull()
+        assertTrue(error is DeviceCommandGate.Deferred)
+        assertEquals(0, socketWrites)
+        assertEquals(0, gate.consumed("Wellness"))
+        // No shared global block for a different healthy Color4.
+        gate.run("Couchtisch") { socketWrites++ }
+        assertEquals(1, socketWrites)
+    }
+
     @Test fun realFirmwareQuotaPersistsAfterOneMinuteAndIsPerBulb() {
         var now = 20_000L
         val recorded = mutableListOf<String>()
