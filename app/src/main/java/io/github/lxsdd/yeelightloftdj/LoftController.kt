@@ -1049,14 +1049,13 @@ class LoftController(context: Context) {
                 displayName(device) + ": " + lastPowerSummary +
                     " · TCP " + (result.connectMs?.let { "$it ms" } ?: "nicht verbunden")
             } else {
-                val current = withContext(Dispatchers.IO) {
-                    YeelightLan.manualControl(device, command)
-                    runCatching { YeelightLan.readStatus(device) }.getOrNull()
-                }
-                if (current != null) lampSnapshots = lampSnapshots + (device.ip to current)
-                else lampSnapshots = lampSnapshots - device.ip
+                // Each slider/color selection already requires one acknowledged
+                // write. An automatic second get_prop doubles rate use and can
+                // exhaust the firmware quota after just a few adjustments.
+                withContext(Dispatchers.IO) { YeelightLan.manualControl(device, command) }
+                lampSnapshots = lampSnapshots - device.ip
                 displayName(device) + ": " + description +
-                    if (current != null) " · bestätigt" else " · Befehl akzeptiert, Status unbekannt"
+                    " · Befehl angenommen. Für echten Status „Aktualisieren“ wählen."
             }
         }
     }
