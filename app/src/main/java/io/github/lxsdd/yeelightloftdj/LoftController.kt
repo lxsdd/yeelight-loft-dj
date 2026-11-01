@@ -839,11 +839,13 @@ class LoftController(context: Context) {
         // Normal discovery must NEVER open 254 TCP sockets or send get_prop.
         // The previous "Alle Lampen suchen" silently did exactly that.
         // Deep TCP diagnostics remain a separately chosen, advanced action.
+        val previous = devices.toList()
+        val blockedIps = previous.filter(YeelightLan::isLanQuarantined)
+            .map { it.ip }.toSet()
         val (multicast, directed) = withContext(Dispatchers.IO) {
             val udp = YeelightLan.discover(app)
             val targets = DiscoveryTrafficPolicy.directedUdpTargets(
-                devices, udp, devices.filter(YeelightLan::isLanQuarantined)
-                    .map { it.ip }.toSet()
+                previous, udp, blockedIps
             )
             val unicast = runCatching {
                 YeelightLan.directedUdpDiscover(app, targets)
@@ -1110,9 +1112,12 @@ class LoftController(context: Context) {
             val gate = Semaphore(3)
             val outcomes = withContext(Dispatchers.IO) {
                 unique.map { device -> async {
-                    val result = if (device.ip in pending)
+                    val result = if (device.ip in pending ||
+                        YeelightLan.isLanQuarantined(device))
                         PowerProbe(PowerOutcome.PROTECTED,
-                            message = "Offene Wiederherstellung – keine Änderung")
+                            message = if (YeelightLan.isLanQuarantined(device))
+                                "Firmware-LAN-Sperre – keine Änderung"
+                            else "Offene Wiederherstellung – keine Änderung")
                     else gate.withPermit {
                         runCatching {
                             YeelightLan.setPowerVerified(device, on)
@@ -1283,13 +1288,18 @@ class LoftController(context: Context) {
             if (musicDeviceSession || musicStopPending) {
                 return@task "Musiklicht zuerst stoppen und wiederherstellen"
             }
-            val targets = SceneTargetPolicy.flowTargets(chosen)
+            val firmwareBlocked = chosen.filter(YeelightLan::isLanQuarantined)
+                .map { it.ip }.toSet()
+            val targets = SceneTargetPolicy.flowTargets(chosen, firmwareBlocked)
             val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
             val incompatible = targets.unsupported
             val eligible = targets.supported.filterNot { it.ip in pending }
             val stillPending = targets.supported.filter { it.ip in pending }
-            val uniqueCount = targets.supported.size + incompatible.size
-            val skipped = incompatible.map {
+            val uniqueCount = targets.supported.size + incompatible.size + targets.blocked.size
+            val skipped = targets.blocked.map {
+                SceneLampResult(displayName(it), "Firmware-LAN-Sperre",
+                    "Keine Steuerbefehle; einmalige explizite Recovery-Prüfung nötig")
+            } + incompatible.map {
                 SceneLampResult(displayName(it), "Übersprungen",
                     "start_cf wird vom Gerät nicht unterstützt")
             } + stillPending.map {
@@ -1416,13 +1426,19 @@ class LoftController(context: Context) {
         }
         val chosen = chooseDevices(choice).distinctBy { it.ip }
         val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        val firmwareBlocked = chosen.filter(YeelightLan::isLanQuarantined)
+            .map { it.ip }.toSet()
         val eligible = chosen.filter {
-            it.ip !in pending && KnightRiderPlan.scannerCompatible(it)
+            it.ip !in pending && it.ip !in firmwareBlocked &&
+                KnightRiderPlan.scannerCompatible(it)
         }
         lastSceneReport = chosen.filterNot { it in eligible }.map {
             SceneLampResult(displayName(it), "Übersprungen",
-                if (it.ip in pending) "Offene Wiederherstellung"
-                else "Erforderlich: bestätigtes set_scene, set_power, get_prop, set_rgb")
+                when {
+                    it.ip in firmwareBlocked -> "Firmware-LAN-Sperre – keine Befehle"
+                    it.ip in pending -> "Offene Wiederherstellung"
+                    else -> "Erforderlich: bestätigtes set_scene, set_power, get_prop, set_rgb"
+                })
         }
         if (eligible.size !in 2..24) {
             status = "Scanner braucht 2–24 geeignete Lampen; nach einer " +
@@ -1600,9 +1616,11 @@ class LoftController(context: Context) {
      */
     fun armMusicLights() {
         if (!(microphoneRunning || InternalAudioBridge.running) || musicLightArmed) return
-        val chosen = selected()
+        val chosen = selected().distinctBy { it.ip }
+            .filterNot(YeelightLan::isLanQuarantined)
         if (chosen.isEmpty()) {
-            status = "Erst Lampen suchen und den Musik-Zielbereich wählen"
+            status = "Keine verfügbaren Lampen für Musiklicht: Zielbereich leer " +
+                "oder Firmware-LAN-Sperre. Betroffene Color4 nicht automatisch prüfen."
             return
         }
         task("Lese vorherige Lampenzustände für musikreaktives Licht …") {
