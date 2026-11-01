@@ -432,6 +432,14 @@ private fun Header() {
 
 @Composable
 private fun RecoveryBanner(controller: LoftController) {
+    var releaseIp by rememberSaveable { mutableStateOf<String?>(null) }
+    var acceptsRunningFlow by rememberSaveable { mutableStateOf(false) }
+    var acceptsLoss by rememberSaveable { mutableStateOf(false) }
+    val closeDialog = {
+        releaseIp = null
+        acceptsRunningFlow = false
+        acceptsLoss = false
+    }
     Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF2C293B)) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -460,7 +468,80 @@ private fun RecoveryBanner(controller: LoftController) {
             Text("Tipp: Andere Lampen dürfen weiter benutzt und identifiziert werden. " +
                 "Die nicht bestätigte Lampe bleibt geschützt und kann später erneut geprüft werden.",
                 color = muted, fontSize = 11.sp)
+            if (controller.pendingRecoveryCount > 0) {
+                HorizontalDivider(color = Color(0xFF49455A))
+                Text("Erweiterte Option bei dauerhaft abgelehntem stop_cf:",
+                    color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Text("Empfohlen ist zuerst der normale Wiederherstellungsversuch. " +
+                    "Alternativ kannst du nur den gespeicherten App-Eintrag verwerfen – " +
+                    "ohne Stromneustart. Achtung: Ein Lichtlauf kann dann noch aktiv sein.",
+                    color = muted, fontSize = 11.sp)
+                controller.pendingRecoveryIps().forEach { ip ->
+                    val device = controller.devices.firstOrNull { it.ip == ip }
+                    val bulbName = device?.let(controller::displayName)
+                        ?: "Unbekannte gespeicherte Lampe"
+                    OutlinedButton(
+                        onClick = {
+                            releaseIp = ip
+                            acceptsRunningFlow = false
+                            acceptsLoss = false
+                        },
+                        enabled = controller.canRetryRecovery,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(bulbName + " (." + ip.substringAfterLast('.') +
+                            ") · alten App-Eintrag verwerfen")
+                    }
+                }
+            }
         }
+    }
+    releaseIp?.let { ip ->
+        val targetName = controller.devices.firstOrNull { it.ip == ip }
+            ?.let(controller::displayName) ?: "Gespeicherte Lampe"
+        AlertDialog(
+            onDismissRequest = closeDialog,
+            title = { Text("Alte Wiederherstellung wirklich verwerfen?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(targetName + " · " + ip +
+                        ". Dies entfernt ausschließlich den lokalen " +
+                        "Lichtshow-/Wiederherstellungseintrag dieser Lampe. " +
+                        "Es sendet KEINEN Stoppbefehl. Ein eventuell laufender " +
+                        "Lichtlauf wird dadurch nicht beendet. Der frühere Lichtzustand " +
+                        "kann anschließend nicht mehr automatisch wiederhergestellt werden.")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = acceptsRunningFlow,
+                            onCheckedChange = { acceptsRunningFlow = it })
+                        Text("Ich weiß, dass diese Lampe eventuell noch einen " +
+                            "Lichtlauf ausführt und das Verwerfen ihn NICHT stoppt.",
+                            fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = acceptsLoss,
+                            onCheckedChange = { acceptsLoss = it })
+                        Text("Ich akzeptiere, dass die frühere Farbe/Helligkeit " +
+                            "nicht automatisch wiederhergestellt wird.",
+                            fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        controller.discardRecoveryForLamp(
+                            ip, acceptsRunningFlow, acceptsLoss
+                        )
+                        closeDialog()
+                    },
+                    enabled = acceptsRunningFlow && acceptsLoss &&
+                        controller.canRetryRecovery
+                ) { Text("App-Eintrag für diese Lampe verwerfen") }
+            },
+            dismissButton = {
+                TextButton(onClick = closeDialog) { Text("Abbrechen") }
+            },
+        )
     }
 }
 

@@ -438,6 +438,51 @@ class LoftController(context: Context) {
                     else " · " + reason.take(120)
             }
 
+    /** Explicitly discard only one stale app-side recovery marker.
+     * No power-cycle claim, no LAN command, NO hardware-state verification.
+     * Use only if the user accepts a possibly still-running bulb flow and
+     * agrees that its original static state won't be restored.
+     * Both local journal keys commit atomically before state changes.
+     */
+    fun discardRecoveryForLamp(
+        ip: String,
+        acceptsPossibleRunningFlow: Boolean,
+        acceptsLostRestore: Boolean,
+    ): Boolean {
+        val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        if (!RecoveryAbandonPolicy.canDiscard(
+                ip, pending, acceptsPossibleRunningFlow, acceptsLostRestore,
+                busy || musicDeviceSession || musicStopPending || musicSending
+            )) {
+            status = "Freigabe abgelehnt: Beide Folgen des Verwerfens müssen " +
+                "ausdrücklich bestätigt werden."
+            return false
+        }
+        val nextRunning = runningDeviceIps - ip
+        val nextJournal = recoveryJournal - ip
+        val saved = prefs.edit()
+            .putString("running-flow-ips", JSONArray(nextRunning.toList()).toString())
+            .putString("pending-scene-recovery", SceneRecovery.encode(nextJournal))
+            .commit()
+        if (!saved) {
+            status = "Wiederherstellungsfreigabe konnte nicht gespeichert werden"
+            return false
+        }
+        runningDeviceIps = nextRunning
+        recoveryJournal = nextJournal
+        lastRecoveryFailures = lastRecoveryFailures - ip
+        lastQuotaRejectionAt.remove(ip)
+        if (nextRunning.isEmpty() && nextJournal.isEmpty()) activeScene = null
+        status = "Lokale Wiederherstellung für Lampe ." +
+            ip.substringAfterLast('.') + " bewusst verworfen. " +
+            "Ein eventuell noch laufender Farbfluss wurde NICHT gestoppt; " +
+            "frühere Farbe/Helligkeit wurde NICHT wiederhergestellt."
+        return true
+    }
+
+    fun pendingRecoveryIps(): List<String> =
+        LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys).sorted()
+
     /** Position is zero-based, all changes are committed before updating the UI. */
     fun placeLampAt(device: YeelightDevice, position: Int): Boolean {
         if (!canOrganizeLamps) {
@@ -722,8 +767,11 @@ class LoftController(context: Context) {
             val directOnly = lastDirectIps - lastMulticastIps
             searchDiagnostics = "Erweiterte UDP-Diagnose: " + lastMulticastIps.size +
                 " eindeutige Multicast-Antworter in 12 Suchrunden" +
-                "\nTCP bestätigt: " + lastDirectIps.size +
-                " · Beide: " + both + " · Nur TCP: " + directOnly.size +
+                "\nTCP wird bei der 12-Runden-Probe NICHT neu getestet." +
+                " Letzte kombinierte Suche: " + lastDirectIps.size +
+                " TCP-Treffer, " + both + " davon auch per Multicast." +
+                " Nur TCP: " + directOnly.size +
+                (if (lastDirectIps.isEmpty()) "\nFür einen aktuellen TCP-Vergleich zuerst „Alle Lampen suchen“ ausführen." else "") +
                 "\nPro Runde UDP-Antworter: " +
                 YeelightLan.lastSearchRoundUnique.joinToString("/") +
                 "\nAntwortpakete insgesamt: " + YeelightLan.lastSearchPackets +
