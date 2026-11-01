@@ -62,15 +62,17 @@ object YeelightLan {
      * The firmware-quota lockout must survive an Android activity/process
      * restart. The stored local IPs remain in app-private preferences.
      */
-    @Synchronized
     fun installQuotaState(context: Context) {
         val prefs = context.applicationContext.getSharedPreferences(
             "lan-firmware-safety", Context.MODE_PRIVATE
         )
+        val blockedIps = prefs.getStringSet(QUARANTINED_IPS_KEY, emptySet())
+            .orEmpty().toList()
+        // Do not hold the YeelightLan object monitor while acquiring per-IP
+        // gate locks: quarantine callbacks take these locks in reverse order
+        // (per-IP gate -> SharedPreferences writer).
         quotaStore = prefs
-        prefs.getStringSet(QUARANTINED_IPS_KEY, emptySet())?.toList()?.forEach {
-            commandGate.markQuarantined(it)
-        }
+        blockedIps.forEach(commandGate::markQuarantined)
     }
 
     @Synchronized
