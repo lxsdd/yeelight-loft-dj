@@ -438,6 +438,51 @@ class LoftController(context: Context) {
                     else " · " + reason.take(120)
             }
 
+    /** A journal entry has no expiry: only explicit, per-device confirmation
+     * following a real physical power cycle permits abandoning recovery.
+     *
+     * This does NOT claim original lamp state was restored, does not send LAN
+     * commands, and must not release any unrelated bulb. Both preference keys
+     * are persisted atomically before Compose state changes.
+     */
+    fun releaseAfterConfirmedPowerCycle(
+        ip: String,
+        powerCycled: Boolean,
+        acceptsLostRestore: Boolean,
+    ): Boolean {
+        val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        if (!PowerCycleRecoveryPolicy.canRelease(
+                ip, pending, powerCycled, acceptsLostRestore,
+                busy || musicDeviceSession || musicStopPending || musicSending
+            )) {
+            status = "Freigabe abgelehnt: Nur nach bestätigtem Stromneustart " +
+                "und ausdrücklichem Verzicht auf die alte Lichtwiederherstellung."
+            return false
+        }
+        val nextRunning = runningDeviceIps - ip
+        val nextJournal = recoveryJournal - ip
+        val saved = prefs.edit()
+            .putString("running-flow-ips", JSONArray(nextRunning.toList()).toString())
+            .putString("pending-scene-recovery", SceneRecovery.encode(nextJournal))
+            .commit()
+        if (!saved) {
+            status = "Wiederherstellungsfreigabe konnte nicht gespeichert werden"
+            return false
+        }
+        runningDeviceIps = nextRunning
+        recoveryJournal = nextJournal
+        lastRecoveryFailures = lastRecoveryFailures - ip
+        lastQuotaRejectionAt.remove(ip)
+        if (nextRunning.isEmpty() && nextJournal.isEmpty()) activeScene = null
+        status = "Nur Lampe ." + ip.substringAfterLast('.') +
+            " nach bestätigtem Stromneustart freigegeben. " +
+            "Ursprüngliche Lichtfarbe/Helligkeit wurde NICHT wiederhergestellt."
+        return true
+    }
+
+    fun pendingRecoveryIps(): List<String> =
+        LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys).sorted()
+
     /** Position is zero-based, all changes are committed before updating the UI. */
     fun placeLampAt(device: YeelightDevice, position: Int): Boolean {
         if (!canOrganizeLamps) {
