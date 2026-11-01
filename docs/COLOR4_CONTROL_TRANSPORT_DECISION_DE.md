@@ -29,7 +29,7 @@ Offizielle Links:
 2. Intensiver TCP-Suchlauf: nur separate, ausdrücklich angeforderte Diagnose; nicht als normale Geräteaktualisierung.
 3. Manuelle Color4-Steuerung: derzeit nur über offiziellen Classic-LAN-Kanal; jeder tatsächlich gesendete Befehl wird getrennt seriell getaktet. Ein `client quota exceeded` der **Firmware** quarantänisiert ausschließlich diese Geräte-IP.
 4. Laufende Lichtshows und Musik: Firmware-gesperrte Geräte vor jeder Statusabfrage, Sessionmarkierung oder Zustandsänderung aus der Zielmenge entfernen. Nicht automatisch wiederholen und nicht im Hintergrund mit `get_prop` „gesund prüfen“.
-5. Music Mode: nur bei echtem `support` von `set_music` und `set_rgb`. Nie als Ersatz einen nicht verifizierten Chroma-/Cloud-Kanal ausprobieren.
+5. Music Mode: Bei **color4** ist ein bestätigtes `support` für `set_music` **und** `set_rgb` zwingende Aufnahmebedingung für live-musikreaktive RGB-Impulse. Fehlt eines, wird die Color4 **übersprungen** statt über das klassische LAN mit dauerhaften RGB-Befehlen belastet. Nie als Ersatz einen nicht verifizierten Chroma-/Cloud-Kanal ausprobieren.
 6. Cloud: explizit **nicht verfügbar**, solange kein von Yeelight legitimierter Integrationszugang mit überprüften Endpunkten und Nutzungsbedingungen vorliegt. Kein Nachbau aus privaten App-Tokens, keine Umgehung von Herstellerauthentisierung. Wenn autorisiert, Cloud-Transport getrennt testen und nur für dafür geeignete Alltagssteuerung priorisieren.
 
 ## 4. Qualifikation vor neuer APK
