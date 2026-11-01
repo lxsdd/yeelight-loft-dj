@@ -64,6 +64,7 @@ class LoftController(context: Context) {
         private set
     var recoveryReadReports by mutableStateOf<Map<String, String>>(emptyMap())
         private set
+    private val lastRecoveryReadAt = mutableMapOf<String, Long>()
     var status by mutableStateOf("Bereit · lokales WLAN")
         private set
     var microphoneRunning by mutableStateOf(false)
@@ -467,20 +468,30 @@ class LoftController(context: Context) {
             status = "Prüfung nicht möglich: Lampe nicht offen oder ein Lichtvorgang aktiv"
             return
         }
+        val now = SystemClock.elapsedRealtime()
+        val lastRead = lastRecoveryReadAt[ip]
+        if (lastRead != null && now - lastRead in 0 until 10_000L) {
+            status = "Zustandsabfrage für diese Lampe erst nach 10 Sekunden erneut möglich"
+            return
+        }
+        lastRecoveryReadAt[ip] = now
         task("Prüfe die Lampe ." + ip.substringAfterLast('.') + " lesend …") {
             val device = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
             val scannerMode = ip in scannerOffIps
             val snapshot = recoveryJournal[ip]
-            val read = withContext(Dispatchers.IO) {
-                val flow = if (scannerMode) null
-                    else runCatching { YeelightLan.readFlowing(device) }.getOrNull()
-                val current = if (scannerMode || (flow == false && snapshot != null))
-                    runCatching { YeelightLan.readStatus(device) }.getOrNull()
-                else null
-                flow to current
+            val result = withContext(Dispatchers.IO) {
+                runCatching { YeelightLan.readRecoveryObservation(device) }
             }
+            if (result.isFailure) {
+                val reason = result.exceptionOrNull()?.message
+                    ?: "TCP-Zustandsprüfung ohne Antwort"
+                recoveryReadReports = recoveryReadReports + (ip to
+                    "Nicht bestätigt: $reason")
+                return@task "Zustandsprüfung nicht möglich; Lampe bleibt geschützt: $reason"
+            }
+            val read = result.getOrThrow()
             val decision = RecoveryReadPolicy.decide(
-                read.first, read.second, snapshot, scannerMode
+                read.flowing, read.snapshot, snapshot, scannerMode
             )
             val label = displayName(device)
             if (RecoveryReadPolicy.canClear(decision)) {
