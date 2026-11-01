@@ -37,6 +37,14 @@ class MusicTransportPolicyTest {
         assertEquals(listOf(couch), targets)
     }
 
+    @Test fun unknownModelWithNoSupportCannotBeAssumedNonColor4() {
+        for (model in listOf("", "unknown", "Yeelight", "Yeelight (LAN)")) {
+            assertFalse(MusicTransportPolicy.canArmForMusic(lamp("a", model)))
+            assertTrue(MusicTransportPolicy.canArmForMusic(lamp(
+                "a", model, setOf("set_music", "set_rgb"))))
+        }
+    }
+
     @Test fun unchangedLegacyBehaviorForOtherModelsWithConservativeRateLimit() {
         val desk = YeelightDevice("desk", "192.168.0.139", model="lamp")
         assertTrue(MusicTransportPolicy.canArmForMusic(desk))
