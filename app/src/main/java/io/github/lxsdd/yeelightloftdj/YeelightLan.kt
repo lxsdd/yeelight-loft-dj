@@ -43,6 +43,7 @@ data class YeelightDevice(
 
 object YeelightLan {
     private val commandGate = DeviceCommandGate()
+    private val tcp = YeelightTcpSessions()
     private const val HOST = "239.255.255.250"
     private const val PORT = 1982
     private val seq = AtomicInteger(1)
@@ -385,126 +386,68 @@ object YeelightLan {
                 message = "Gerät meldet set_power nicht als unterstützt")
         }
         val started = System.nanoTime()
-        fun ms(): Long = (System.nanoTime() - started) / 1_000_000L
-        var connectMs: Long? = null
+        fun ms(): Long = (System.nanoTime()-started)/1_000_000L
         var ackMs: Long? = null
         try {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(device.ip, device.port), 1800)
-                connectMs = ms()
-                socket.soTimeout = 1800
-                val input = socket.getInputStream().bufferedReader()
-                val output = socket.getOutputStream()
-
-                fun replyTo(id: Int, method: String): JSONObject {
-                    repeat(12) {
-                        val line = input.readLine() ?: error("Keine Antwort auf $method")
-                        val candidate = JSONObject(line)
-                        if (matchesReplyId(candidate, id)) return candidate
-                    }
-                    error("Keine passende Antwort auf $method")
-                }
-
-                fun sendRequest(id: Int, method: String, params: List<Any>) {
-                    val payload = JSONObject().put("id", id).put("method", method)
-                        .put("params", JSONArray(params)).toString() + "\r\n"
-                    output.write(payload.toByteArray(Charsets.UTF_8))
-                    output.flush()
-                }
-
-                val powerId = seq.getAndIncrement()
-                // "sudden" makes power toggling responsive; duration is
-                // ignored by the device for this effect, per Yeelight spec.
-                sendRequest(powerId, "set_power",
-                    listOf(if (on) "on" else "off", "sudden", 0))
-                val answer = replyTo(powerId, "set_power")
-                if (answer.has("error")) {
-                    return PowerProbe(PowerOutcome.REJECTED, connectMs = connectMs,
-                        totalMs = ms(),
-                        message = answer.optJSONObject("error")
-                            ?.optString("message", "Befehl zurückgewiesen")
-                            ?: "Befehl zurückgewiesen")
-                }
-                if (answer.optJSONArray("result")?.optString(0) != "ok") {
-                    return PowerProbe(PowerOutcome.NO_ACK, connectMs = connectMs,
-                        totalMs = ms(), message = "Keine gültige OK-Bestätigung")
-                }
-                ackMs = ms()
-
-                // Some TCP-only firmware does not expose get_prop; the ACK
-                // remains true but does not prove the physical light changed.
-                if (device.methods.isNotEmpty() && "get_prop" !in device.methods) {
-                    return PowerProbe(PowerOutcome.ACK_ONLY, connectMs, ackMs,
-                        totalMs = ms(), message = "Statusabfrage nicht gemeldet")
-                }
-                // A tiny settle delay avoids racing asynchronous power
-                // changes while keeping the total additional traffic at
-                // ONE read on the SAME connection.
-                Thread.sleep(75)
-                val status = runCatching {
-                    val readId = seq.getAndIncrement()
-                    sendRequest(readId, "get_prop", listOf("power"))
-                    val reply = replyTo(readId, "get_prop")
-                    check(!reply.has("error")) { "Statusabfrage abgelehnt" }
-                    when (reply.optJSONArray("result")?.optString(0)) {
-                        "on" -> true
-                        "off" -> false
-                        else -> null
-                    }
-                }
-                val observed = status.getOrNull()
-                val outcome = PowerVerificationPolicy.outcome(true, on, observed)
-                return PowerProbe(outcome, connectMs, ackMs,
-                    if (status.isSuccess) ms() else null,
-                    totalMs = ms(),
-                    message = status.exceptionOrNull()?.message.orEmpty())
+            val powerId=seq.getAndIncrement()
+            val result=tcp.request(device.ip,device.port,powerId,"set_power",
+                listOf(if(on) "on" else "off","sudden",0))
+            if (result.has("error")) {
+                return PowerProbe(PowerOutcome.REJECTED,totalMs=ms(),
+                    message=result.optJSONObject("error")?.optString("message","Gerätefehler")
+                        ?: "Befehl abgelehnt")
             }
-        } catch (failure: Exception) {
-            val outcome = when {
-                ackMs != null -> PowerOutcome.ACK_ONLY
-                connectMs == null -> PowerOutcome.UNREACHABLE
-                else -> PowerOutcome.NO_ACK
+            if (result.optJSONArray("result")?.optString(0)!="ok") {
+                return PowerProbe(PowerOutcome.NO_ACK,totalMs=ms(),
+                    message="Keine gültige OK-Bestätigung")
             }
-            return PowerProbe(outcome, connectMs, ackMs,
-                totalMs = ms(),
-                message = failure.message ?: failure.javaClass.simpleName)
+            ackMs=ms()
+            if (device.methods.isNotEmpty() && "get_prop" !in device.methods) {
+                return PowerProbe(PowerOutcome.ACK_ONLY,ackMs=ackMs,totalMs=ms(),
+                    message="get_prop nicht gemeldet")
+            }
+            Thread.sleep(75)
+            val observed=runCatching {
+                val response=tcp.request(device.ip,device.port,seq.getAndIncrement(),
+                    "get_prop", listOf("power"))
+                check(!response.has("error")) {
+                    "Statusabfrage abgelehnt: " +
+                        response.optJSONObject("error")?.optString("message","Gerätefehler")
+                }
+                when(response.optJSONArray("result")?.optString(0)) {
+                    "on" -> true
+                    "off" -> false
+                    else -> null
+                }
+            }
+            return PowerProbe(
+                PowerVerificationPolicy.outcome(true,on,observed.getOrNull()),
+                ackMs=ackMs,
+                statusMs=if(observed.isSuccess)ms() else null,
+                totalMs=ms(),
+                message=observed.exceptionOrNull()?.message.orEmpty())
+        } catch (e:Exception) {
+            return PowerProbe(if(ackMs!=null)PowerOutcome.ACK_ONLY
+                else PowerOutcome.NO_ACK,
+                ackMs=ackMs,totalMs=ms(),
+                message=e.message?:e.javaClass.simpleName)
         }
     }
 
-    /** Each command is CRLF-delimited and must return the matching explicit OK. */
+    /** Each command reuses one per-lamp TCP channel with matching explicit OK. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
         commandGate.run(device.ip) { directSend(device, method, params) }
     }
 
     private fun directSend(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
-        require(method in setOf("set_power", "start_cf", "stop_cf", "set_scene",
-            "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
-        val id = seq.getAndIncrement()
-        val payload = JSONObject().put("id", id).put("method", method)
-            .put("params", JSONArray(params)).toString() + "\r\n"
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
-            socket.soTimeout = 1800
-            socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
-            socket.getOutputStream().flush()
-            val reader = socket.getInputStream().bufferedReader()
-            var answer: JSONObject? = null
-            repeat(12) {
-                if (answer == null) {
-                    val line = reader.readLine() ?: error("Keine Antwort auf $method")
-                    val candidate = JSONObject(line)
-                    if (matchesReplyId(candidate, id)) answer = candidate
-                }
-            }
-            val reply = answer ?: error("Keine passende Geräteantwort auf $method")
-            if (reply.has("error")) {
-                throw RejectedCommand("$method abgelehnt: " +
-                    reply.getJSONObject("error").optString("message", "Yeelight-Fehler"))
-            }
-            check(reply.optJSONArray("result")?.optString(0) == "ok") {
-                "Keine OK-Bestätigung für $method"
-            }
+        require(method in setOf("set_power","start_cf","stop_cf","set_scene",
+            "set_bright","set_rgb","set_ct_abx","set_hsv"))
+        val result=tcp.request(device.ip,device.port,seq.getAndIncrement(),method,params)
+        if(result.has("error"))throw RejectedCommand("$method abgelehnt: " +
+            result.getJSONObject("error").optString("message","Yeelight-Fehler"))
+        check(result.optJSONArray("result")?.optString(0)=="ok") {
+            "Keine OK-Bestätigung für $method"
         }
     }
 
@@ -523,30 +466,11 @@ object YeelightLan {
 
     private fun directReadFlowing(device: YeelightDevice): Boolean? {
         require(isLocalIp(device.ip))
-        val requestId = seq.getAndIncrement()
-        val payload = JSONObject().put("id", requestId).put("method", "get_prop")
-            .put("params", JSONArray(listOf("flowing"))).toString() + "\r\n"
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
-            socket.soTimeout = 1800
-            socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
-            socket.getOutputStream().flush()
-            val reader = socket.getInputStream().bufferedReader()
-            var answer: JSONObject? = null
-            repeat(12) {
-                if (answer == null) {
-                    val candidate = JSONObject(reader.readLine()
-                        ?: error("Keine Antwort auf flowing-Abfrage"))
-                    if (matchesReplyId(candidate, requestId)) answer = candidate
-                }
-            }
-            val response = answer ?: error("Keine passende flowing-Antwort")
-            if (response.has("error")) {
-                error("flowing-Abfrage: " +
-                    response.getJSONObject("error").optString("message", "Gerätefehler"))
-            }
-            return flowStateFromValue(response.optJSONArray("result")?.optString(0))
-        }
+        val response=tcp.request(device.ip,device.port,seq.getAndIncrement(),
+            "get_prop",listOf("flowing"))
+        if(response.has("error"))error("flowing-Abfrage abgelehnt: " +
+            response.getJSONObject("error").optString("message","Gerätefehler"))
+        return flowStateFromValue(response.optJSONArray("result")?.optString(0))
     }
 
     /**
@@ -580,69 +504,30 @@ object YeelightLan {
 
     private fun directReadRecoveryObservation(device: YeelightDevice): RecoveryObservation {
         require(isLocalIp(device.ip))
-        val id = seq.getAndIncrement()
-        val properties = listOf("flowing") + LampSnapshot.properties
-        val payload = JSONObject().put("id", id).put("method", "get_prop")
-            .put("params", JSONArray(properties)).toString() + "\r\n"
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
-            socket.soTimeout = 1800
-            val output = socket.getOutputStream()
-            output.write(payload.toByteArray(Charsets.UTF_8))
-            output.flush()
-            val reader = socket.getInputStream().bufferedReader()
-            repeat(12) {
-                val line = reader.readLine() ?: error("Keine Antwort auf Zustandsprüfung")
-                val candidate = JSONObject(line)
-                if (matchesReplyId(candidate, id)) {
-                    if (candidate.has("error")) {
-                        error("Zustandsprüfung abgelehnt: " +
-                            candidate.getJSONObject("error")
-                                .optString("message", "Yeelight-Fehler"))
-                    }
-                    val array = candidate.optJSONArray("result")
-                        ?: error("Statuswerte fehlen")
-                    return parseRecoveryProperties(
-                        (0 until array.length()).map { array.optString(it) }
-                    )
-                }
-            }
-            error("Keine passende get_prop-Antwort")
-        }
+        val reply=tcp.request(device.ip,device.port,seq.getAndIncrement(),"get_prop",
+            listOf("flowing")+LampSnapshot.properties)
+        if(reply.has("error"))error("Zustandsprüfung abgelehnt: " +
+            reply.getJSONObject("error").optString("message","Yeelight-Fehler"))
+        val values=reply.optJSONArray("result")?:error("Statuswerte fehlen")
+        return parseRecoveryProperties((0 until values.length()).map { values.optString(it) })
     }
 
     internal fun preferAtomicFlowStart(methods: Set<String>): Boolean =
         methods.isEmpty() || "set_scene" in methods
 
-    /** One status read over a fresh TCP connection; no fabricated device states. */
+    /** One status read over the shared TCP channel; no fabricated states. */
     fun readStatus(device: YeelightDevice): LampSnapshot =
         commandGate.run(device.ip) { directReadStatus(device) }
 
     private fun directReadStatus(device: YeelightDevice): LampSnapshot {
         require(isLocalIp(device.ip))
-        val requestId = seq.getAndIncrement()
-        val params = JSONArray(LampSnapshot.properties)
-        val payload = JSONObject().put("id", requestId).put("method", "get_prop")
-            .put("params", params).toString() + "\r\n"
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
-            socket.soTimeout = 1800
-            socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
-            socket.getOutputStream().flush()
-            val reader = socket.getInputStream().bufferedReader()
-            var answer: JSONObject? = null
-            repeat(12) {
-                if (answer == null) {
-                    val candidate = JSONObject(reader.readLine() ?: error("Keine Statusantwort"))
-                    if (matchesReplyId(candidate, requestId)) answer = candidate
-                }
-            }
-            val response = answer ?: error("Keine passende Statusantwort")
-            if (response.has("error")) error(response.getJSONObject("error").optString("message", "Statusfehler"))
-            val values = response.optJSONArray("result") ?: error("Statusdaten fehlen")
-            return LampSnapshot.fromValues((0 until values.length()).map { values.optString(it) })
-                ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
-        }
+        val reply=tcp.request(device.ip,device.port,seq.getAndIncrement(),"get_prop",
+            LampSnapshot.properties)
+        if(reply.has("error"))error("Statusabfrage abgelehnt: " +
+            reply.getJSONObject("error").optString("message","Gerätefehler"))
+        val values=reply.optJSONArray("result")?:error("Statusdaten fehlen")
+        return LampSnapshot.fromValues((0 until values.length()).map { values.optString(it) })
+            ?: error("Unvollständiger Gerätestatus; kein Schaltzustand angenommen")
     }
 
     /** Only explicitly requested commands can reach the local lamp. */
