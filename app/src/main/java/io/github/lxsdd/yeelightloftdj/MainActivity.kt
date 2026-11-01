@@ -160,6 +160,7 @@ private fun LoftApp(controller: LoftController) {
                                 "scanner" -> "Knight-Rider-Scanner"
                                 "transfer" -> "Szenenbibliothek"
                                 "target" -> "Lampen auswählen"
+                                "groups" -> "Gruppen verwalten"
                                 "rooms" -> "Räume verwalten"
                                 "network" -> "Geräte & Netzwerk prüfen"
                                 else -> "Lampendetails"
@@ -189,7 +190,16 @@ private fun LoftApp(controller: LoftController) {
                     }
                     "target" -> item(key = "target-manager") {
                         routeState.SaveableStateProvider("target-manager") {
-                            TargetSelector(controller)
+                            TargetSelector(controller,
+                                onManageGroups = {
+                                    parentRoute = detailRoute
+                                    detailRoute = "groups"
+                                })
+                        }
+                    }
+                    "groups" -> item(key = "group-manager") {
+                        routeState.SaveableStateProvider("group-manager") {
+                            TargetSelector(controller, showGroupEditor = true)
                         }
                     }
                     "rooms" -> item(key = "room-manager") {
@@ -650,37 +660,35 @@ private fun SceneCard(scene: LoftScene, enabled: Boolean, active: Boolean, onPla
 }
 
 @Composable
-private fun TargetSelector(controller: LoftController) {
-    var showSingles by remember { mutableStateOf(false) }
+private fun TargetSelector(
+    controller: LoftController,
+    onManageGroups: (() -> Unit)? = null,
+    showGroupEditor: Boolean = false,
+) {
+    var targetMenu by remember { mutableStateOf(false) }
     var newGroupName by rememberSaveable { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Ziel · " + controller.targetLabel(controller.target) +
-            " (" + controller.selectedCount() + " Lampen)", color = Color.White,
-            fontWeight = FontWeight.Medium)
-        Row(Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            controller.targetOptions()
-                .filterNot { it.startsWith("Lampe:") }
-                .forEach { value ->
-                    FilterChip(
-                        selected = controller.target == value,
-                        onClick = { controller.chooseTarget(value) },
-                        label = { Text(controller.targetLabel(value)) }
-                    )
-                }
-        }
-        TextButton(onClick = { showSingles = !showSingles }) {
-            Text(if (showSingles) "Einzellampen schließen" else "Bestimmte Einzellampe wählen")
-        }
-        if (showSingles) {
-            Row(Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                controller.orderedDevices().forEach { device ->
-                    val value = "Lampe:" + device.id
-                    FilterChip(
-                        selected = controller.target == value,
-                        onClick = { controller.chooseTarget(value) },
-                        label = { Text(controller.displayName(device)) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Lampen auswählen", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Box {
+            OutlinedButton(onClick = { targetMenu = true },
+                modifier = Modifier.fillMaxWidth()) {
+                Text(controller.targetLabel(controller.target) +
+                    " · " + controller.selectedCount() + " Lampen",
+                    modifier = Modifier.weight(1f), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Text("⌄")
+            }
+            DropdownMenu(expanded = targetMenu,
+                onDismissRequest = { targetMenu = false }) {
+                controller.targetOptions().forEach { value ->
+                    DropdownMenuItem(
+                        text = { Text(controller.targetLabel(value)) },
+                        onClick = {
+                            controller.chooseTarget(value)
+                            targetMenu = false
+                        },
+                        leadingIcon = if (controller.target == value)
+                            ({ Icon(Icons.Rounded.Lightbulb, null) }) else null
                     )
                 }
             }
@@ -709,9 +717,19 @@ private fun TargetSelector(controller: LoftController) {
                 color = muted, fontSize = 12.sp)
         }
         HorizontalDivider(color = Color(0xFF374052))
+        if (!showGroupEditor) {
+            OutlinedButton(
+                onClick = { onManageGroups?.invoke() },
+                enabled = onManageGroups != null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Rounded.Devices, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Gruppen verwalten")
+            }
+        }
+        if (showGroupEditor) {
         Text("Eigene Gruppen", color = Color.White, fontWeight = FontWeight.SemiBold)
-        Text("Beliebig benannte Gruppen mit den gewünschten Lampen erstellen und bearbeiten.",
-            color = muted, fontSize = 12.sp)
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(value = newGroupName,
@@ -767,6 +785,7 @@ private fun TargetSelector(controller: LoftController) {
                     modifier = Modifier.weight(1f)
                 ) { Text("Gruppe löschen") }
             }
+        }
         }
     }
 }
