@@ -109,3 +109,15 @@ Ein funktionierender BLE-Controller bedeutet **nicht automatisch**, dass das WLA
 - **Erledigt:** extern verifizierte Quellen und SKU-/Migrationsmatrix; OTA-Fremdprojekt-Fund; Unterschiede Original-LAN/Music-Mode vs. echte Firmware; modellgenaue Sicherheitsgrenzen und Reihenfolge.
 - **Nicht erledigt:** eigener Lampen-Firmwaredump, Bootloader-/PCB-/Chip-Abnahme unserer `color4`/Streifen/ceiling1, Hersteller-Firmwareanalyse, ausführbarer eigener Firmwarebuild, echter Hardware-/Netzwerktest, Google-Home-/BLE-Parität nach Flash, mehrtägiger Offline-Nachweis.
 - Diese Dokumentation macht Firmware-Recherche nachvollziehbar und unterbindet riskante Modellverallgemeinerungen; sie ist **kein** experimenteller Erfolgsausweis.
+
+## Ergänzung: ceiling1 mit zeitlich wiederkehrenden WLAN-Unterbrechungen
+
+Für **YLXD01YL / `ceiling1`** wurden im Yeelight-Forum bereits 2021 auf **Firmware `2.0.6_0193`** von einem Besitzer von vier Lampen annähernd **stündliche** WLAN-Unterbrechungen beobachtet, teils mit kurzem Aufblinken. Die frühere Firmware `1.5.9_0189` wurde in einem anderen Fall nach einem Update als WLAN-assoziiert und pingbar, aber ohne erreichbaren Yeelight-App-/LAN-Dienst beschrieben.
+
+Quellen:
+- https://forum.yeelight.com/t/topic/18057
+- https://forum.yeelight.com/t/topic/15197
+
+**Bewertung:** Zwei unterschiedliche historisch gemeldete Fehlerbilder, keine bewiesene Ursache bei den vorhandenen Geräten. Insbesondere **weder** `ceiling1`-Firmwareversion **noch** WLAN-Association deiner Lampen sind hier aktuell gemessen. Das bloße Funktionieren der BLE-Fernbedienung schließt beide Fehlerbilder nicht aus.
+
+**Nächster gefahrloser Diagnosepfad (Issue #29):** Router-/AP-Ereigniszeiten für echte Ab-/Anmeldungen über 24–72 Stunden vergleichen; nach betroffener Lampe und Firmwareversion gruppieren, Zyklusdifferenzen um 60 Minuten prüfen, IP-/TCP-Erreichbarkeit gesondert klassifizieren, nicht per SSDP-Timeout als WLAN-Abmeldung interpretieren. Falls keine korrelierten 60-Minuten-Ausfälle: WLAN-Funkkanal, WPA-Modus, AP/Repeater-Wechsel, DHCP und Internet-/Cloud-Störung als einzelne reversible Hypothesen testen. Keine Dauerabfragen, kein Factory Reset, kein Power-Cycle durch die App.

@@ -13,7 +13,7 @@
 - Kein blindes Replay nach Timeout/Fehler; Timer, Keepalive und eine konservative lokale 4-Fehlintervall-Sperre sind **Simulationspolitik**, keine als verifiziert behauptete Firmware-Spezifikation. Kein automatischer Wiederaufbau.
 - `ChromaUdpResearch.mayOpenUdpSessionForResearch` bleibt immer `false` – selbst bei positivem Simulatorergebnis.
 
-**12 JVM-Tests** validieren beide Versionspfade, validiertes Handshake, falsche Absender/ID/Methoden, ungültige Token, Fehlerbehandlung ohne Replay, Keepalive, erzwungene Schließung, Farbwerte und exakten Capability-Nachweis. Alle Testdaten sind synthetisch.
+**14 JVM-Tests** validieren beide Versionspfade, validiertes Handshake, Fehlerantworten ohne `params`-Block, fremde oder veraltete Fehler, falsche Absender/ID/Methoden, ungültige Token, Fehlerbehandlung ohne Replay, Keepalive, erzwungene Schließung, Farbwerte und exakten Capability-Nachweis. Alle Testdaten sind synthetisch.
 
 ## Neue wichtige Erkenntnis aus der offiziellen Quelle
 
