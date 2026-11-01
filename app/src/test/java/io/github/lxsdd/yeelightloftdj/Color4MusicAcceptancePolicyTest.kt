@@ -13,6 +13,10 @@ class Color4MusicAcceptancePolicyTest {
     @Test fun permitsOnlyOneExplicitlyIdentifiedMusicCapableColor4() {
         assertNull(Color4MusicAcceptancePolicy.refusal(
             listOf(lamp()), emptySet(), false))
+        // No name-bound gating: a second, explicitly authorized and verified
+        // Color4 uses the identical one-bulb safety conditions.
+        assertNull(Color4MusicAcceptancePolicy.refusal(
+            listOf(lamp().copy(id = "Flur")), emptySet(), false))
         assertEquals(15_000L, Color4MusicAcceptancePolicy.DURATION_MS)
     }
 

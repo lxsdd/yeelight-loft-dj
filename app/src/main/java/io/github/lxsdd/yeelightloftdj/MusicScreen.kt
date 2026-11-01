@@ -360,7 +360,8 @@ fun MusicScreen(controller: LoftController) {
                 title = { Text("Color4-Music-Mode-Test") },
                 text = {
                     Text("Ausgewählte Lampe: ${controller.color4AcceptanceTargetName() ?: "unbekannt"}. " +
-                        "Nur fortfahren, wenn dies Couchtisch ist. " +
+                        "Nur fortfahren, wenn genau diese einzelne Color4 ausdrücklich " +
+                        "für den Hardwaretest freigegeben ist. " +
                         "Der Test läuft höchstens 15 Sekunden, sendet höchstens " +
                         "45 RGB-Telegramme über den Rückkanal. Bei messbarer Musik " +
                         "werden echte Bassimpulse oder langsamere Audioaktivitäts-" +
@@ -372,7 +373,9 @@ fun MusicScreen(controller: LoftController) {
                     TextButton(onClick = {
                         showColor4AcceptanceConfirm = false
                         controller.armColor4MusicAcceptance()
-                    }) { Text("Nur Couchtisch testen") }
+                    }) {
+                        Text("Nur ${controller.color4AcceptanceTargetName() ?: "diese Lampe"} testen")
+                    }
                 },
                 dismissButton = {
                     TextButton(onClick = { showColor4AcceptanceConfirm = false }) {
