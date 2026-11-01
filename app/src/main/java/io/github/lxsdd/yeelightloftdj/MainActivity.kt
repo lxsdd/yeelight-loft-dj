@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onStop() {
+        controller.requestStopScanner()
         controller.stopMicrophone()
         super.onStop()
     }
@@ -458,12 +459,14 @@ private fun RecoveryBanner(controller: LoftController) {
             }
             OutlinedButton(
                 onClick = controller::stop,
-                enabled = controller.canRetryRecovery,
+                enabled = controller.scannerRunning || controller.canRetryRecovery,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Rounded.Stop, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Lichtshow stoppen & Licht wiederherstellen")
+                Text(if (controller.scannerRunning)
+                    "Scanner stoppen & Lampen ausschalten"
+                else "Lichtshow stoppen & Licht wiederherstellen")
             }
             Text("Tipp: Andere Lampen dürfen weiter benutzt und identifiziert werden. " +
                 "Die nicht bestätigte Lampe bleibt geschützt und kann später erneut geprüft werden.",
@@ -1336,7 +1339,9 @@ private fun ChasePanel(controller: LoftController) {
     }
     Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("LIVE-STEUERUNG", color = lavender, fontWeight = FontWeight.Bold,
+            Text(if (style == ChaseStyle.KNIGHT_RIDER)
+                "KNIGHT RIDER · EIN LAMPENLICHT"
+            else "LIVE-STEUERUNG", color = lavender, fontWeight = FontWeight.Bold,
                 fontSize = 12.sp)
             Text("Lichtweg: " + controller.targetLabel(choice) + " · " +
                 controller.previewCount(choice) + " Lampen",
@@ -1344,8 +1349,9 @@ private fun ChasePanel(controller: LoftController) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { if (config != null) controller.playChase(config, choice) },
-                    enabled = !controller.busy && config != null &&
-                        controller.previewCount(choice) in 1..24,
+                    enabled = !controller.busy && !controller.scannerRunning &&
+                        config != null && controller.previewCount(choice) in
+                            (if (style == ChaseStyle.KNIGHT_RIDER) 2..24 else 1..24),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Rounded.PlayArrow, contentDescription = null)
@@ -1354,8 +1360,9 @@ private fun ChasePanel(controller: LoftController) {
                 }
                 OutlinedButton(
                     onClick = controller::stop,
-                    enabled = controller.canRetryRecovery &&
-                        (controller.recoveryPending || controller.selectedCount() > 0),
+                    enabled = controller.scannerRunning ||
+                        (controller.canRetryRecovery &&
+                        (controller.recoveryPending || controller.selectedCount() > 0)),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Rounded.Stop, contentDescription = null)
@@ -1364,14 +1371,32 @@ private fun ChasePanel(controller: LoftController) {
                 }
             }
             Text(controller.status, color = muted, fontSize = 12.sp)
+            if (controller.scannerRunning) {
+                Text("Aktive Lampe: " +
+                    (controller.scannerActiveIndex?.plus(1)?.toString() ?: "Vorbereitung") +
+                    " · Schritt " + controller.scannerSteps,
+                    color = Color(0xFF80D9C6), fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold)
+            }
             HorizontalDivider(color = Color(0xFF49475F))
             Text("Effekt einstellen", color = Color.White, fontWeight = FontWeight.SemiBold)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf(ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
-                    ChaseStyle.METEOR to "Sternschnuppe", ChaseStyle.COLOR_WAVE to "Farbwelle")
-                    .forEach { (value, label) ->
-                        FilterChip(selected = style == value, onClick = { style = value }, label = { Text(label) })
-                    }
+                listOf(
+                    ChaseStyle.KNIGHT_RIDER to "Knight Rider",
+                    ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
+                    ChaseStyle.METEOR to "Sternschnuppe",
+                    ChaseStyle.COLOR_WAVE to "Farbwelle"
+                ).forEach { (value, label) ->
+                    FilterChip(selected = style == value, onClick = {
+                        style = value
+                        if (value == ChaseStyle.KNIGHT_RIDER) {
+                            bounce = true
+                            palette = "#FF0000"
+                            tail = 1f
+                            name = "Knight Rider Scanner"
+                        }
+                    }, label = { Text(label) })
+                }
             }
             Text("Lichtweg-Ziel: " + controller.targetLabel(choice) +
                 " · " + controller.previewCount(choice) + " Lampen",
@@ -1379,7 +1404,28 @@ private fun ChasePanel(controller: LoftController) {
             Text("Ziel und Gruppen im Auswahlbereich oben ändern. " +
                 "Die Laufrichtung folgt der Sortierung unter Geräte.",
                 color = muted, fontSize = 11.sp)
-            Text("Farbpalette · RGB-Hex, durch Komma getrennt", color = Color.White, fontSize = 12.sp)
+            if (style == ChaseStyle.KNIGHT_RIDER) {
+                Text("Nur die gerade aktive Lampe leuchtet. Alle anderen " +
+                    "Teilnehmer bleiben nach bestätigtem AUS dunkel. " +
+                    "Nicht ausgewählte Lampen werden nicht verändert.",
+                    color = muted, fontSize = 12.sp)
+                Text("Schnellfarbe", color = Color.White, fontSize = 12.sp)
+                Row(Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("#FF0000" to "Rot", "#00FF00" to "Grün",
+                        "#0000FF" to "Blau", "#FFB000" to "Amber",
+                        "#FFFFFF" to "Weiß", "#FF00FF" to "Magenta")
+                        .forEach { (hex, label) ->
+                            FilterChip(selected = palette == hex,
+                                onClick = { palette = hex },
+                                label = { Text(label) })
+                        }
+                }
+            }
+            Text(if (style == ChaseStyle.KNIGHT_RIDER)
+                "Farbe oder wechselnde Farben · #RRGGBB"
+            else "Farbpalette · RGB-Hex, durch Komma getrennt",
+                color = Color.White, fontSize = 12.sp)
             OutlinedTextField(
                 value = palette,
                 onValueChange = { palette = it.take(180) },
@@ -1423,10 +1469,25 @@ private fun ChasePanel(controller: LoftController) {
                 Text("Simulation der Reihenfolge – keine Statusanzeige der echten Lampen.",
                     color = muted, fontSize = 11.sp)
             }
-            Text("Tempo · ${ms.roundToInt()} ms pro Lampe", color = Color.White, fontSize = 12.sp)
+            val selectedCount = controller.previewCount(choice)
+            val effectiveMs = if (style == ChaseStyle.KNIGHT_RIDER &&
+                selectedCount in 2..24)
+                    KnightRiderPlan.effectiveStepMs(ms.roundToInt(), selectedCount, bounce)
+                else ms.roundToInt()
+            Text("Tempo · " + (if (style == ChaseStyle.KNIGHT_RIDER)
+                "$effectiveMs ms je Schritt (sichere Befehlsrate)"
+                else "${ms.roundToInt()} ms je Lampe"),
+                color = Color.White, fontSize = 12.sp)
             Slider(value = ms, onValueChange = { ms = it }, valueRange = 180f..2500f)
-            Text("Schweiflänge · ${tail.roundToInt()} Lampen", color = Color.White, fontSize = 12.sp)
-            Slider(value = tail, onValueChange = { tail = it }, valueRange = 1f..16f)
+            if (style == ChaseStyle.KNIGHT_RIDER && effectiveMs > ms.roundToInt()) {
+                Text("Zum Schutz vor Yeelight-Limits auf $effectiveMs ms begrenzt. " +
+                    "Bei mehr beteiligten Lampen sind schnellere Scans möglich.",
+                    color = Color(0xFFFFC1A6), fontSize = 11.sp)
+            }
+            if (style != ChaseStyle.KNIGHT_RIDER) {
+                Text("Schweiflänge · ${tail.roundToInt()} Lampen", color = Color.White, fontSize = 12.sp)
+                Slider(value = tail, onValueChange = { tail = it }, valueRange = 1f..16f)
+            }
             Text("Maximale Helligkeit · ${intensity.roundToInt()} %", color = Color.White, fontSize = 12.sp)
             Slider(value = intensity, onValueChange = { intensity = it }, valueRange = 5f..100f)
             Text("Laufrichtung", color = Color.White, fontSize = 12.sp)
@@ -1440,7 +1501,11 @@ private fun ChasePanel(controller: LoftController) {
                 Checkbox(checked = bounce, onCheckedChange = { bounce = it })
                 Text("Pingpong · an den Enden umkehren", color = Color.White, fontSize = 12.sp)
             }
-            Text("Beim Start siehst du die Ergebnisse für jede Lampe im Lampenbericht. " +
+            Text(if (style == ChaseStyle.KNIGHT_RIDER)
+                "Nur Geräte mit bestätigten RGB-/Szenen-/Ein-Aus-Befehlen nehmen teil. " +
+                    "Zu Beginn und nach Stopp werden sie ausdrücklich ausgeschaltet. " +
+                    "Wenn AUS nicht bestätigt wird, bricht der Scanner ab."
+            else "Beim Start siehst du die Ergebnisse für jede Lampe im Lampenbericht. " +
                 "Ungeeignete oder offline befindliche Lampen verhindern nicht mehr den Start anderer Lampen.",
                 color = muted, fontSize = 11.sp)
             Text("Hinweis: Schnell wechselnde Farben können für lichtempfindliche Personen ungeeignet sein.",
