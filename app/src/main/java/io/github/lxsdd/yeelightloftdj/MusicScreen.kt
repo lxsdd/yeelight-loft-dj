@@ -170,7 +170,7 @@ fun MusicScreen(controller: LoftController) {
                     )
                     Slider(
                         value = controller.microphoneAnalysisGain,
-                        onValueChange = controller::setMicrophoneAnalysisGain,
+                        onValueChange = controller::updateMicrophoneAnalysisGain,
                         valueRange = 0.5f..4f,
                         steps = 13,
                         modifier = Modifier.fillMaxWidth()

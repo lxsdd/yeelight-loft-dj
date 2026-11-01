@@ -80,7 +80,7 @@ class LoftController(context: Context) {
     )
         private set
 
-    fun setMicrophoneAnalysisGain(value: Float) {
+    fun updateMicrophoneAnalysisGain(value: Float) {
         val safe = MicrophoneAnalysisGain.normalize(value)
         if (safe == microphoneAnalysisGain) return
         microphoneAnalysisGain = safe
