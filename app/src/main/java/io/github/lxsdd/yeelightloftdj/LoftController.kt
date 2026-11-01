@@ -1246,20 +1246,40 @@ class LoftController(context: Context) {
                         IllegalStateException("Yeelight-LAN-Limit: erneuter Versuch in " +
                             ((waitMs + 999L) / 1000L) + " Sekunden möglich")
                     } else runCatching {
-                        if (!MusicStopSafety.permitsStop(device.ip, unconfirmedMusicStopIps)) {
-                            error("Music-Mode-Stopp für diese Lampe wurde zuvor nicht bestätigt; " +
-                                "keine erneuten set_music-Befehle. Nur lesend prüfen.")
+                        val priorStopUnconfirmed =
+                            !MusicStopSafety.permitsStop(device.ip, unconfirmedMusicStopIps)
+                        if (priorStopUnconfirmed) {
+                            // No repeat stop. A single status read can prove the
+                            // firmware is already safe for ordinary restoration.
+                            val observed = YeelightLan.readRecoveryObservation(device)
+                            check(RecoveryReadPolicy.safeToRestoreAfterLostMusicChannel(
+                                observed.musicOn, observed.flowing)) {
+                                "Voriger Musik-Stopp unbestätigt: music_on/flowing nicht sicher 0; " +
+                                    "kein weiterer Stoppbefehl. Nur lesend prüfen."
+                            }
                         }
                         if (device.ip in scannerOffIps) {
                             check(YeelightLan.setPowerVerified(device, false).outcome ==
                                 PowerOutcome.VERIFIED) {
                                 "Scanner-Lampe konnte nicht sicher ausgeschaltet werden"
                             }
-                        } else if (musicDeviceSession) {
-                            // Close the firmware's reverse music TCP stream
-                            // BEFORE normal LAN commands and status restoration.
-                            YeelightLan.stopMusicMode(device)
-                        } else {
+                        } else if (musicDeviceSession && !priorStopUnconfirmed) {
+                            if (YeelightLan.musicModeActive(device) ||
+                                !YeelightLan.supportsMusicMode(device)) {
+                                // A confirmed live channel is closed once.
+                                YeelightLan.stopMusicMode(device)
+                            } else {
+                                // A prior failed start, process restart or
+                                // closed reverse channel is not proof a new
+                                // set_music(0) is needed. Do not send one.
+                                val observed = YeelightLan.readRecoveryObservation(device)
+                                check(RecoveryReadPolicy.safeToRestoreAfterLostMusicChannel(
+                                    observed.musicOn, observed.flowing)) {
+                                    "Kein bestätigter Live-Rückkanal: music_on/flowing " +
+                                        "nicht sicher 0. Kein set_music-Wiederholungsbefehl."
+                                }
+                            }
+                        } else if (!musicDeviceSession) {
                             YeelightLan.stop(device)
                         }
                         recoveryJournal[device.ip]?.let { snapshot ->
