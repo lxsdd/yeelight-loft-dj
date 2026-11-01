@@ -197,4 +197,42 @@ class ChromaUdpOfflineFleetTest {
         assertFalse(status.contains(aIp))
         assertEquals(0, fleet.snapshot("a")!!.framesAttempted)
     }
+    @Test fun distinctSessionObjectsCannotDoubleCountOnePhysicalEndpoint() {
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            ChromaUdpOfflineFleet(listOf(
+                ChromaOfflineLampSpec("first", ChromaUdpOfflineSession(aIp, v2)),
+                ChromaOfflineLampSpec("second", ChromaUdpOfflineSession(aIp, v1))))
+        }
+        assertFalse(error.message.orEmpty().contains(aIp))
+        assertTrue(error.message.orEmpty().contains("unique endpoint"))
+    }
+
+    @Test fun endpointIdentityNormalizationDoesNotRevealAddressInSnapshots() {
+        val fleet = ChromaUdpOfflineFleet(listOf(
+            ChromaOfflineLampSpec("first", ChromaUdpOfflineSession(aIp, v2)),
+            ChromaOfflineLampSpec("second", ChromaUdpOfflineSession(bIp, v1))))
+        assertNotNull(fleet.snapshot("first"))
+        assertNotNull(fleet.snapshot("second"))
+        assertFalse(fleet.toString().contains(aIp))
+        assertFalse(fleet.snapshot("first").toString().contains(aIp))
+        assertThrows(IllegalArgumentException::class.java) {
+            ChromaUdpOfflineFleet(listOf(
+                ChromaOfflineLampSpec("first", ChromaUdpOfflineSession(aIp, v2)),
+                ChromaOfflineLampSpec("second", ChromaUdpOfflineSession(" $aIp ", v1))))
+        }
+    }
+
+    @Test fun passiveIssueAdmissionDefersRateWithoutConsumingBudget() {
+        val fleet = ChromaUdpOfflineFleet(listOf(
+            ChromaOfflineLampSpec("first", ChromaUdpOfflineSession(aIp, v2))))
+        activate(fleet, "first", ChromaFakeDevice(client, 2, aIp))
+        assertTrue(fleet.canIssueColor("first", 30))
+        assertNotNull(fleet.color("first", 0x123456, 60, 30))
+        assertFalse(fleet.canIssueColor("first", 31))
+        assertFalse(fleet.canIssueColor("first", 129))
+        assertEquals(1, fleet.snapshot("first")!!.framesAttempted)
+        assertTrue(fleet.canIssueColor("first", 130))
+        assertEquals(1, fleet.snapshot("first")!!.framesAttempted)
+    }
+
 }

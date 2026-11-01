@@ -123,7 +123,9 @@ class ChromaSpatialOfflineShow(
     /** No session negotiation. Sessions must have been activated by a fake. */
     fun arm(nowMs: Long): Boolean {
         if (state != ChromaSpatialShowState.NEW || nowMs < 0) return false
-        if (!ready()) {
+        // An apparently valid token may already be beyond its 15-second
+        // deadline, or the supplied clock may precede its last observation.
+        if (!ready() || lamps.any { !fleet.canStageColor(it.key, nowMs) }) {
             stop()
             return false
         }
@@ -158,6 +160,15 @@ class ChromaSpatialOfflineShow(
                 }
             }
             lastFrameStep = step
+        }
+        // Without this group-wide preflight, a lane already inside its
+        // 100-ms pacing window would silently produce a partial group tick
+        // while the other lamps still emitted frames. Keep the newest values
+        // staged, and retry only when the caller explicitly supplies a later
+        // virtual tick. Terminal failures stop everyone, not just one lane.
+        if (lamps.any { !fleet.canIssueColor(it.key, nowMs) }) {
+            if (!ready()) stop()
+            return emptyList()
         }
         val results = mutableListOf<SimulatedFrame>()
         lamps.forEach { lamp ->

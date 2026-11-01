@@ -25,6 +25,11 @@ class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
         require(specs.map { it.key }.distinct().size == specs.size)
         // A single session may not be attached to multiple logical lamp keys.
         require(specs.map { it.session }.distinct().size == specs.size)
+        // Distinct session objects may still point at the SAME lamp. Reject
+        // this topology before any simulated handshake or color is issued.
+        require(specs.map { it.session.offlineEndpointIdentity }.distinct().size == specs.size) {
+            "Each simulated lamp requires a unique endpoint"
+        }
     }
 
     private class Lane(spec: ChromaOfflineLampSpec) {
@@ -118,6 +123,21 @@ class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
     fun canStageColor(key: String, nowMs: Long): Boolean {
         val lane = lanes[key] ?: return false
         return allow(lane, nowMs) &&
+            lane.session.state == ChromaPreviewState.ACTIVE &&
+            lane.session.tokenHeld && lane.session.simulatedSceneAdvertised
+    }
+
+    /**
+     * Passive group-wide frame pacing preflight. No color frame or token is
+     * emitted; a normal 100-ms rate deferral is NOT a terminal quota event.
+     * Called before any lane is allowed to emit a synchronized preview tick.
+     */
+    fun canIssueColor(key: String, nowMs: Long): Boolean {
+        val lane = lanes[key] ?: return false
+        if (!allow(lane, nowMs) || lane.beganAt == null ||
+            lane.attempted >= MAX_FRAMES_PER_LAMP) return false
+        val last = lane.colorAt
+        return (last == null || nowMs - last >= MIN_FRAME_GAP_MS) &&
             lane.session.state == ChromaPreviewState.ACTIVE &&
             lane.session.tokenHeld && lane.session.simulatedSceneAdvertised
     }
