@@ -498,7 +498,9 @@ object YeelightLan {
                     commandGate.recordFirmwareRejection(device.ip, result.message)
             }
         } catch (e: DeviceCommandGate.Deferred) {
-            PowerProbe(PowerOutcome.REJECTED,
+            // The local gate sent NOTHING. Never present this as a firmware
+            // rejection or missing acknowledgement from a real power command.
+            PowerProbe(PowerOutcome.PROTECTED,
                 message = e.message ?: "Lokales Yeelight-Sicherheitsbudget erreicht")
         }
     }
@@ -555,6 +557,11 @@ object YeelightLan {
                 statusMs=if(observed.isSuccess)ms() else null,
                 totalMs=ms(),
                 message=observed.exceptionOrNull()?.message.orEmpty())
+        } catch (e: DeviceCommandGate.Deferred) {
+            // Before the first write: a protected bulb was never touched.
+            // After an acknowledged set_power: a deferred readback remains
+            // ACK_ONLY in the explicit readback handling above.
+            throw e
         } catch (e:Exception) {
             return PowerProbe(if(ackMs!=null)PowerOutcome.ACK_ONLY
                 else PowerOutcome.NO_ACK,
