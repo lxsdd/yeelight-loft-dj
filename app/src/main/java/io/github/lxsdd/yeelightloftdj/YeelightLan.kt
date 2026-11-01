@@ -42,6 +42,7 @@ data class YeelightDevice(
 }
 
 object YeelightLan {
+    private val commandGate = DeviceCommandGate()
     private const val HOST = "239.255.255.250"
     private const val PORT = 1982
     private val seq = AtomicInteger(1)
@@ -364,6 +365,20 @@ object YeelightLan {
      * have switched and the ACK alone could have been lost.
      */
     fun setPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
+        return try {
+            commandGate.run(device.ip, requests = 2) {
+                directSetPowerVerified(device, on)
+            }.also { result ->
+                if (result.outcome == PowerOutcome.REJECTED)
+                    commandGate.recordFirmwareRejection(device.ip, result.message)
+            }
+        } catch (e: DeviceCommandGate.Deferred) {
+            PowerProbe(PowerOutcome.REJECTED,
+                message = e.message ?: "Yeelight-Befehlslimit erreicht")
+        }
+    }
+
+    private fun directSetPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
         require(isLocalIp(device.ip))
         if (device.methods.isNotEmpty() && "set_power" !in device.methods) {
             return PowerProbe(PowerOutcome.UNSUPPORTED,
@@ -458,6 +473,10 @@ object YeelightLan {
 
     /** Each command is CRLF-delimited and must return the matching explicit OK. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
+        commandGate.run(device.ip) { directSend(device, method, params) }
+    }
+
+    private fun directSend(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
         require(method in setOf("set_power", "start_cf", "stop_cf", "set_scene",
             "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
@@ -499,7 +518,10 @@ object YeelightLan {
      * Report the actual firmware 'flowing' property. Never treat a command OK
      * as evidence that the animation is still active.
      */
-    fun readFlowing(device: YeelightDevice): Boolean? {
+    fun readFlowing(device: YeelightDevice): Boolean? =
+        commandGate.run(device.ip) { directReadFlowing(device) }
+
+    private fun directReadFlowing(device: YeelightDevice): Boolean? {
         require(isLocalIp(device.ip))
         val requestId = seq.getAndIncrement()
         val payload = JSONObject().put("id", requestId).put("method", "get_prop")
@@ -527,11 +549,76 @@ object YeelightLan {
         }
     }
 
+    /**
+     * A SINGLE Yeelight get_prop command reads flowing and all restorable
+     * power/colour properties on ONE TCP connection. No write, no retries.
+     * An empty/unsupported flowing response is UNKNOWN, never "off".
+     */
+    data class RecoveryObservation(
+        val flowing: Boolean?,
+        val snapshot: LampSnapshot?,
+        val powerOn: Boolean?,
+    )
+
+    internal fun parseRecoveryProperties(values: List<String>): RecoveryObservation {
+        val powerOn = when (values.getOrNull(1)) {
+            "on" -> true
+            "off" -> false
+            else -> null
+        }
+        // A lamp may legitimately report bright=0 or incomplete color fields
+        // when powered OFF. Power evidence must survive snapshot parse failure.
+        return RecoveryObservation(
+            flowing = flowStateFromValue(values.getOrNull(0)),
+            snapshot = LampSnapshot.fromValues(values.drop(1)),
+            powerOn = powerOn
+        )
+    }
+
+    fun readRecoveryObservation(device: YeelightDevice): RecoveryObservation =
+        commandGate.run(device.ip) { directReadRecoveryObservation(device) }
+
+    private fun directReadRecoveryObservation(device: YeelightDevice): RecoveryObservation {
+        require(isLocalIp(device.ip))
+        val id = seq.getAndIncrement()
+        val properties = listOf("flowing") + LampSnapshot.properties
+        val payload = JSONObject().put("id", id).put("method", "get_prop")
+            .put("params", JSONArray(properties)).toString() + "\r\n"
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(device.ip, device.port), 1800)
+            socket.soTimeout = 1800
+            val output = socket.getOutputStream()
+            output.write(payload.toByteArray(Charsets.UTF_8))
+            output.flush()
+            val reader = socket.getInputStream().bufferedReader()
+            repeat(12) {
+                val line = reader.readLine() ?: error("Keine Antwort auf Zustandsprüfung")
+                val candidate = JSONObject(line)
+                if (matchesReplyId(candidate, id)) {
+                    if (candidate.has("error")) {
+                        error("Zustandsprüfung abgelehnt: " +
+                            candidate.getJSONObject("error")
+                                .optString("message", "Yeelight-Fehler"))
+                    }
+                    val array = candidate.optJSONArray("result")
+                        ?: error("Statuswerte fehlen")
+                    return parseRecoveryProperties(
+                        (0 until array.length()).map { array.optString(it) }
+                    )
+                }
+            }
+            error("Keine passende get_prop-Antwort")
+        }
+    }
+
     internal fun preferAtomicFlowStart(methods: Set<String>): Boolean =
         methods.isEmpty() || "set_scene" in methods
 
     /** One status read over a fresh TCP connection; no fabricated device states. */
-    fun readStatus(device: YeelightDevice): LampSnapshot {
+    fun readStatus(device: YeelightDevice): LampSnapshot =
+        commandGate.run(device.ip) { directReadStatus(device) }
+
+    private fun directReadStatus(device: YeelightDevice): LampSnapshot {
         require(isLocalIp(device.ip))
         val requestId = seq.getAndIncrement()
         val params = JSONArray(LampSnapshot.properties)
@@ -643,10 +730,13 @@ object YeelightLan {
             // client quota exceeded is an *explicit* firmware rejection.
             // A second socket/get_prop only adds pressure to the quota and
             // does not establish whether a previous flow is running.
-            if (QuotaRecoveryPolicy.isQuotaRejection(failure.message)) {
+            if (QuotaRecoveryPolicy.isQuotaRejection(failure.message) ||
+                failure is DeviceCommandGate.Deferred
+            ) {
                 throw IllegalStateException(
-                    "Yeelight-LAN-Limit erreicht (client quota exceeded): " +
-                        "andere Steuer-Clients beenden und später erneut versuchen", failure)
+                    "Yeelight-LAN-Limit: Stopp nicht ausgeführt oder " +
+                        "nicht bestätigt. " + (failure.message ?: "") +
+                        " · später erneut versuchen", failure)
             }
             // A no-longer-running flow is already safely stopped. Only clear
             // the persisted stop marker when the bulb confirms flowing=0.

@@ -25,7 +25,7 @@
 2. Musiksynchronisierte Gruppenanimationen, Beats/BPM, Grenzen für WLAN-Kommandoraten.
 3. Internes Android-Audio über MediaProjection und AudioPlaybackCapture, sofern Quell-App erlaubt.
 4. Google Cast: Audio wird am Empfänger abgespielt; Mikrofon-Fallback ohne falsche Zusagen.
-5. Lokaler Musikplayer, visuelles Szenenstudio, räumliche Gerätefolge, optionaler Google-Home-Trigger.
+5. Unterstützung bestehender Musik-/Player-Apps über erlaubtes Android-Systemaudio; **kein eigener MP3-Player**, visuelles Szenenstudio, räumliche Gerätefolge und optionale zulässige Google-Home-Integration.
 6. Stable Release Signing getrennt von Quellcode und Build-Logs.
 
 ## Sicherheitsregeln
@@ -72,7 +72,7 @@ gleichwertiges Unterscheidungsmerkmal und wird nicht gestrichen.
   visuelle Raumkarten, direkt-manipulierbarer Grundriss, responsive Tablet-UI,
   dunkles und optional helles Design.
 - Mikrofon-Analyse, Android AudioPlaybackCapture soweit von Quell-App erlaubt,
-  Google-Cast-Mikrofon-Fallback, eigener lokaler Player: weiterhin geplant.
+  Google-Cast-Mikrofon-Fallback: weiterzuentwickeln; **kein eigener lokaler Player**.
 
 ### Umsetzungsempfehlung
 1. Zuverlässige Geräteliste, Identifikation, Lese-/Schreibbefehle, Live-Status.
@@ -171,3 +171,16 @@ Details: [docs/CHASE_SCENES_DE.md](CHASE_SCENES_DE.md).
   Cast-Fallback und eigener Player.
 - Die daraus entstehende priorisierte Produktdifferenzierung ist in
   [UNIQUE_FEATURE_VISION_DE.md](UNIQUE_FEATURE_VISION_DE.md) dokumentiert.
+
+
+## Verbindliche Produktentscheidung und aktueller Stand (01.11.2026)
+
+Die vorherigen Erwähnungen eines eigenen MP3-Players sind überholt.
+**Keinen eigenen Player entwickeln.** Externe lokale Player-/Streaming-Apps
+(z. B. BubbleUPnP oder YouTube) nur durch die vom Quellprogramm erlaubte
+Android-AudioPlaybackCapture-Schnittstelle erfassen; Cast-Receiver-Audio
+erscheint nicht automatisch im Handystream. Die gemeinsame, versionierte
+Feature- und UX-Matrix steht in [FEATURE_LEDGER_UX_ROADMAP_DE.md](FEATURE_LEDGER_UX_ROADMAP_DE.md).
+Die bisherigen Release-/Hardwareangaben in den historischen v0.1-Abschnitten
+sind nicht der heutige Abnahmestand. main ist v0.2.3/build 14;
+PRs #23, #24 und #25 sind gestapelte Entwicklungsstände, nicht signiert.

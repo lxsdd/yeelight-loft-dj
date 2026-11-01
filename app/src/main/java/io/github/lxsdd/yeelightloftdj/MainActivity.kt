@@ -160,6 +160,7 @@ private fun LoftApp(controller: LoftController) {
                                 "scanner" -> "Knight-Rider-Scanner"
                                 "transfer" -> "Szenenbibliothek"
                                 "target" -> "Lampen auswählen"
+                                "groups" -> "Gruppen verwalten"
                                 "rooms" -> "Räume verwalten"
                                 "network" -> "Geräte & Netzwerk prüfen"
                                 else -> "Lampendetails"
@@ -189,7 +190,16 @@ private fun LoftApp(controller: LoftController) {
                     }
                     "target" -> item(key = "target-manager") {
                         routeState.SaveableStateProvider("target-manager") {
-                            TargetSelector(controller)
+                            TargetSelector(controller,
+                                onManageGroups = {
+                                    parentRoute = detailRoute
+                                    detailRoute = "groups"
+                                })
+                        }
+                    }
+                    "groups" -> item(key = "group-manager") {
+                        routeState.SaveableStateProvider("group-manager") {
+                            TargetSelector(controller, showGroupEditor = true)
                         }
                     }
                     "rooms" -> item(key = "room-manager") {
@@ -246,7 +256,7 @@ private fun LoftApp(controller: LoftController) {
                     }
                     item(key = "scene-lamp-report") { SceneLampReport(controller) }
                     if (!controller.recoveryPending) item { StopButton(controller) }
-                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Echte Musikreaktion findest du unter Musik.") }
+                    item { Note("Normale Lichtschweife nutzen geräteinterne Farbsequenzen: selbst 1 % Helligkeit bleibt sichtbar. Für ausschließlich eine leuchtende Lampe wähle den Knight-Rider-Scanner mit echtem AUS.") }
                 }
                 2 -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
@@ -470,6 +480,7 @@ private fun RecoveryBanner(controller: LoftController) {
     var releaseIp by rememberSaveable { mutableStateOf<String?>(null) }
     var acceptsRunningFlow by rememberSaveable { mutableStateOf(false) }
     var acceptsLoss by rememberSaveable { mutableStateOf(false) }
+    var recoveryDetails by rememberSaveable { mutableStateOf(false) }
     val closeDialog = {
         releaseIp = null
         acceptsRunningFlow = false
@@ -478,18 +489,38 @@ private fun RecoveryBanner(controller: LoftController) {
     Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF2C293B)) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("Einzelne Lampe noch nicht wiederhergestellt",
+            Text(controller.pendingRecoveryCount.toString() +
+                " Lampe(n) zur Prüfung vorgemerkt",
                 color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(controller.recoveryExplanation, color = Color(0xFFE1D7F6), fontSize = 12.sp)
-            controller.pendingLampDescriptions().forEach { desc ->
-                Text(desc, color = Color(0xFFFFC1A6), fontSize = 12.sp)
-            }
-            if (controller.quotaRecoveryHint) {
-                Text("Yeelight-LAN-Limit erreicht. Weitere Wiederholungen innerhalb " +
-                    "einer Minute sind kontraproduktiv. Bitte parallele Lichtsteuerungen " +
-                    "(z. B. andere Apps, Home Assistant oder Integrationen) für diese " +
-                    "Lampe prüfen. Die Wiederherstellung wird nicht gelöscht.",
-                    color = Color(0xFFFFC1A6), fontSize = 12.sp)
+            Text("Andere Lampen bleiben bedienbar.", color = muted, fontSize = 12.sp)
+            controller.pendingRecoveryIps().forEach { ip ->
+                val lamp = controller.devices.firstOrNull { it.ip == ip }
+                val lampName = lamp?.let(controller::displayName)
+                    ?: "Gespeicherte Lampe ." + ip.substringAfterLast('.')
+                Surface(shape = RoundedCornerShape(15.dp), color = Color(0xFF383345)) {
+                    Column(Modifier.fillMaxWidth().padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Lightbulb, null,
+                                tint = Color(0xFFFFC1A6), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text(lampName, color = Color.White,
+                                modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                        }
+                        controller.recoveryReadReports[ip]?.let {
+                            Text(it, color = Color(0xFFFFC1A6), fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { controller.checkRecoveryLamp(ip) },
+                            enabled = controller.canRetryRecovery && !controller.scannerRunning,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.Search, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Zustand jetzt prüfen")
+                        }
+                    }
+                }
             }
             OutlinedButton(
                 onClick = controller::stop,
@@ -502,17 +533,22 @@ private fun RecoveryBanner(controller: LoftController) {
                     "Scanner stoppen & Lampen ausschalten"
                 else "Lichtshow stoppen & Licht wiederherstellen")
             }
-            Text("Tipp: Andere Lampen dürfen weiter benutzt und identifiziert werden. " +
-                "Die nicht bestätigte Lampe bleibt geschützt und kann später erneut geprüft werden.",
-                color = muted, fontSize = 11.sp)
-            if (controller.pendingRecoveryCount > 0) {
-                HorizontalDivider(color = Color(0xFF49455A))
-                Text("Erweiterte Option bei dauerhaft abgelehntem stop_cf:",
-                    color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                Text("Empfohlen ist zuerst der normale Wiederherstellungsversuch. " +
-                    "Alternativ kannst du nur den gespeicherten App-Eintrag verwerfen – " +
-                    "ohne Stromneustart. Achtung: Ein Lichtlauf kann dann noch aktiv sein.",
-                    color = muted, fontSize = 11.sp)
+            TextButton(onClick = { recoveryDetails = !recoveryDetails }) {
+                Text(if (recoveryDetails) "Details ausblenden" else "Fehlerdetails & weitere Optionen")
+            }
+            if (recoveryDetails) {
+                Text(controller.recoveryExplanation, color = muted, fontSize = 12.sp)
+                controller.pendingLampDescriptions().forEach { desc ->
+                    Text(desc, color = Color(0xFFFFC1A6), fontSize = 12.sp)
+                }
+                if (controller.quotaRecoveryHint) {
+                    Text("Gerät meldet Yeelight-Clientlimit. " +
+                        "Andere Steuerungen beenden und später erneut prüfen.",
+                        color = Color(0xFFFFC1A6), fontSize = 12.sp)
+                }
+                HorizontalDivider(color = Color(0xFF49475F))
+                Text("Nur als Ausnahme: alten App-Eintrag verwerfen.",
+                    color = muted, fontSize = 12.sp)
                 controller.pendingRecoveryIps().forEach { ip ->
                     val device = controller.devices.firstOrNull { it.ip == ip }
                     val bulbName = device?.let(controller::displayName)
@@ -650,37 +686,35 @@ private fun SceneCard(scene: LoftScene, enabled: Boolean, active: Boolean, onPla
 }
 
 @Composable
-private fun TargetSelector(controller: LoftController) {
-    var showSingles by remember { mutableStateOf(false) }
+private fun TargetSelector(
+    controller: LoftController,
+    onManageGroups: (() -> Unit)? = null,
+    showGroupEditor: Boolean = false,
+) {
+    var targetMenu by remember { mutableStateOf(false) }
     var newGroupName by rememberSaveable { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Ziel · " + controller.targetLabel(controller.target) +
-            " (" + controller.selectedCount() + " Lampen)", color = Color.White,
-            fontWeight = FontWeight.Medium)
-        Row(Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            controller.targetOptions()
-                .filterNot { it.startsWith("Lampe:") }
-                .forEach { value ->
-                    FilterChip(
-                        selected = controller.target == value,
-                        onClick = { controller.chooseTarget(value) },
-                        label = { Text(controller.targetLabel(value)) }
-                    )
-                }
-        }
-        TextButton(onClick = { showSingles = !showSingles }) {
-            Text(if (showSingles) "Einzellampen schließen" else "Bestimmte Einzellampe wählen")
-        }
-        if (showSingles) {
-            Row(Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                controller.orderedDevices().forEach { device ->
-                    val value = "Lampe:" + device.id
-                    FilterChip(
-                        selected = controller.target == value,
-                        onClick = { controller.chooseTarget(value) },
-                        label = { Text(controller.displayName(device)) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Lampen auswählen", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Box {
+            OutlinedButton(onClick = { targetMenu = true },
+                modifier = Modifier.fillMaxWidth()) {
+                Text(controller.targetLabel(controller.target) +
+                    " · " + controller.selectedCount() + " Lampen",
+                    modifier = Modifier.weight(1f), maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Text("⌄")
+            }
+            DropdownMenu(expanded = targetMenu,
+                onDismissRequest = { targetMenu = false }) {
+                controller.targetOptions().forEach { value ->
+                    DropdownMenuItem(
+                        text = { Text(controller.targetLabel(value)) },
+                        onClick = {
+                            controller.chooseTarget(value)
+                            targetMenu = false
+                        },
+                        leadingIcon = if (controller.target == value)
+                            ({ Icon(Icons.Rounded.Lightbulb, null) }) else null
                     )
                 }
             }
@@ -709,9 +743,19 @@ private fun TargetSelector(controller: LoftController) {
                 color = muted, fontSize = 12.sp)
         }
         HorizontalDivider(color = Color(0xFF374052))
+        if (!showGroupEditor) {
+            OutlinedButton(
+                onClick = { onManageGroups?.invoke() },
+                enabled = onManageGroups != null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Rounded.Devices, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Gruppen verwalten")
+            }
+        }
+        if (showGroupEditor) {
         Text("Eigene Gruppen", color = Color.White, fontWeight = FontWeight.SemiBold)
-        Text("Beliebig benannte Gruppen mit den gewünschten Lampen erstellen und bearbeiten.",
-            color = muted, fontSize = 12.sp)
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(value = newGroupName,
@@ -767,6 +811,7 @@ private fun TargetSelector(controller: LoftController) {
                     modifier = Modifier.weight(1f)
                 ) { Text("Gruppe löschen") }
             }
+        }
         }
     }
 }
@@ -857,25 +902,52 @@ private fun DeviceSummaryCard(
     controller: LoftController,
     onDetails: () -> Unit
 ) {
+    val live = controller.snapshotFor(device)
+    val bulbTint = when {
+        live?.isOn == false -> Color(0xFF50586D)
+        live?.isOn == true && live.colorMode == 1 && live.rgb != null ->
+            Color(0xFF000000L or live.rgb.toLong())
+        live?.isOn == true -> Color(0xFFFFD58C)
+        else -> lavender
+    }
     Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Lightbulb, null, tint = lavender)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(controller.displayName(device), color = Color.White,
-                        fontWeight = FontWeight.SemiBold)
-                    Text(controller.roomFor(device) + " · " +
-                        DeviceCapabilities.summary(device),
-                        color = muted, fontSize = 11.sp)
+                Box(Modifier.size(45.dp).clip(RoundedCornerShape(15.dp))
+                    .background(bulbTint.copy(alpha = 0.24f)),
+                    contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Lightbulb, null, tint = bulbTint,
+                        modifier = Modifier.size(27.dp))
                 }
-                TextButton(onClick = onDetails) { Text("Steuern →") }
+                Spacer(Modifier.width(11.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    Text(
+                        when {
+                            live?.isOn == true -> "An · ${live.brightness} %"
+                            live?.isOn == false -> "Aus"
+                            else -> "Status nicht geprüft"
+                        },
+                        color = if (live?.isOn == true) Color(0xFF80D9C6) else muted,
+                        fontSize = 12.sp
+                    )
+                }
+                TextButton(onClick = onDetails) { Text("Steuern") }
             }
-            TextButton(
-                onClick = { controller.identifyLamp(device) },
-                enabled = controller.canIdentifyLamp(device)
-            ) { Text("Lampe identifizieren") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                OutlinedButton(onClick = { controller.refreshLamp(device) },
+                    enabled = !controller.busy, modifier = Modifier.weight(1f)) {
+                    Text("Status")
+                }
+                OutlinedButton(onClick = { controller.identifyLamp(device) },
+                    enabled = controller.canIdentifyLamp(device),
+                    modifier = Modifier.weight(1f)) {
+                    Text("Erkennen")
+                }
+            }
         }
     }
 }
@@ -1032,15 +1104,21 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Namen speichern") }
                 Text("Raumzuordnung", color = Color.White, fontWeight = FontWeight.Medium)
-                Row(Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    controller.roomNames.forEach { room ->
-                        FilterChip(
-                            selected = controller.roomFor(device) == room,
-                            onClick = { controller.assign(device, room) },
-                            label = { Text(room) },
-                            enabled = controller.canOrganizeLamps
-                        )
+                var roomMenu by remember(device.id) { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { roomMenu = true },
+                        enabled = controller.canOrganizeLamps,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(controller.roomFor(device), modifier = Modifier.weight(1f))
+                        Text("⌄")
+                    }
+                    DropdownMenu(expanded = roomMenu, onDismissRequest = { roomMenu = false }) {
+                        controller.roomNames.forEach { room ->
+                            DropdownMenuItem(text = { Text(room) }, onClick = {
+                                controller.assign(device, room)
+                                roomMenu = false
+                            })
+                        }
                     }
                 }
                 DeviceCapabilityPanel(device)
@@ -1300,18 +1378,22 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
         )
         if (DeviceCapabilities.evidence(device, "set_rgb") != CapabilityEvidence.UNSUPPORTED) {
             Text("Direktfarben", color = Color.White, fontSize = 12.sp)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                colors.forEach { (name, rgb, tint) ->
-                    FilterChip(
-                        selected = live?.colorMode == 1 && live.rgb == rgb,
-                        onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
-                        enabled = controller.canIdentifyLamp(device) &&
-                            DeviceCapabilities.canOffer(device, "set_rgb", allowUnverified),
-                        label = { Text(name) },
-                        leadingIcon = {
-                            Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
-                        },
-                    )
+            colors.chunked(2).forEach { pair ->
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    pair.forEach { (name, rgb, tint) ->
+                        FilterChip(
+                            selected = live?.colorMode == 1 && live.rgb == rgb,
+                            onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
+                            enabled = controller.canIdentifyLamp(device) &&
+                                DeviceCapabilities.canOffer(device, "set_rgb", allowUnverified),
+                            modifier = Modifier.weight(1f),
+                            label = { Text(name) },
+                            leadingIcon = {
+                                Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -1384,6 +1466,7 @@ private fun ChasePanel(controller: LoftController,
     initialStyle: ChaseStyle = ChaseStyle.RAINBOW_TAIL
 ) {
     var style by rememberSaveable { mutableStateOf(initialStyle) }
+    var styleMenu by remember { mutableStateOf(false) }
     // The top-level target selector controls ALL scene types, including chases.
     val choice = controller.target
     val scannerEligible = controller.previewScannerEligibleCount(choice)
@@ -1449,22 +1532,33 @@ private fun ChasePanel(controller: LoftController,
             }
             HorizontalDivider(color = Color(0xFF49475F))
             Text("Effekt einstellen", color = Color.White, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf(
-                    ChaseStyle.KNIGHT_RIDER to "Knight Rider",
-                    ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
-                    ChaseStyle.METEOR to "Sternschnuppe",
-                    ChaseStyle.COLOR_WAVE to "Farbwelle"
-                ).forEach { (value, label) ->
-                    FilterChip(selected = style == value, onClick = {
-                        style = value
-                        if (value == ChaseStyle.KNIGHT_RIDER) {
-                            bounce = true
-                            palette = "#FF0000"
-                            tail = 1f
-                            name = "Knight Rider Scanner"
-                        }
-                    }, label = { Text(label) })
+            val availableStyles = listOf(
+                ChaseStyle.KNIGHT_RIDER to "Knight Rider",
+                ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
+                ChaseStyle.METEOR to "Sternschnuppe",
+                ChaseStyle.COLOR_WAVE to "Farbwelle"
+            )
+            Box {
+                OutlinedButton(onClick = { styleMenu = true },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(availableStyles.first { it.first == style }.second,
+                        modifier = Modifier.weight(1f))
+                    Text("⌄")
+                }
+                DropdownMenu(expanded = styleMenu,
+                    onDismissRequest = { styleMenu = false }) {
+                    availableStyles.forEach { (value, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = {
+                            styleMenu = false
+                            style = value
+                            if (value == ChaseStyle.KNIGHT_RIDER) {
+                                bounce = true
+                                palette = "#FF0000"
+                                tail = 1f
+                                name = "Knight Rider Scanner"
+                            }
+                        })
+                    }
                 }
             }
             Text("Lichtweg-Ziel: " + controller.targetLabel(choice) +
@@ -1491,17 +1585,21 @@ private fun ChasePanel(controller: LoftController,
                     "Nicht ausgewählte Lampen werden nicht verändert.",
                     color = muted, fontSize = 12.sp)
                 Text("Schnellfarbe", color = Color.White, fontSize = 12.sp)
-                Row(Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("#FF0000" to "Rot", "#00FF00" to "Grün",
-                        "#0000FF" to "Blau", "#FFB000" to "Amber",
-                        "#FFFFFF" to "Weiß", "#FF00FF" to "Magenta")
-                        .forEach { (hex, label) ->
-                            FilterChip(selected = palette == hex,
-                                onClick = { palette = hex },
-                                label = { Text(label) })
+                listOf("#FF0000" to "Rot", "#00FF00" to "Grün",
+                    "#0000FF" to "Blau", "#FFB000" to "Amber",
+                    "#FFFFFF" to "Weiß", "#FF00FF" to "Magenta")
+                    .chunked(3).forEach { row ->
+                        Row(Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            row.forEach { (hex, label) ->
+                                FilterChip(selected = palette == hex,
+                                    onClick = { palette = hex },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text(label, maxLines = 1,
+                                        fontSize = 11.sp) })
+                            }
                         }
-                }
+                    }
             }
             Text(if (style == ChaseStyle.KNIGHT_RIDER)
                 "Farbe oder wechselnde Farben · #RRGGBB"
@@ -1518,9 +1616,10 @@ private fun ChasePanel(controller: LoftController,
                 Text(parsedPalette.exceptionOrNull()?.message ?: "Ungültige Farben",
                     color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             } else {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     parsedPalette.getOrNull().orEmpty().forEach { rgb ->
-                        Box(Modifier.size(26.dp).clip(RoundedCornerShape(9.dp))
+                        Box(Modifier.weight(1f).height(22.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF000000L or rgb.toLong())))
                     }
                 }
@@ -1533,15 +1632,17 @@ private fun ChasePanel(controller: LoftController,
                 val step = previewStep.roundToInt().coerceIn(0, count - 1)
                 Text("Effektvorschau · Schritt ${step + 1} von $count",
                     color = Color.White, fontSize = 12.sp)
-                Row(Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     repeat(lampCount) { index ->
                         val frame = ChaseCompiler.frames(config, index, lampCount)[step]
-                        val tinted = Color(0xFF000000L or frame.rgb.toLong())
-                        Box(
-                            Modifier.size(23.dp).clip(RoundedCornerShape(50))
-                                .background(tinted.copy(alpha = 0.2f + 0.8f * frame.brightness / 100f))
-                        )
+                        val dark = style == ChaseStyle.KNIGHT_RIDER &&
+                            frame.rgb == 0 && frame.brightness == 1
+                        val tint = if (dark) Color(0xFF0B0E16)
+                            else Color(0xFF000000L or frame.rgb.toLong())
+                                .copy(alpha = 0.2f + 0.8f * frame.brightness / 100f)
+                        Box(Modifier.weight(1f).height(24.dp)
+                            .clip(RoundedCornerShape(6.dp)).background(tint))
                     }
                 }
                 Slider(

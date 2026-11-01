@@ -62,6 +62,9 @@ class LoftController(context: Context) {
         private set
     var lastRecoveryFailures by mutableStateOf<Map<String, String>>(emptyMap())
         private set
+    var recoveryReadReports by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+    private val lastRecoveryReadAt = mutableMapOf<String, Long>()
     var status by mutableStateOf("Bereit · lokales WLAN")
         private set
     var microphoneRunning by mutableStateOf(false)
@@ -448,6 +451,91 @@ class LoftController(context: Context) {
                     if (reason.isNullOrBlank()) " · Zustand ungeklärt"
                     else " · " + reason.take(120)
             }
+
+    /**
+     * Read the real firmware state for exactly ONE pending IP. The requested
+     * check never sends a lighting command. Only a proven, already safe state
+     * removes the three local tracking markers atomically.
+     *
+     * If the original snapshot differs, present a normal restore action;
+     * do NOT silently overwrite a lamp following a read-only check.
+     */
+    fun checkRecoveryLamp(ip: String) {
+        val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        if (busy || scannerRunning || musicDeviceSession || musicStopPending || musicSending ||
+            !YeelightLan.isLocalIp(ip) || ip !in pending
+        ) {
+            status = "Prüfung nicht möglich: Lampe nicht offen oder ein Lichtvorgang aktiv"
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        val lastRead = lastRecoveryReadAt[ip]
+        if (lastRead != null && now - lastRead in 0 until 10_000L) {
+            status = "Zustandsabfrage für diese Lampe erst nach 10 Sekunden erneut möglich"
+            return
+        }
+        lastRecoveryReadAt[ip] = now
+        task("Prüfe die Lampe ." + ip.substringAfterLast('.') + " lesend …") {
+            val device = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
+            val scannerMode = ip in scannerOffIps
+            val snapshot = recoveryJournal[ip]
+            val result = withContext(Dispatchers.IO) {
+                runCatching { YeelightLan.readRecoveryObservation(device) }
+            }
+            if (result.isFailure) {
+                val reason = result.exceptionOrNull()?.message
+                    ?: "TCP-Zustandsprüfung ohne Antwort"
+                recoveryReadReports = recoveryReadReports + (ip to
+                    "Nicht bestätigt: $reason")
+                return@task "Zustandsprüfung nicht möglich; Lampe bleibt geschützt: $reason"
+            }
+            val read = result.getOrThrow()
+            val decision = RecoveryReadPolicy.decide(
+                read.flowing, read.snapshot, snapshot, scannerMode,
+                reportedPowerOn = read.powerOn
+            )
+            val label = displayName(device)
+            if (RecoveryReadPolicy.canClear(decision)) {
+                val nextRunning = runningDeviceIps - ip
+                val nextJournal = recoveryJournal - ip
+                val nextScanner = scannerOffIps - ip
+                check(prefs.edit()
+                    .putString("running-flow-ips", JSONArray(nextRunning.toList()).toString())
+                    .putString("pending-scene-recovery", SceneRecovery.encode(nextJournal))
+                    .putString("scanner-off-ips", JSONArray(nextScanner.toList()).toString())
+                    .commit()) { "Bestätigte Wiederherstellung konnte nicht gespeichert werden" }
+                runningDeviceIps = nextRunning
+                recoveryJournal = nextJournal
+                scannerOffIps = nextScanner
+                lastRecoveryFailures = lastRecoveryFailures - ip
+                lastQuotaRejectionAt.remove(ip)
+                if (nextRunning.isEmpty() && nextJournal.isEmpty() && !musicDeviceSession) {
+                    activeScene = null
+                }
+                val success = when(decision) {
+                    RecoveryReadDecision.ALREADY_RESTORED ->
+                        "Farbfluss=0 und ursprünglicher Lichtzustand stimmen überein"
+                    RecoveryReadDecision.SCANNER_OFF ->
+                        "Scanner-Lampe meldet power=off"
+                    else -> "Farbfluss=0; kein Originalzustand zum Wiederherstellen gespeichert"
+                }
+                recoveryReadReports = recoveryReadReports + (ip to "Bestätigt · " + success)
+                "$label: bereits sicher · lokale Vormerkung automatisch entfernt"
+            } else {
+                val reason = when(decision) {
+                    RecoveryReadDecision.FLOW_STILL_RUNNING ->
+                        "Farbfluss läuft noch. Bitte normal stoppen."
+                    RecoveryReadDecision.RESTORE_REQUIRED ->
+                        "Farbfluss ist aus, früherer Lichtzustand weicht jedoch ab. " +
+                            "Bitte normal wiederherstellen."
+                    else -> "Gerätestatus nicht eindeutig lesbar. " +
+                        "Die Lampe bleibt geschützt; kein automatisches Entsperren."
+                }
+                recoveryReadReports = recoveryReadReports + (ip to reason)
+                "$label: $reason"
+            }
+        }
+    }
 
     /** Explicitly discard only one stale app-side recovery marker.
      * No power-cycle claim, no LAN command, NO hardware-state verification.
