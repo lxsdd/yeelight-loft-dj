@@ -8,6 +8,8 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Exactly one reusable TCP channel per lamp (IP+port) for *all* Yeelight
@@ -28,17 +30,40 @@ class YeelightTcpSessions(
 ) {
     private data class Key(val ip: String, val port: Int)
     private class Session(val socket: Socket) {
+        @Volatile var lastActiveNanos = System.nanoTime()
         val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
         val output = socket.getOutputStream()
         fun close() { runCatching { socket.close() } }
     }
     private val sessions = ConcurrentHashMap<Key, Session>()
+    // Important: do not retain a lamp's one of only four LAN slots while
+    // the user reads the screen or switches to the official Yeelight app.
+    private val sweeper = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "yeelight-idle-tcp").apply { isDaemon = true }
+    }
+    init {
+        sweeper.scheduleWithFixedDelay({ runCatching { closeIdle(8_000L) } },
+            2, 2, TimeUnit.SECONDS)
+    }
+
+    fun closeIdle(maxIdleMs: Long) {
+        val now = System.nanoTime()
+        sessions.entries.toList().forEach { (key, session) ->
+            if ((now - session.lastActiveNanos) / 1_000_000L >= maxIdleMs) {
+                synchronized(session) {
+                    if ((System.nanoTime() - session.lastActiveNanos) / 1_000_000L >= maxIdleMs)
+                        invalidate(key, session)
+                }
+            }
+        }
+    }
 
     fun request(ip: String, port: Int, id: Int, method: String, params: List<Any>): JSONObject {
         require(port in 1..65535 && id > 0)
         val key = Key(ip,port)
         val session = sessions.computeIfAbsent(key) { Session(connect(ip,port)) }
         synchronized(session) {
+            session.lastActiveNanos = System.nanoTime()
             try {
                 val payload = JSONObject().put("id",id).put("method",method)
                     .put("params", JSONArray(params)).toString() + "\r\n"
@@ -48,6 +73,7 @@ class YeelightTcpSessions(
                     val line = session.reader.readLine() ?: error("TCP-Verbindung vom Gerät beendet")
                     val reply = JSONObject(line)
                     if (reply.has("id") && reply.optInt("id",-1) == id) {
+                        session.lastActiveNanos = System.nanoTime()
                         if (reply.has("error")) {
                             // Explicit firmware rejections may leave the channel
                             // in an unknown state; release the connection now.
@@ -72,8 +98,9 @@ class YeelightTcpSessions(
     }
 
     fun closeAll() {
-        sessions.values.forEach { it.close() }
-        sessions.clear()
+        sessions.entries.toList().forEach { (key, session) ->
+            synchronized(session) { invalidate(key, session) }
+        }
     }
 
     fun openCount(): Int = sessions.size
