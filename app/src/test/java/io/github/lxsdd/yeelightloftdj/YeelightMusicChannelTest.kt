@@ -60,6 +60,46 @@ class YeelightMusicChannelTest {
         assertFalse(channel.isActive)
     }
 
+    @Test fun interruptingReverseOutputSendsNoDuplicateLanDisable() {
+        val disabled = AtomicInteger()
+        val eof = CountDownLatch(1)
+        val workerError = AtomicReference<Throwable>()
+        var worker: Thread? = null
+        val channel = YeelightMusicChannel(
+            "127.0.0.1",
+            enableOnDevice = { host, port ->
+                worker = thread {
+                    try {
+                        Socket(host, port).use { peer ->
+                            peer.soTimeout = 2000
+                            assertEquals(-1, peer.getInputStream().read())
+                            eof.countDown()
+                        }
+                    } catch (failure: Throwable) {
+                        workerError.set(failure)
+                        eof.countDown()
+                    }
+                }
+            },
+            disableOnDevice = { disabled.incrementAndGet() },
+        )
+        try {
+            channel.start("127.0.0.1")
+            assertTrue(channel.isActive)
+            channel.interruptBlockedOutput()
+            assertTrue("reverse socket did not close", eof.await(2, TimeUnit.SECONDS))
+            assertEquals("interrupt itself must not use LAN budget", 0, disabled.get())
+            assertFalse(channel.isActive)
+            assertTrue(runCatching { channel.sendRgb(0x112233) }.isFailure)
+        } finally {
+            channel.close()
+            channel.close()
+            worker?.join(2000)
+        }
+        assertNull(workerError.get()?.toString(), workerError.get())
+        assertEquals("exactly one deliberate set_music(0)", 1, disabled.get())
+    }
+
     @Test fun failedEnableReleasesListenerAndAttemptsOneDisableOnly() {
         val disableCalls = AtomicInteger()
         val channel = YeelightMusicChannel(
