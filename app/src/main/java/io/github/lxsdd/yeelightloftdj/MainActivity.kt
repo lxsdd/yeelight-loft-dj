@@ -715,6 +715,18 @@ private fun DeviceTools(controller: LoftController, initiallyExpanded: Boolean =
             }
         }
         OutlinedButton(
+            onClick = controller::extendedMulticastDiagnostic,
+            enabled = !controller.busy && controller.devices.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("12-Runden-Multicast-Gegenprobe (nur lesend)") }
+        Text("Jede Lampe einzeln: UDP-Antworten pro Suchrunde vs. TCP-Erreichbarkeit",
+            color = muted, fontSize = 12.sp)
+        controller.orderedDevices().forEach { device ->
+            Text(controller.displayName(device) + " · " + controller.discoveryDetail(device),
+                color = if (device.ip in controller.lastMulticastIps)
+                    Color(0xFF80D9C6) else muted, fontSize = 11.sp)
+        }
+        OutlinedButton(
             onClick = controller::compareDirectedUdp,
             enabled = !controller.busy && controller.missingMulticastCount() > 0,
             modifier = Modifier.fillMaxWidth()
