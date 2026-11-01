@@ -256,7 +256,7 @@ private fun LoftApp(controller: LoftController) {
                     }
                     item(key = "scene-lamp-report") { SceneLampReport(controller) }
                     if (!controller.recoveryPending) item { StopButton(controller) }
-                    item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Echte Musikreaktion findest du unter Musik.") }
+                    item { Note("Normale Lichtschweife nutzen geräteinterne Farbsequenzen: selbst 1 % Helligkeit bleibt sichtbar. Für ausschließlich eine leuchtende Lampe wähle den Knight-Rider-Scanner mit echtem AUS.") }
                 }
                 2 -> {
                     item { Heading("Deine Geräte", "Direkte Steuerung über dein WLAN") }
