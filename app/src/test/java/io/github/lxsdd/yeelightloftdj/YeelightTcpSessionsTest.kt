@@ -67,6 +67,35 @@ class YeelightTcpSessionsTest {
         }
     }
 
+    @Test fun idleSocketIsReleasedSoOtherAppsCanUseLanSlot() {
+        ServerSocket(0).use { server ->
+            val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+            val worker = thread {
+                server.accept().use { socket ->
+                    val line = socket.getInputStream().bufferedReader().readLine()
+                    val id = Regex("\\\"id\\\":(\\\\d+)").find(line)!!.groupValues[1]
+                    socket.getOutputStream().write(
+                        "{\\\"id\\\":$id,\\\"result\\\":[\\\"ok\\\"]}\\r\\n".toByteArray())
+                    socket.getOutputStream().flush()
+                    socket.soTimeout = 2500
+                    closed.set(socket.getInputStream().read() == -1)
+                }
+            }
+            val tcp = YeelightTcpSessions { ip, port ->
+                Socket(ip,port).apply { soTimeout = 1400 }
+            }
+            try {
+                tcp.request("127.0.0.1",server.localPort,21,"set_rgb",listOf(0xFF0000))
+                assertEquals(1,tcp.openCount())
+                // Simulate idle/foreground switch; no second command required.
+                tcp.closeIdle(0)
+                assertEquals(0,tcp.openCount())
+                worker.join(2700)
+                assertTrue("TCP slot still held by the app",closed.get())
+            } finally { tcp.closeAll(); worker.join(2700) }
+        }
+    }
+
     @Test fun explicitErrorIsReturnedAndConnectionIsDiscarded() {
         ServerSocket(0).use { server ->
             val worker=thread {
