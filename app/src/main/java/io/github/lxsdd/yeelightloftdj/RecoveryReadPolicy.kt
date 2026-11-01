@@ -56,6 +56,13 @@ object RecoveryReadPolicy {
     fun musicStillUnconfirmed(sessionTracked: Boolean, musicOn: Boolean?): Boolean =
         sessionTracked && musicOn != false
 
+    /** A stopped music transport can be followed by static restoration
+     * only if the real firmware reports no music and no running flow.
+     */
+    fun safeToRestoreAfterLostMusicChannel(
+        musicOn: Boolean?, flowing: Boolean?,
+    ): Boolean = musicOn == false && flowing == false
+
     fun canClear(
         d: RecoveryReadDecision,
         musicSessionUnconfirmed: Boolean = false,
