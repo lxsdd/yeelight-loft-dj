@@ -14,10 +14,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 
 private val loftRooms = setOf("Wohnzimmer", "Esszimmer", "Hobbyraum")
+data class SceneLampResult(val name: String, val outcome: String, val message: String)
 val rooms = listOf("Nicht zugeordnet", "Wohnzimmer", "Esszimmer", "Hobbyraum", "Schlafzimmer", "Masterbad", "Gästebad", "Flur", "Andere")
 
 class LoftController(context: Context) {
@@ -39,6 +42,11 @@ class LoftController(context: Context) {
     var roomNames by mutableStateOf(loadRooms())
         private set
     var customSelectedIds by mutableStateOf(loadSelection())
+        private set
+    // null preserves the original room-derived Loft group until explicitly edited.
+    var loftMembersOverride by mutableStateOf<Set<String>?>(loadLoftMembers())
+        private set
+    var lastSceneReport by mutableStateOf<List<SceneLampResult>>(emptyList())
         private set
     var status by mutableStateOf("Bereit · lokales WLAN")
         private set
@@ -108,6 +116,40 @@ class LoftController(context: Context) {
             val array = JSONArray(prefs.getString("selected-lamp-ids", "[]") ?: "[]")
             (0 until array.length()).map { array.getString(it) }.toSet()
         }.getOrDefault(emptySet())
+
+    private fun loadLoftMembers(): Set<String>? = runCatching {
+        if (!prefs.getBoolean("loft-members-customized", false)) null
+        else {
+            val arr = JSONArray(prefs.getString("loft-member-ids", "[]") ?: "[]")
+            (0 until arr.length()).map { arr.getString(it) }.toSet()
+        }
+    }.getOrNull()
+
+    /** Loft can be edited independently of room assignments. Default = historical three rooms. */
+    fun loftMemberIds(): Set<String> =
+        SceneTargetPolicy.loftIds(devices, assignments, loftMembersOverride)
+
+    fun setLoftMember(id: String, selected: Boolean) {
+        if (!canOrganizeLamps || devices.none { it.id == id }) return
+        val current = loftMemberIds()
+        val revised = if (selected) current + id else current - id
+        check(prefs.edit().putBoolean("loft-members-customized", true)
+            .putString("loft-member-ids", JSONArray(revised.toList()).toString()).commit()) {
+            "Loft-Gruppe konnte nicht gespeichert werden"
+        }
+        loftMembersOverride = revised
+        status = "Loft-Gruppe: " + revised.size + " Lampen"
+    }
+
+    fun resetLoftMembers() {
+        if (!canOrganizeLamps) return
+        check(prefs.edit().remove("loft-member-ids")
+            .remove("loft-members-customized").commit()) {
+            "Loft-Gruppe konnte nicht zurückgesetzt werden"
+        }
+        loftMembersOverride = null
+        status = "Loft folgt wieder Wohnzimmer, Esszimmer und Hobbyraum"
+    }
 
     private fun persistRoomNames() {
         check(prefs.edit().putString("room-list", JSONArray(roomNames).toString()).commit()) {
@@ -193,6 +235,21 @@ class LoftController(context: Context) {
         listOf("Test (1)", "Loft", "Alle", "Auswahl") +
         roomNames.filter { it != "Nicht zugeordnet" }.map { "Raum:$it" } +
         orderedDevices().map { "Lampe:" + it.id }
+
+    fun targetDescription(choice: String): String = when {
+        choice == "Test (1)" -> orderedDevices().firstOrNull()?.let {
+            "Testlampe: " + displayName(it) + " · " + it.ip
+        } ?: "Keine Testlampe vorhanden"
+        choice == "Loft" -> if (loftMembersOverride == null)
+            "Loft: Wohnzimmer + Esszimmer + Hobbyraum (" + loftMemberIds().size +
+                " Lampen). Mitgliedschaft unter Ziel → Loft bearbeiten."
+        else "Loft: " + loftMemberIds().size + " einzeln gewählte Lampen."
+        choice == "Alle" ->
+            "Alle gespeicherten Lampen, auch offline. Beim Start werden Fehler je Lampe angezeigt."
+        choice == "Auswahl" -> "Deine " + customSelectedIds.size +
+            " ausgewählten Lampen. Offline-Lampen können separat fehlschlagen."
+        else -> ""
+    }
 
     fun targetLabel(value: String): String = when {
         value.startsWith("Raum:") -> value.removePrefix("Raum:")
@@ -426,6 +483,22 @@ class LoftController(context: Context) {
                     lampOrder = lampOrder.map { if (it == previous.id) replacement.id else it }.distinct()
                     prefs.edit().putString("lamp-order", JSONArray(lampOrder).toString()).apply()
                 }
+                if (previous.id in customSelectedIds) {
+                    val revised = (customSelectedIds - previous.id) + replacement.id
+                    check(prefs.edit().putString("selected-lamp-ids",
+                        JSONArray(revised.toList()).toString()).commit()) {
+                        "Geräteauswahl konnte nicht übertragen werden"
+                    }
+                    customSelectedIds = revised
+                }
+                if (previous.id in (loftMembersOverride ?: emptySet())) {
+                    val revised = (loftMembersOverride ?: emptySet()) - previous.id + replacement.id
+                    check(prefs.edit().putString("loft-member-ids",
+                        JSONArray(revised.toList()).toString()).commit()) {
+                        "Loft-Mitgliedschaft konnte nicht übertragen werden"
+                    }
+                    loftMembersOverride = revised
+                }
                 val room = updatedRooms[previous.id] ?: prefs.getString("room." + previous.id, null)
                 if (room != null) {
                     updatedRooms[replacement.id] = room
@@ -627,7 +700,7 @@ class LoftController(context: Context) {
     private fun chooseDevices(choice: String): List<YeelightDevice> = when {
         choice == "Test (1)" -> orderedDevices().take(1)
         choice == "Alle" -> orderedDevices()
-        choice == "Loft" -> orderedDevices().filter { roomFor(it) in loftRooms }
+        choice == "Loft" -> orderedDevices().filter { it.id in loftMemberIds() }
         choice == "Auswahl" -> orderedDevices().filter { it.id in customSelectedIds }
         choice.startsWith("Raum:") -> orderedDevices().filter {
             roomFor(it) == choice.removePrefix("Raum:")
@@ -656,17 +729,26 @@ class LoftController(context: Context) {
             }
         } else if (allowTargetFallback) selected() else emptyList()
         if (chosen.isEmpty()) return "Keine Lampen zum Stoppen ausgewählt"
+        var stopped = 0
         val outcomes = withContext(Dispatchers.IO) {
+            val limit = Semaphore(3)
             chosen.map { device -> async {
-                val issue = runCatching {
-                    if (!musicDeviceSession) YeelightLan.stop(device)
-                    recoveryJournal[device.ip]?.let { snapshot ->
-                        SceneRecovery.commands(snapshot).forEach { command ->
-                            YeelightLan.manualControl(device, command)
+                limit.withPermit {
+                    val issue = runCatching {
+                        if (!musicDeviceSession) YeelightLan.stop(device)
+                        recoveryJournal[device.ip]?.let { snapshot ->
+                            SceneRecovery.commands(snapshot).forEach { command ->
+                                YeelightLan.manualControl(device, command)
+                            }
                         }
+                    }.exceptionOrNull()
+                    withContext(Dispatchers.Main.immediate) {
+                        stopped++
+                        status = "Stoppe Lichtshow: " + stopped + "/" + chosen.size +
+                            " Lampen geprüft …"
                     }
-                }.exceptionOrNull()
-                device.ip to issue
+                    device.ip to issue
+                }
             } }.awaitAll()
         }
         val failed = outcomes.filter { it.second != null }.map { it.first }.toSet()
@@ -694,53 +776,118 @@ class LoftController(context: Context) {
         return result
     }
 
+    /**
+     * A failed/offline/unsupported bulb must not prevent other lamps from
+     * starting. Only bulbs with safely captured original state are modified
+     * when recovery is enabled. Keep every attempted IP in the stop journal
+     * even when the acknowledgement is ambiguous.
+     */
     private fun startFlow(
         id: String,
         name: String,
         chosen: List<YeelightDevice>,
         expression: (index: Int, count: Int) -> String,
     ) {
-        if (chosen.isEmpty()) {
-            status = "Für diese Szene sind keine Lampen ausgewählt"
+        if (busy) {
+            status = "Bitte den laufenden Vorgang abschließen"
             return
         }
-        task("Starte " + name + " auf " + chosen.size + " Lampen …") {
-            if (runningDeviceIps.isNotEmpty()) haltRunning(false)
-            if (restoreAfterStop) {
-                // A failed snapshot aborts BEFORE altering any bulb.
-                val captured = withContext(Dispatchers.IO) {
-                    chosen.map { device -> async {
-                        val snap = YeelightLan.readStatus(device)
-                        require(SceneRecovery.supported(snap)) {
-                            "Lichtzustand von " + device.ip + " ist nicht vollständig lesbar"
-                        }
-                        val commands = SceneRecovery.commands(snap)
-                        if (device.methods.isNotEmpty()) require(device.methods.containsAll(
-                            commands.map { it.method }
-                        )) { "Wiederherstellung nicht für " + device.ip + " unterstützt" }
-                        device.ip to snap
-                    } }.awaitAll().toMap()
-                }
-                setRecoveryJournal(captured)
-            } else {
-                setRecoveryJournal(emptyMap())
+        if (chosen.isEmpty()) {
+            status = "Keine Lampen im Zielbereich. Unter Ziel die Auswahl prüfen."
+            return
+        }
+        if (chosen.size > 24) {
+            status = "Maximal 24 Lampen pro Lichtlauf; bitte eine kleinere Auswahl wählen."
+            return
+        }
+        task("Prüfe " + chosen.size + " Lampen für " + name + " …") {
+            // Preserve a previous unconfirmed stop journal. Never discard it
+            // on a second scene start or race a stop with new light commands.
+            if (recoveryPending) haltRunning(false)
+            val targets = SceneTargetPolicy.flowTargets(chosen)
+            val incompatible = targets.unsupported
+            val eligible = targets.supported
+            val uniqueCount = eligible.size + incompatible.size
+            val skipped = incompatible.map {
+                SceneLampResult(displayName(it), "Übersprungen",
+                    "start_cf wird vom Gerät nicht unterstützt")
             }
-            // Recovery information is written before the first light-changing command.
-            setRunningIps(chosen.map { it.ip }.toSet())
+            val failedPreflight = mutableListOf<SceneLampResult>()
+            val safe = if (restoreAfterStop) {
+                val gate = Semaphore(3)
+                val attempts = withContext(Dispatchers.IO) {
+                    eligible.map { device -> async {
+                        gate.withPermit {
+                            device to runCatching {
+                                val snap = YeelightLan.readStatus(device)
+                                require(SceneRecovery.supported(snap)) {
+                                    "Ausgangszustand nicht vollständig lesbar"
+                                }
+                                if (device.methods.isNotEmpty()) {
+                                    val required = SceneRecovery.commands(snap).map { it.method }
+                                    require(device.methods.containsAll(required)) {
+                                        "Wiederherstellung wird nicht unterstützt"
+                                    }
+                                }
+                                snap
+                            }
+                        }
+                    } }.awaitAll()
+                }
+                attempts.mapNotNull { (device, result) ->
+                    result.fold(
+                        onSuccess = { device to it },
+                        onFailure = {
+                            failedPreflight += SceneLampResult(displayName(device),
+                                "Übersprungen", it.message ?: "Status nicht lesbar")
+                            null
+                        }
+                    )
+                }
+            } else eligible.map { it to null }
+            val runnable = safe.map { it.first }
+            lastSceneReport = skipped + failedPreflight
+            if (runnable.isEmpty()) {
+                return@task "0/" + uniqueCount +
+                    " Lampen startbereit. Gerätebericht unter Szenen prüfen."
+            }
+            // Durable safety state is committed before the first light command.
+            setRecoveryJournal(safe.mapNotNull { (device, snap) ->
+                snap?.let { device.ip to it }
+            }.toMap())
+            setRunningIps(runnable.map { it.ip }.toSet())
+
+            var completed = 0
+            val gate = Semaphore(3)
             val results = withContext(Dispatchers.IO) {
-                chosen.mapIndexed { i, device -> async {
-                    try { YeelightLan.play(device, expression(i, chosen.size)); device.ip to null }
-                    catch (ex: Exception) { device.ip to (ex.message ?: "Fehler") }
+                runnable.mapIndexed { index, device -> async {
+                    gate.withPermit {
+                        val result = runCatching {
+                            YeelightLan.play(device, expression(index, runnable.size))
+                        }
+                        withContext(Dispatchers.Main.immediate) {
+                            completed++
+                            status = "Lichtlauf startet: " + completed + "/" + runnable.size +
+                                " Lampen geprüft …"
+                        }
+                        device to result
+                    }
                 } }.awaitAll()
             }
-            val successful = results.filter { it.second == null }.map { it.first }.toSet()
-            activeScene = if (successful.isNotEmpty()) id else null
-            val errors = results.filter { it.second != null }
-            if (errors.isEmpty()) name + " läuft auf " + successful.size + " Lampen" +
-                (if (restoreAfterStop) " · Wiederherstellung beim Stopp aktiv" else "")
-            else successful.size.toString() + "/" + chosen.size + " gestartet · " +
-                errors.first().first + ": " + errors.first().second +
-                " · für sicheren Stopp alle ausgewählten Lampen vorgemerkt"
+            val started = results.count { it.second.isSuccess }
+            val failed = results.filter { it.second.isFailure }.map { (device, result) ->
+                SceneLampResult(displayName(device), "Fehler",
+                    result.exceptionOrNull()?.message ?: "Start nicht bestätigt")
+            }
+            lastSceneReport = skipped + failedPreflight +
+                results.filter { it.second.isSuccess }.map { (device, _) ->
+                    SceneLampResult(displayName(device), "Läuft", "Animation über flowing bestätigt")
+                } + failed
+            activeScene = if (started > 0) id else null
+            val missed = uniqueCount - started
+            name + ": " + started + "/" + uniqueCount + " Lampen bestätigt" +
+                (if (missed > 0) " · " + missed + " nicht gestartet – Bericht ansehen" else "") +
+                (if (restoreAfterStop) " · vorheriger Lichtzustand gespeichert" else "")
         }
     }
 
@@ -748,12 +895,7 @@ class LoftController(context: Context) {
         startFlow(scene.id, scene.name, selected()) { index, _ -> scene.expression(index) }
 
     fun playChase(config: ChaseConfig, choice: String, name: String = "Lichtlauf") {
-        val chosen = chooseDevices(choice)
-        if (chosen.size > 24) {
-            status = "Der Lichtlauf unterstützt derzeit bis zu 24 Lampen"
-            return
-        }
-        startFlow("chase", name, chosen) { index, count ->
+        startFlow("chase", name, chooseDevices(choice)) { index, count ->
             ChaseCompiler.expression(config, index, count)
         }
     }
