@@ -40,7 +40,10 @@ class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
     fun begin(key: String, nowMs: Long): ChromaPreviewFrame? {
         val lane = lanes[key] ?: return null
         if (!allow(lane, nowMs) || lane.beganAt != null) return null
-        val frame = lane.session.begin(nowMs) ?: return null
+        val frame = lane.session.begin(nowMs) ?: run {
+            close(lane)
+            return null
+        }
         lane.beganAt = nowMs
         return frame
     }
@@ -84,6 +87,8 @@ class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
         if (frame != null) {
             lane.attempted++
             lane.colorAt = nowMs
+            // Stop at the exact 45th attempt, even without another event.
+            if (lane.attempted >= MAX_FRAMES_PER_LAMP) close(lane)
         }
         return frame
     }
@@ -104,6 +109,10 @@ class ChromaUdpOfflineFleet(specs: List<ChromaOfflineLampSpec>) {
 
     private fun allow(lane: Lane, nowMs: Long): Boolean {
         if (lane.stopped) return false
+        if (lane.beganAt != null && lane.session.state == ChromaPreviewState.CLOSED) {
+            close(lane)
+            return false
+        }
         val prior = lane.observedAt
         val start = lane.beganAt
         if (nowMs < 0 || (prior != null && nowMs < prior) ||
