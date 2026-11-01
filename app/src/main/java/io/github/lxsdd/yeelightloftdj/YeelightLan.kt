@@ -44,6 +44,8 @@ data class YeelightDevice(
 object YeelightLan {
     private val commandGate = DeviceCommandGate()
     private val tcp = YeelightTcpSessions()
+    /** Release LAN slots when the user leaves the app, including for Yeelight itself. */
+    fun releaseTcpConnections() = tcp.closeAll()
     private const val HOST = "239.255.255.250"
     private const val PORT = 1982
     private val seq = AtomicInteger(1)
