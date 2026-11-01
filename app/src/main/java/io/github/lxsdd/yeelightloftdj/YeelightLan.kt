@@ -1,7 +1,6 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -45,7 +44,7 @@ data class YeelightDevice(
 
 object YeelightLan {
     private const val QUARANTINED_IPS_KEY = "firmware-quota-blocked-ips"
-    @Volatile private var quotaStore: SharedPreferences? = null
+    @Volatile private var quotaJournal: QuotaPreferenceJournal? = null
     private val commandGate = DeviceCommandGate(
         onQuarantined = { ip -> writeQuarantine(ip, blocked = true) },
         onRecovered = { ip -> writeQuarantine(ip, blocked = false) }
@@ -66,24 +65,26 @@ object YeelightLan {
         val prefs = context.applicationContext.getSharedPreferences(
             "lan-firmware-safety", Context.MODE_PRIVATE
         )
-        val blockedIps = prefs.getStringSet(QUARANTINED_IPS_KEY, emptySet())
-            .orEmpty().toList()
-        // Do not hold the YeelightLan object monitor while acquiring per-IP
-        // gate locks: quarantine callbacks take these locks in reverse order
-        // (per-IP gate -> SharedPreferences writer).
-        quotaStore = prefs
+        val journal = QuotaPreferenceJournal(
+            readBlocked = {
+                prefs.getStringSet(QUARANTINED_IPS_KEY, emptySet()).orEmpty().toSet()
+            },
+            commitBlocked = { blocked ->
+                prefs.edit().putStringSet(QUARANTINED_IPS_KEY, blocked).commit()
+            },
+        )
+        val blockedIps = journal.snapshot()
+        // Install before enabling network commands. Never hold the journal
+        // monitor while acquiring a per-device gate monitor.
+        quotaJournal = journal
         blockedIps.forEach(commandGate::markQuarantined)
     }
 
-    @Synchronized
     private fun writeQuarantine(ip: String, blocked: Boolean) {
-        val store = quotaStore ?: return
-        val ips = store.getStringSet(QUARANTINED_IPS_KEY, emptySet()).orEmpty().toMutableSet()
-        if (blocked) ips.add(ip) else ips.remove(ip)
-        // Commit before a later process death; never publish these IPs.
-        check(store.edit().putStringSet(QUARANTINED_IPS_KEY, ips).commit()) {
-            "LAN-Quarantäne konnte nicht dauerhaft gespeichert werden"
-        }
+        // NEVER acquire YeelightLan's intrinsic monitor here. Music startup
+        // and stop hold it while waiting for a per-IP command gate. Taking
+        // it from the gate callback reverses that order and can deadlock.
+        quotaJournal?.update(ip, blocked)
     }
 
     fun isLanQuarantined(device: YeelightDevice): Boolean =
