@@ -25,6 +25,7 @@ class YeelightTcpSessions(
         // No user data, RGB values, cloud tokens or credentials are logged.
         runCatching { android.util.Log.i("LoftDjLan", event) }
     },
+    private val onFirmwareQuotaRejected: (String, String?) -> Unit = { _, _ -> },
     private val connect: (String, Int) -> Socket = { ip, port ->
         Socket().apply {
             connect(InetSocketAddress(ip, port), 1800)
@@ -92,9 +93,16 @@ class YeelightTcpSessions(
                                 reply.optJSONObject("error")?.optString("message")
                             )}" else "")
                         if (reply.has("error")) {
-                            // Explicit firmware rejections may leave the channel
-                            // in an unknown state; release the connection now.
+                            // Release this TCP slot before notifying the
+                            // per-IP safety gate. Every call path (including
+                            // future code) must observe a firmware quota error
+                            // even when the caller forgets to throw on JSON.
                             invalidate(key,session)
+                            val firmwareMessage = reply.optJSONObject("error")
+                                ?.optString("message", "Yeelight-Fehler")
+                            if (QuotaRecoveryPolicy.isQuotaRejection(firmwareMessage)) {
+                                onFirmwareQuotaRejected(ip, firmwareMessage)
+                            }
                         }
                         return reply
                     }
