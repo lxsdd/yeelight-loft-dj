@@ -35,6 +35,18 @@ class ChromaUdpOfflineSession(
     private val expectedSenderIp: String,
     private val support: Set<String>,
 ) {
+    /**
+     * Synthetic endpoint identity only. Never exposed in snapshots, logs or
+     * exceptions; it prevents two logical lanes from sharing one physical
+     * target and silently doubling a per-device simulated command budget.
+     */
+    internal val offlineEndpointIdentity: String =
+        expectedSenderIp.trim().lowercase(java.util.Locale.ROOT)
+
+    init {
+        require(offlineEndpointIdentity.isNotEmpty()) { "Simulated endpoint required" }
+    }
+
     private val evidence = ChromaUdpResearch.fromSupport(support)
     private val v2 = evidence == ChromaUdpResearchEvidence.UDP_SESSION_V2_ADVERTISED
     private val eligible = v2 ||

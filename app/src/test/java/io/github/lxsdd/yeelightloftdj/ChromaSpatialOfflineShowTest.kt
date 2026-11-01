@@ -242,4 +242,31 @@ class ChromaSpatialOfflineShowTest {
         assertFalse(declared.any { "socket" in it || "network" in it || "thread" in it })
         assertEquals(ChromaSpatialShowState.NEW, setup(2).show.state)
     }
+    @Test fun expiredOrBackwardClockCannotArmEvenWithCachedToken() {
+        val expired = setup(2)
+        assertFalse(expired.show.arm(15_000))
+        assertTrue(expired.show.allQuarantinedOrStopped())
+        assertTrue(expired.show.tick(15_001).isEmpty())
+        val backward = setup(2)
+        assertFalse(backward.show.arm(19)) // fake token replies at t=20
+        assertTrue(backward.show.allQuarantinedOrStopped())
+    }
+
+    @Test fun asymmetricPacingDefersWholeFourteenLampBatchWithoutPartialFrames() {
+        val h = setup(14)
+        val busy = h.lamps[0].key
+        assertNotNull(h.fleet.color(busy, 0x112233, 60, 30))
+        assertTrue(h.show.arm(30))
+        assertTrue(h.show.tick(30).isEmpty())
+        assertEquals(1, h.fleet.snapshot(busy)!!.framesAttempted)
+        assertEquals(0, h.lamps.drop(1).sumOf {
+            h.fleet.snapshot(it.key)!!.framesAttempted
+        })
+        assertEquals(ChromaSpatialShowState.ACTIVE, h.show.state)
+        val next = h.show.tick(130)
+        assertEquals(14, next.size)
+        assertEquals(14, next.map { it.key }.toSet().size)
+        assertEquals(15, h.lamps.sumOf { h.fleet.snapshot(it.key)!!.framesAttempted })
+    }
+
 }
