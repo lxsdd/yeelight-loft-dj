@@ -9,6 +9,22 @@ Stand: 1. November 2026 · Software-Entwicklung auf Draft-PR #31
 
 **Loft DJ v0.2.7:** Nach wenigen LAN-Bedienhandlungen meldete die Color4 „Wellness“ `client quota exceeded` und war anschließend auch in Yeelight Classic vorerst nicht steuerbar; „Couchtisch“ war erst nach Strom-Neustart wieder intakt. Ursache in exakt diesem Color4-Firmwarestand nicht durch Quellcode/Hardwaretrace bestätigt. Keine Gleichsetzung mit öffentlich dokumentierten Ceiling1-Timerbugs.
 
+## 1a. Color4-Einzelgeräte-Hardwareabnahme – PASS (Nutzerrückmeldung)
+
+**Datum:** 1. November 2026. **Version:** signierte Test-APK `v0.2.8-rc1`, Build 19, signierter GitHub-Run `41334164330` auf Commit `d34666e463ec722b881dc44ee0f25bf66d39091d`; dieselbe Anwendungsversion wie der bereinigte PR #31.
+
+Der Nutzer meldete nach dem vorgegebenen Testplan ausdrücklich **„passed“**. Dies bestätigt für die vorher festgelegte **intakte Color4 „Couchtisch“** folgende von ihm durchgeführte Grundabnahme:
+
+- In der Test-App: manuelle **Ein/Aus-Steuerung** erfolgreich.
+- In der Test-App: manuelle **Helligkeitsänderung** erfolgreich.
+- In der Test-App: manuelle **Farbänderung** erfolgreich.
+- Anschließend: **Yeelight Classic** blieb für Couchtisch steuerbar.
+- Keine gemeldete Quota-Ablehnung im Testverlauf.
+
+**Evidenzstufe:** positiv von der tatsächlich testenden Person bestätigt; nicht durch unabhängige Langzeit-Telemetrie/PCAP des Testlaufs bewiesen. Diese Freigabe gilt **nur für manuellen Einzelgerätetest**, nicht für ungedrosselte Farbwechsel, Music Mode, Scanner/Chase, Gruppenszenen oder die zuvor blockierte Lampe „Wellness“.
+
+**Folgestufe:** Gesonderte, bewusst kurz gehaltene **Music-Mode-Rückkanal-Hardwareabnahme** auf einer intakten Color4 nur bei explizitem `set_music`+`set_rgb` SUPPORT und ausschließlich nach Bestätigung des gezielten Hardwaretests. Bei der ersten Firmwareablehnung sofort abbrechen; andere Lampen unangetastet lassen. Keine vorzeitige Merge-/Release-Eskalation.
+
 ## 2. Offizielle Protokolle und Integrationsvoraussetzungen
 
 | Weg | Dokumentiert | Für Loft DJ tatsächlich implementiert | Risiko-/Eignungsgrenze |
