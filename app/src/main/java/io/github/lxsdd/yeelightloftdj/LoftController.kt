@@ -41,6 +41,10 @@ class LoftController(context: Context) {
     private var musicDeviceSession = prefs.getBoolean("music-light-session", false)
     private var musicColorBeat = 0L
     private var musicAcceptanceEpoch = 0L
+    private var dualAcceptanceActive = false
+    private var dualAcceptanceIps = emptyList<String>()
+    private var dualWritesByIp = emptyMap<String,Long>()
+    private var dualFailuresByIp = emptyMap<String,Long>()
     // The eight-second Color4 acceptance test also watches real non-beat
     // audio activity; it NEVER enables this fallback in normal LAN shows.
     private var acceptanceTestActive = false
@@ -1766,6 +1770,21 @@ class LoftController(context: Context) {
     /** Exactly one explicitly chosen Color4; self-stops after 15 seconds. */
     fun armColor4MusicAcceptance() = armMusicLightsInternal(acceptanceTest = true)
 
+    fun color4DualAcceptanceRefusal(): String? {
+        val chosen = selected().distinctBy { it.ip }
+        val blocked = chosen.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet()
+        return Color4DualAcceptancePolicy.refusal(chosen, blocked, recoveryPending)
+    }
+
+    /**
+     * Present for offline review, uncallable in this build: hard-coded
+     * release authorization is false and checked again INSIDE the task.
+     */
+    fun armColor4DualAcceptance() {
+        color4DualAcceptanceRefusal()?.let { status = it; return }
+        armMusicLightsInternal(acceptanceTest = true, dualTest = true)
+    }
+
     fun color4AcceptanceTargetName(): String? =
         selected().distinctBy { it.ip }.singleOrNull()?.let(::displayName)
 
@@ -1778,10 +1797,11 @@ class LoftController(context: Context) {
         )
     }
 
-    private fun armMusicLightsInternal(acceptanceTest: Boolean) {
+    private fun armMusicLightsInternal(acceptanceTest: Boolean, dualTest: Boolean = false) {
         if (!(microphoneRunning || InternalAudioBridge.running) || musicLightArmed) return
         if (acceptanceTest) {
-            val refusal = color4MusicAcceptanceRefusal()
+            val refusal = if (dualTest) color4DualAcceptanceRefusal()
+                else color4MusicAcceptanceRefusal()
             if (refusal != null) {
                 status = refusal
                 return
@@ -1805,11 +1825,12 @@ class LoftController(context: Context) {
                 // A safety decision taken before task scheduling must be
                 // rechecked here. Never auto-stop another bulb or retry
                 // unresolved recovery as a side effect of the test.
-                val refusal = Color4MusicAcceptancePolicy.refusal(
-                    chosen,
-                    chosen.filter(YeelightLan::isLanQuarantined)
-                        .map { it.ip }.toSet(),
-                    recoveryPending
+                val blockedNow = chosen.filter(YeelightLan::isLanQuarantined)
+                    .map { it.ip }.toSet()
+                val refusal = if (dualTest) Color4DualAcceptancePolicy.refusal(
+                    chosen,blockedNow,recoveryPending
+                ) else Color4MusicAcceptancePolicy.refusal(
+                    chosen,blockedNow,recoveryPending
                 )
                 if (refusal != null) return@task refusal
             } else if (recoveryPending) {
@@ -1891,6 +1912,12 @@ class LoftController(context: Context) {
             }
             val streamingCount = chosen.count(YeelightLan::musicModeActive)
             acceptanceTestActive = acceptanceTest
+            dualAcceptanceActive = acceptanceTest && dualTest
+            if (dualAcceptanceActive) {
+                dualAcceptanceIps = chosen.map { it.ip }
+                dualWritesByIp = dualAcceptanceIps.associateWith { 0L }
+                dualFailuresByIp = dualAcceptanceIps.associateWith { 0L }
+            }
             if (acceptanceTest) {
                 acceptanceStats = Color4MusicTestMetrics()
                 lastColor4TestReport = "Test läuft: empfange echte Audiodaten · keine simulierten Beats"
@@ -1905,13 +1932,15 @@ class LoftController(context: Context) {
                 // stopping a later session after an early manual disarm.
                 val token = ++musicAcceptanceEpoch
                 scope.launch {
-                    delay(Color4MusicAcceptancePolicy.DURATION_MS)
+                    delay(if (dualTest) Color4DualAcceptancePolicy.DURATION_MS
+                        else Color4MusicAcceptancePolicy.DURATION_MS)
                     if (musicLightArmed && musicDeviceSession &&
                         !musicStopPending && token == musicAcceptanceEpoch) {
                         disarmMusicLights()
                     }
                 }
-                "Color4-Einzeltest läuft · automatischer Stopp und Wiederherstellung nach 15 s"
+                if (dualTest) "Zwei-Color4-Abnahme läuft · automatischer Stopp nach 10 s"
+                else "Color4-Einzeltest läuft · automatischer Stopp und Wiederherstellung nach 15 s"
             } else "Musiklicht aktiviert · vorheriger Zustand gesichert"
         }
     }
@@ -1922,13 +1951,26 @@ class LoftController(context: Context) {
         val chosen = orderedDevices().filter { it.ip in runningDeviceIps }
         if (chosen.isEmpty()) return
         val allStreaming = chosen.all(YeelightLan::musicModeActive)
+        val dual = dualAcceptanceActive
+        if (dual && !Color4DualAcceptancePolicy.permitsFrame(
+                lastMusicCommandAt,now,acceptanceStats.writeAttempts,
+                chosen.size,chosen.count(YeelightLan::musicModeActive)
+            )) {
+            // Never degrade an active dual session to one bulb or ordinary LAN.
+            if (chosen.size != 2 || !allStreaming) {
+                musicLightArmed = false
+                disarmMusicLights()
+            }
+            return
+        }
         val dispatch = Color4MusicFrameDispatch.decide(
-            frame, lastMusicCommandAt, now,
-            acceptanceTest = acceptanceTestActive && chosen.size == 1,
+            frame,lastMusicCommandAt,now,
+            acceptanceTest = acceptanceTestActive &&
+                (chosen.size == 1 || (dual && chosen.size == 2)),
             allStreaming = allStreaming
         )
         if (dispatch == MusicFrameDispatch.NONE) return
-        if (acceptanceTestActive &&
+        if (acceptanceTestActive && !dual &&
             acceptanceStats.writeAttempts >= Color4MusicAcceptancePolicy.MAX_RGB_WRITES) return
         musicSending = true
         lastMusicCommandAt = now
@@ -1965,6 +2007,21 @@ class LoftController(context: Context) {
                 }
                 if (acceptanceTestActive) {
                     acceptanceStats = acceptanceStats.withWrites(attempted, problems.size, dispatch)
+                    if (dual) {
+                        // Each dispatched frame only adds attempts for its
+                        // independently live channel; failures stay per IP.
+                        chosen.forEach { device ->
+                            if (device.ip in problems ||
+                                YeelightLan.musicModeActive(device)) {
+                                dualWritesByIp = dualWritesByIp +
+                                    (device.ip to ((dualWritesByIp[device.ip] ?: 0L) + 1L))
+                            }
+                            if (device.ip in problems) {
+                                dualFailuresByIp = dualFailuresByIp +
+                                    (device.ip to ((dualFailuresByIp[device.ip] ?: 0L) + 1L))
+                            }
+                        }
+                    }
                 }
                 musicLightStatus = when {
                     acceptanceTestActive -> acceptanceStats.runningReport()
@@ -1976,8 +2033,15 @@ class LoftController(context: Context) {
                         "${attempted - problems.size}/${chosen.size} Lampen: Befehl gesendet · " +
                             "$paused pausiert · ${problems.size} Übertragungsfehler"
                 }
+                if (dual && (problems.isNotEmpty() || paused > 0 || chosen.size != 2)) {
+                    // Complete the active worker, then stop BOTH channels.
+                    musicLightArmed = false
+                }
             } finally {
                 musicSending = false
+                if (dual && !musicLightArmed && musicDeviceSession && !musicStopPending) {
+                    disarmMusicLights()
+                }
             }
         }
     }
@@ -1985,7 +2049,15 @@ class LoftController(context: Context) {
     private fun completeAcceptanceReport() {
         if (!acceptanceTestActive) return
         acceptanceTestActive = false
-        lastColor4TestReport = acceptanceStats.finishedReport()
+        val detail = if (dualAcceptanceActive) " · " +
+            Color4DualAcceptancePolicy.perDeviceReport(
+                dualAcceptanceIps,dualWritesByIp,dualFailuresByIp
+            ) else ""
+        lastColor4TestReport = acceptanceStats.finishedReport() + detail
+        dualAcceptanceActive = false
+        dualAcceptanceIps = emptyList()
+        dualWritesByIp = emptyMap()
+        dualFailuresByIp = emptyMap()
     }
 
     fun disarmMusicLights() {

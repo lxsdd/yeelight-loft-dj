@@ -185,7 +185,7 @@ fun MusicScreen(controller: LoftController) {
                 }
                 if (reading != null && audioRunning) {
                     Text("Live-Frequenzspektrum", color = Color.White, fontWeight = FontWeight.Medium)
-                    reading.bands.forEachIndexed { index, value ->
+                    reading.displayBands.forEachIndexed { index, value ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(bandLabels[index], color = Color(0xFFAAB6CE), fontSize = 11.sp,
                                 modifier = Modifier.width(74.dp))
@@ -197,6 +197,11 @@ fun MusicScreen(controller: LoftController) {
                             )
                         }
                     }
+                    Text(
+                        "Bandpegel relativ dargestellt · echte Beat- und Akzenterkennung " +
+                            "nutzt weiterhin unveränderte Audio-Messwerte.",
+                        color = Color(0xFF98A6C0), fontSize = 11.sp
+                    )
                     HorizontalDivider(color = Color(0xFF323A50))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Eingangssignal", color = Color(0xFFAAB6CE),
@@ -338,6 +343,12 @@ fun MusicScreen(controller: LoftController) {
                         }
                     }
                 }
+                val dualReadiness = controller.color4DualAcceptanceRefusal()
+                Text(
+                    dualReadiness ?: "Gemeinsamer Music-Mode nur nach separater Hardwarefreigabe.",
+                    color = Color(0xFFFFD38A), fontSize = 11.sp
+                )
+                // No dual-start action is exposed in this review-only build.
                 if (controller.lastColor4TestReport.isNotBlank()) {
                     HorizontalDivider(color = Color(0xFF323A50))
                     Text("Letzter Color4-Einzeltest – keine Zwei-Lampen-Messung",
