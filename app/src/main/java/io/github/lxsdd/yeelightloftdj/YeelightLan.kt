@@ -42,6 +42,7 @@ data class YeelightDevice(
 }
 
 object YeelightLan {
+    private val commandGate = DeviceCommandGate()
     private const val HOST = "239.255.255.250"
     private const val PORT = 1982
     private val seq = AtomicInteger(1)
@@ -364,6 +365,20 @@ object YeelightLan {
      * have switched and the ACK alone could have been lost.
      */
     fun setPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
+        return try {
+            commandGate.run(device.ip, requests = 2) {
+                directSetPowerVerified(device, on)
+            }.also { result ->
+                if (result.outcome == PowerOutcome.REJECTED)
+                    commandGate.recordFirmwareRejection(device.ip, result.message)
+            }
+        } catch (e: DeviceCommandGate.Deferred) {
+            PowerProbe(PowerOutcome.REJECTED,
+                message = e.message ?: "Yeelight-Befehlslimit erreicht")
+        }
+    }
+
+    private fun directSetPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
         require(isLocalIp(device.ip))
         if (device.methods.isNotEmpty() && "set_power" !in device.methods) {
             return PowerProbe(PowerOutcome.UNSUPPORTED,
@@ -458,6 +473,10 @@ object YeelightLan {
 
     /** Each command is CRLF-delimited and must return the matching explicit OK. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
+        commandGate.run(device.ip) { directSend(device, method, params) }
+    }
+
+    private fun directSend(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
         require(method in setOf("set_power", "start_cf", "stop_cf", "set_scene",
             "set_bright", "set_rgb", "set_ct_abx", "set_hsv"))
@@ -499,7 +518,10 @@ object YeelightLan {
      * Report the actual firmware 'flowing' property. Never treat a command OK
      * as evidence that the animation is still active.
      */
-    fun readFlowing(device: YeelightDevice): Boolean? {
+    fun readFlowing(device: YeelightDevice): Boolean? =
+        commandGate.run(device.ip) { directReadFlowing(device) }
+
+    private fun directReadFlowing(device: YeelightDevice): Boolean? {
         require(isLocalIp(device.ip))
         val requestId = seq.getAndIncrement()
         val payload = JSONObject().put("id", requestId).put("method", "get_prop")
@@ -544,7 +566,10 @@ object YeelightLan {
         )
     }
 
-    fun readRecoveryObservation(device: YeelightDevice): RecoveryObservation {
+    fun readRecoveryObservation(device: YeelightDevice): RecoveryObservation =
+        commandGate.run(device.ip) { directReadRecoveryObservation(device) }
+
+    private fun directReadRecoveryObservation(device: YeelightDevice): RecoveryObservation {
         require(isLocalIp(device.ip))
         val id = seq.getAndIncrement()
         val properties = listOf("flowing") + LampSnapshot.properties
@@ -581,7 +606,10 @@ object YeelightLan {
         methods.isEmpty() || "set_scene" in methods
 
     /** One status read over a fresh TCP connection; no fabricated device states. */
-    fun readStatus(device: YeelightDevice): LampSnapshot {
+    fun readStatus(device: YeelightDevice): LampSnapshot =
+        commandGate.run(device.ip) { directReadStatus(device) }
+
+    private fun directReadStatus(device: YeelightDevice): LampSnapshot {
         require(isLocalIp(device.ip))
         val requestId = seq.getAndIncrement()
         val params = JSONArray(LampSnapshot.properties)
