@@ -92,3 +92,34 @@ Zusätzliche synthetische Regressionen sichern insbesondere die
 Xtensa-Sonderregel ab: Auch ein formal kleines 16-bit-Immediate
 (0x0010) bezeichnet bei L32R eine **negative** Wortverschiebung,
 denn die oberen 14 Offsetbits sind immer 1.
+
+
+## Fortgesetzte private Originalanalyse: statische Xtensa-CALL8-Aufrufkandidaten
+
+Die originale 2.1.7_0039-Datei blieb lokal und wurde erneut mit SHA-256 und exaktem OEM-Tabellennachweis vor jeder öffentlichen Adressanalyse geprüft. Der neue **lesende** Analysator `tools/color4_quota_callgraph_candidates.py` nutzt die zuvor verifizierten Fehler-Literalreferenzen. Die Instruktionsformel folgt Espressifs Xtensa WindowedOption CALL8: ein vorzeichenbehaftetes 18-bit-Wortoffset relativ zu `((PC & ~3) + 4)`. Für echte CALL8-Kodierungen ist diese Einzelzielberechnung deterministisch; das Scannen von Bytebereichen validiert dagegen **keine** Instruktionsgrenzen oder Erreichbarkeit.
+
+### Tatsächlich im exakten Stockimage gefundene Adressevidenz
+
+| Feld | Kandidat A | Kandidat B |
+|---|---|---|
+| ENTRY-ähnlicher Beginn | `0x40115D08` | `0x40122834` |
+| L32R auf Literal `0x40109B38` | `0x40115D0B` | `0x40122837` |
+| CALL8-kodierte Position (+20 ab L32R) | `0x40115D1F` | `0x4012284B` |
+| Rechnerisch identisches CALL8-Ziel | `0x4013791C` | `0x4013791C` |
+| Eingehende CALL8-kodierte Bytepositionen | `0x401163A1` (1) | `0x40122B9D` (1) |
+
+Am gemeinsamen Ziel `0x4013791C` ist ebenfalls ein übliches Xtensa-ENTRY-Präfix abgebildet. **211 weitere rohe CALL8-Kandidaten** im Image berechnen dieselbe Zieladresse. Dieser hohe Grad der Nutzung ist ein klarer Grund, den Helfer als *potenziell generisch* zu behandeln und **nicht** als Quota-spezifischen Refill-Timer zu deklarieren. Die gezählten 211 Kandidaten wurden noch nicht vollständig entlang gültiger Xtensa-Instruktionsgrenzen disassembliert.
+
+### Neue Software-Qualifikation
+
+- Der vollständige Bericht enthält ausschließlich Speicheradressen, Trefferzahlen und Sicherheitsflags; niemals OEM-Codebytes, Firmwareabbilder, private IPs oder Gerätetoken.
+- Die nachgewiesene Vollständigkeit der Datei bleibt Voraussetzung. Falsches Image, falsche Prüfsumme oder abweichender Modellstand führen zu `REJECTED` und Exitcode 2.
+- Der Parser priorisiert nur zwei direkt durch ENTRY-ähnliche Bytes gestützte L32R-Kandidaten ohne Zeiger-Tabellen-Häufung; der dritte ursprüngliche Rohbyte-Fund bleibt in der vorangegangenen Analyse enthalten, wird aber nicht als Funktion beworben.
+- Die rückwärts gerichtete CALL8-Suche betrachtet ausschließlich als ausführbar eingeordnete ESP32-Segmente. False-Positive-Grenzen werden ausdrücklich ausgegeben: `function_reachable_proven=false`, `inbound_instruction_boundaries_proven=false`, `quota_counter_or_refill_function_identified=false`, `firmware_patch_safe=false`.
+- 12 weitere synthetische Regressionstests verifizieren Vorzeichen-/18-bit-CALL8-Arithmetik, rückwärts/aufwärts gerichtete Offsets, Opcode-Filter, zwei gemeinsame Ziele, fehlende ENTRY-/CALL8-Anker, unterschiedliche Helfer, Datensegment-Rauschmuster, Datenschutz und exakte Stock-Zulassung.
+
+### Nächster technischer Nachweis
+
+Die wahrscheinlich relevante Frage ist nun, welche Funktion die beiden ENTRY-Bereiche *wirklich* darstellen und welche der 211 Aufrufstellen gültige Xtensa-Befehle sind. Dazu bedarf es eines vollständigen Xtensa-LX6-Disassemblers mit nachvollziehbarer Befehlsgrenzen- und Kontrollflussauflösung. Der neue Analysator behauptet bewusst **nicht**, die permanenten LAN-Limits oder den 49,7-Tage-Refill-Bug gefunden zu haben. Es wurde nichts gepatcht, geflasht, gesendet oder veröffentlicht.
+
+ISA-Quelle: https://github.com/espressif/xtensa-isa-doc/blob/main/WindowedOption.tex
