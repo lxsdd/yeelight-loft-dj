@@ -107,6 +107,32 @@ class ChromaUdpOfflineSessionTest {
         assertNull(sim.keepAlive(10000))
     }
 
+    @Test fun bareErrorWithoutParamsFailsClosedInsteadOfBeingIgnored() {
+        val sim = ChromaUdpOfflineSession(ip, v2)
+        sim.begin(0)
+        val bareError = JSONObject().put("id", 1).put("error",
+            JSONObject().put("code", -1).put("message", "quota"))
+        assertEquals(ChromaPreviewEvent.CLOSED_ON_DEVICE_ERROR,
+            sim.acceptReply(ip, bareError.toString(), 10))
+        assertEquals(ChromaPreviewState.CLOSED, sim.state)
+        assertFalse(sim.tokenHeld)
+        assertNull(sim.begin(11))
+    }
+
+    @Test fun foreignOrMismatchedErrorMustNotCloseValidSession() {
+        val sim = ChromaUdpOfflineSession(ip, v2)
+        sim.begin(0)
+        val bareError = JSONObject().put("id", 1).put("error",
+            JSONObject().put("code", -1))
+        assertEquals(ChromaPreviewEvent.IGNORED_FOREIGN_SENDER,
+            sim.acceptReply("192.168.1.22", bareError.toString(), 1))
+        val wrongId = JSONObject().put("id", 7).put("error",
+            JSONObject().put("code", -1))
+        assertEquals(ChromaPreviewEvent.IGNORED_UNEXPECTED_REPLY,
+            sim.acceptReply(ip, wrongId.toString(), 2))
+        assertEquals(ChromaPreviewState.AWAITING_TOKEN, sim.state)
+    }
+
     @Test fun tokenizedKeepAliveRequiresMatchingIdSenderAndToken() {
         val sim = startActive()
         assertNull(sim.keepAlive(9999))

@@ -87,12 +87,9 @@ class ChromaUdpOfflineSession(
         val parsed = try { JSONObject(payload) } catch (_: Exception) {
             return ChromaPreviewEvent.IGNORED_INVALID_REPLY
         }
-        if (!parsed.has("id") || !parsed.has("method") ||
-            !parsed.has("params") || parsed.opt("params") !is JSONObject) {
-            return ChromaPreviewEvent.IGNORED_INVALID_REPLY
-        }
+        // Device failures need not include params/method; fail CLOSED as soon
+        // as a matching response ID carries an error, with no retry or token.
         val replyId = parsed.optInt("id", -1)
-        val method = parsed.optString("method")
         val expectedId = if (state == ChromaPreviewState.AWAITING_TOKEN)
             handshakeId else pendingKeepaliveId
         if (replyId <= 0 || replyId != expectedId) {
@@ -102,6 +99,11 @@ class ChromaUdpOfflineSession(
             close()
             return ChromaPreviewEvent.CLOSED_ON_DEVICE_ERROR
         }
+        if (!parsed.has("method") || !parsed.has("params") ||
+            parsed.opt("params") !is JSONObject) {
+            return ChromaPreviewEvent.IGNORED_INVALID_REPLY
+        }
+        val method = parsed.optString("method")
         if (method != expectedReplyMethod) return ChromaPreviewEvent.IGNORED_UNEXPECTED_REPLY
         val candidate = parsed.getJSONObject("params").optString("token", "")
         if (!HEX_TOKEN.matches(candidate)) return ChromaPreviewEvent.IGNORED_INVALID_REPLY
