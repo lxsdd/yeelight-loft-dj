@@ -55,3 +55,11 @@ Auf den beiden tatsächlichen Uploads wurde zusätzlich ein lokales, noch detail
 4. **Loft DJ:** Produktive Quota-Quarantäne-/Rate-Limit-Korrektur bleibt im separaten PR #31. **Ein konservativer Client heilt keinen nicht mehr neu bewaffneten Firmware-Timer.**
 
 **Fazit:** Die Originalimages sind authentisch im Sinn von **Kataloghash-/Größengleichheit**, nicht im strengeren Sinn einer bestätigten OEM-Signatur. Sie zeigen einen echten `color4`-LAN-Quota-Fehlerpfad und bei `ceiling1` **ebenfalls den echten LAN-Quota-Fehlertext nach erfolgreichem MediaTek-FOTA-LZMA-Entpacken**. **Eine modifizierte, sicher wiederherstellbare Originalfirmware kann derzeit noch nicht bereitgestellt werden.**
+
+## 01.11.2026 – Produktfehler ausdrücklich von Color4 trennen
+
+**Verbindliche Nutzeranforderung:** `ceiling1` (YLXD01YL) hat primär **sporadische WLAN-Ausfälle/fehlende Wiederanmeldung sowie zeitweise Yeelight-/Google-Home-/Sprachsteuerungs-Unerreichbarkeit**. `client quota exceeded` wurde an dieser Deckenlampe nicht als dominantes Nutzerproblem beobachtet. **Dagegen ist `color4` (1S RGB) das tatsächliche schnelle LAN-Quota-/Farbsteuerungsproblem.** Beide OEM-Binaries enthalten die generische Fehlerzeichenkette; das liefert **keinen** Anlass, dieselbe Root Cause oder dieselbe Reparatur anzunehmen.
+
+Die ursprüngliche Priorisierung „Ceiling1-Quota-Timer zuerst“ war daher für das Produktziel falsch. Weitere Forschung bei ceiling1 richtet sich auf **WLAN-Station-Disconnect und Auto-Reconnect, DHCP-/IP-Stack, WLAN-N9-/Watchdog sowie nachgeordnete Cloud-/App-Sitzungen**. Besonders wichtig sind AP-aktuell-verbunden vs. historischer FRITZ!Box-Logeintrag vs. DHCP-Lease, Cloud-Steuerbarkeit und BLE; mehrere Zeitpunkte dürfen nicht scheinbar kausal vermischt werden.
+
+**Neue echte Binärbefunde** werden im getrennten [WLAN-Problempfad-Bericht](CEILING1_WLAN_ROOT_CAUSE_RESEARCH_DE.md) dokumentiert. Für color4 bleibt [Issue #32](https://github.com/lxsdd/yeelight-loft-dj/issues/32), für ceiling1 [Issue #29](https://github.com/lxsdd/yeelight-loft-dj/issues/29) maßgeblich. Kein OTA oder WLAN-Recovery-Schreibversuch.

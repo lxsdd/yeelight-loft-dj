@@ -48,3 +48,7 @@ Das Forschungsskript und zehn synthetische Python-Regressionen sind dem öffentl
 
 **Erst nach erfolgreichem Empfang und lokaler Offlineanalyse eines unveränderten Images** können wir bei `ceiling1` den vermutlich relevanten MT7697-Firmwarecontainer, die Timer-/WLAN-/Cloud-Routinen, eventuelle Signaturen sowie die Möglichkeiten einer vollständig sicheren Wiederherstellung überprüfen. Insbesondere ist aus einem `2.0.6_0193`-Archivtreffer **nicht** ableitbar, dass diese Firmware erfolgreich ausgerollt oder auf die betroffene Lampe installierbar ist. Ohne verifizierte Wiederherstellung und getrennte ausdrückliche Hardwarefreigabe **kein** OTA, Downgrade oder Patch.
 
+
+## Klarstellung zur Priorität nach Nutzerkorrektur (01.11.2026)
+
+Die Entpackung des OEM-Ceiling1-Images und die Zeichenkette `client quota exceeded` werden **nicht** als Nachweis einer Quota-Störung dieser Deckenlampe behandelt. Das konkrete Nutzerproblem ist das **teilweise dauerhaft verschwundene WLAN und ausbleibende Wiederverbinden**, zuweilen mit funktionierendem BLE. Der Quota-Zustand gehört bei dieser Entwicklung zu **Color4**. Die Ceiling1-Firmware wird deshalb primär hinsichtlich **Wi-Fi-Eventhandlern, Reconnect, DHCP, Watchdog und Cloud-Session** betrachtet. Aktuell keine Verbindung zur Fehlerursache belegt. Mehr dazu: [Ceiling1-WLAN-Forschungsakte](CEILING1_WLAN_ROOT_CAUSE_RESEARCH_DE.md).
