@@ -1,0 +1,46 @@
+package io.github.lxsdd.yeelightloftdj
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class RecoveryReadPolicyTest {
+    private fun snap(on: Boolean, color: Int = 0xFF0000) =
+        LampSnapshot(on,50,1,color,null,null,null)
+
+    @Test fun neverClearRunningOrUnreadableFlow() {
+        assertEquals(RecoveryReadDecision.FLOW_STILL_RUNNING,
+            RecoveryReadPolicy.decide(true,snap(false),null,false))
+        assertEquals(RecoveryReadDecision.UNKNOWN,
+            RecoveryReadPolicy.decide(null,snap(false),null,false))
+        assertFalse(RecoveryReadPolicy.canClear(RecoveryReadDecision.UNKNOWN))
+    }
+    @Test fun stoppedFlowWithoutSavedOriginalCanReleaseJustItsOwnMarker() {
+        val d = RecoveryReadPolicy.decide(false,snap(true),null,false)
+        assertEquals(RecoveryReadDecision.FLOW_STOPPED_NO_SNAPSHOT,d)
+        assertTrue(RecoveryReadPolicy.canClear(d))
+    }
+    @Test fun savedOriginalMustMatchExactlyForAutomaticRelease() {
+        assertEquals(RecoveryReadDecision.ALREADY_RESTORED,
+            RecoveryReadPolicy.decide(false,snap(true),snap(true),false))
+        assertEquals(RecoveryReadDecision.RESTORE_REQUIRED,
+            RecoveryReadPolicy.decide(false,snap(true,0x00FF00),snap(true),false))
+        assertEquals(RecoveryReadDecision.RESTORE_REQUIRED,
+            RecoveryReadPolicy.decide(false,snap(false),snap(true),false))
+    }
+    @Test fun offOriginalMayIgnoreStaleColorRegisters() {
+        assertTrue(RecoveryReadPolicy.matches(snap(false,0xFF0000),
+            snap(false,0x00FF00)))
+    }
+    @Test fun scannerOffIsIndependentOfUnsupportedFlowingProperty() {
+        assertEquals(RecoveryReadDecision.SCANNER_OFF,
+            RecoveryReadPolicy.decide(null,snap(false),null,true))
+        assertEquals(RecoveryReadDecision.UNKNOWN,
+            RecoveryReadPolicy.decide(null,snap(true),null,true))
+    }
+    @Test fun unknownPropertyDoesNotReleaseSavedSnapshot() {
+        assertEquals(RecoveryReadDecision.UNKNOWN,
+            RecoveryReadPolicy.decide(false,null,snap(true),false))
+        assertEquals(RecoveryReadDecision.UNKNOWN,
+            RecoveryReadPolicy.decide(null,snap(true),snap(true),false))
+    }
+}
