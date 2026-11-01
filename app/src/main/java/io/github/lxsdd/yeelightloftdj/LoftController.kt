@@ -1752,7 +1752,7 @@ class LoftController(context: Context) {
         selected().distinctBy { it.ip }.joinToString(" + ") { displayName(it) }
             .ifBlank { "keine Lampen ausgewählt" }
 
-    fun color4PairReadiness(): Color4PairCheckResult {
+    internal fun color4PairReadiness(): Color4PairCheckResult {
         val requested = selected().distinctBy { it.ip }
         val blocked = requested.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet()
         return Color4PairReadinessPolicy.assess(requested, blocked, recoveryPending)
