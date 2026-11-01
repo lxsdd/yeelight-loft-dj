@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
@@ -35,12 +36,14 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
@@ -88,9 +91,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun LoftApp(controller: LoftController) {
     var page by remember { mutableIntStateOf(0) }
+    var detailRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    var parentRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    // Route-local editor controls must survive navigating to the target picker.
+    val routeState = rememberSaveableStateHolder()
+    val goBack: () -> Unit = {
+        detailRoute = parentRoute
+        parentRoute = null
+    }
+    BackHandler(enabled = detailRoute != null) { goBack() }
     var orderMode by remember { mutableStateOf(false) }
     var stagedOrder by remember { mutableStateOf<List<String>>(emptyList()) }
     val scrollState = rememberLazyListState()
+    LaunchedEffect(detailRoute, page) { scrollState.scrollToItem(0) }
     val feedback = LocalHapticFeedback.current
     val dragState = rememberReorderableLazyListState(scrollState) { from, to ->
         val source = (from.key as? String)?.takeIf { it.startsWith("sort:") }
@@ -107,7 +120,7 @@ private fun LoftApp(controller: LoftController) {
     Scaffold(
         containerColor = night,
         bottomBar = {
-            NavigationBar(containerColor = panel) {
+            if (detailRoute == null) NavigationBar(containerColor = panel) {
                 val pages = listOf("Home", "Szenen", "Geräte", "Musik")
                 val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices, Icons.Rounded.GraphicEq)
                 pages.forEachIndexed { index, label ->
@@ -132,12 +145,74 @@ private fun LoftApp(controller: LoftController) {
             if (controller.recoveryPending) {
                 item(key = "recovery-action") { RecoveryBanner(controller) }
             }
-            when (page) {
+            if (detailRoute != null) {
+                item(key = "detail-back") {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        OutlinedButton(onClick = goBack) { Text("← Zurück") }
+                        Text(
+                            when (detailRoute) {
+                                "chase" -> "Lichtlauf-Studio"
+                                "transfer" -> "Szenenbibliothek"
+                                "target" -> "Lampen auswählen"
+                                "rooms" -> "Räume verwalten"
+                                "network" -> "Geräte & Netzwerk prüfen"
+                                else -> "Lampendetails"
+                            },
+                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                        )
+                    }
+                }
+                when (detailRoute) {
+                    "chase" -> {
+                        item(key = "chase-target") {
+                            CompactTargetCard(controller, onEdit = {
+                                parentRoute = detailRoute
+                                detailRoute = "target"
+                            })
+                        }
+                        item(key = "chase-editor") {
+                            routeState.SaveableStateProvider("chase-editor") {
+                                ChasePanel(controller)
+                            }
+                        }
+                        item(key = "chase-results") { SceneLampReport(controller) }
+                    }
+                    "target" -> item(key = "target-manager") {
+                        routeState.SaveableStateProvider("target-manager") {
+                            TargetSelector(controller)
+                        }
+                    }
+                    "rooms" -> item(key = "room-manager") {
+                        RoomAssignmentEditor(controller, initiallyExpanded = true)
+                    }
+                    "network" -> item(key = "network-diagnostics") {
+                        DeviceTools(controller, initiallyExpanded = true)
+                    }
+                    "transfer" -> item(key = "scene-import-export") {
+                        SceneExchangePanel(controller)
+                    }
+                    else -> {
+                        val id = detailRoute?.removePrefix("device:")
+                        val device = controller.devices.firstOrNull { it.id == id }
+                        if (device != null) {
+                            item(key = "device-details") {
+                                routeState.SaveableStateProvider("device:" + device.id) {
+                                    DeviceCard(device, controller, initiallyExpanded = true)
+                                }
+                            }
+                        } else {
+                            item { Note("Das Gerät ist nicht mehr vorhanden. Zurück zur Geräteliste wechseln.") }
+                        }
+                    }
+                }
+            } else when (page) {
                 0 -> {
                     item { Hero(controller, onScene = { page = 1 }, onDevice = { page = 2 }) }
                     item { Heading("Deine Lichtwelten", "Ein Tipp – und dein Loft verwandelt sich.") }
-                    item { TargetSelector(controller) }
-                    item { SceneRestoreOption(controller) }
+                    item {
+                        CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                    }
                     item { TargetPowerControls(controller) }
                     items(SceneLibrary.scenes.take(2), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
@@ -146,12 +221,19 @@ private fun LoftApp(controller: LoftController) {
                 }
                 1 -> {
                     item { Heading("Lichtshows", "Farbverläufe direkt auf den Lampen") }
-                    item { TargetSelector(controller) }
+                    item {
+                        CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                    }
                     item { SceneRestoreOption(controller) }
                     items(controller.allScenes(), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
-                    item(key = "scene-workshop") { CollapsibleSettings(controller) }
+                    item(key = "scene-workshop") {
+                        WorkshopNavigation(
+                            onChase = { detailRoute = "chase" },
+                            onTransfer = { detailRoute = "transfer" },
+                        )
+                    }
                     item(key = "scene-lamp-report") { SceneLampReport(controller) }
                     if (!controller.recoveryPending) item { StopButton(controller) }
                     item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Echte Musikreaktion findest du unter Musik.") }
@@ -289,10 +371,28 @@ private fun LoftApp(controller: LoftController) {
                             }
                         }
                     } else {
-                        item { RoomAssignmentEditor(controller) }
-                        item { DeviceTools(controller) }
+                        item {
+                            Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Button(onClick = controller::discover, enabled = !controller.busy,
+                                        modifier = Modifier.fillMaxWidth()) { Text("Lampen suchen") }
+                                    OutlinedButton(onClick = { detailRoute = "rooms" },
+                                        modifier = Modifier.fillMaxWidth()) {
+                                        Text("Räume & Gruppen verwalten")
+                                    }
+                                    OutlinedButton(onClick = { detailRoute = "network" },
+                                        modifier = Modifier.fillMaxWidth()) {
+                                        Text("Netzwerkdiagnose & Geräte hinzufügen")
+                                    }
+                                }
+                            }
+                        }
                         items(controller.orderedDevices(), key = { it.id }) { device ->
-                            DeviceCard(device, controller)
+                            DeviceSummaryCard(
+                                device, controller,
+                                onDetails = { detailRoute = "device:" + device.id }
+                            )
                         }
                     }
                     if (controller.devices.isEmpty()) {
@@ -300,7 +400,9 @@ private fun LoftApp(controller: LoftController) {
                     }
                 }
                 else -> {
-                    item { TargetSelector(controller) }
+                    item {
+                        CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                    }
                     item { MusicScreen(controller) }
                 }
             }
@@ -425,6 +527,7 @@ private fun SceneCard(scene: LoftScene, enabled: Boolean, active: Boolean, onPla
 @Composable
 private fun TargetSelector(controller: LoftController) {
     var showSingles by remember { mutableStateOf(false) }
+    var newGroupName by rememberSaveable { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Ziel · " + controller.targetLabel(controller.target) +
             " (" + controller.selectedCount() + " Lampen)", color = Color.White,
@@ -480,36 +583,64 @@ private fun TargetSelector(controller: LoftController) {
             Text(controller.targetDescription(controller.target),
                 color = muted, fontSize = 12.sp)
         }
-        if (controller.target == "Loft") {
-            var editLoft by rememberSaveable { mutableStateOf(false) }
-            TextButton(onClick = { editLoft = !editLoft }) {
-                Text(if (editLoft) "Loft-Gruppe schließen" else "Loft-Gruppe bearbeiten")
-            }
-            if (editLoft) {
-                Text("Loft-Mitglieder unabhängig von den Räumen auswählen.",
-                    color = muted, fontSize = 12.sp)
-                controller.orderedDevices().forEach { device ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = device.id in controller.loftMemberIds(),
-                            onCheckedChange = { controller.setLoftMember(device.id, it) },
-                            enabled = controller.canOrganizeLamps
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
-                            Text(controller.roomFor(device), color = muted, fontSize = 11.sp)
-                        }
-                        TextButton(
-                            onClick = { controller.identifyLamp(device) },
-                            enabled = controller.canIdentifyLamp(device)
-                        ) { Text("Identifizieren", fontSize = 11.sp) }
+        HorizontalDivider(color = Color(0xFF374052))
+        Text("Eigene Gruppen", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Text("Beliebig benannte Gruppen mit den gewünschten Lampen erstellen und bearbeiten.",
+            color = muted, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = newGroupName,
+                onValueChange = { newGroupName = it.take(40) },
+                modifier = Modifier.weight(1f),
+                label = { Text("Neuer Gruppenname") }, singleLine = true)
+            Button(
+                onClick = {
+                    controller.addGroup(newGroupName)
+                    newGroupName = ""
+                },
+                enabled = controller.canOrganizeLamps &&
+                    NamedLampGroups.validName(newGroupName.trim())
+            ) { Text("Anlegen") }
+        }
+        if (controller.target.startsWith("Gruppe:")) {
+            val selected = controller.target.removePrefix("Gruppe:")
+            var renamed by rememberSaveable(selected) { mutableStateOf(selected) }
+            Text("Gruppenmitglieder · " + selected, color = Color.White,
+                fontWeight = FontWeight.SemiBold)
+            controller.orderedDevices().forEach { device ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = device.id in controller.namedGroups[selected].orEmpty(),
+                        onCheckedChange = { controller.setGroupMember(selected, device.id, it) },
+                        enabled = controller.canOrganizeLamps
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
+                        Text(controller.roomFor(device), color = muted, fontSize = 11.sp)
+                    }
+                    TextButton(onClick = { controller.identifyLamp(device) },
+                        enabled = controller.canIdentifyLamp(device)) {
+                        Text("Erkennen", fontSize = 11.sp)
                     }
                 }
+            }
+            OutlinedTextField(value = renamed,
+                onValueChange = { renamed = it.take(40) },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                label = { Text("Gruppe umbenennen") })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = controller::resetLoftMembers,
+                    onClick = { controller.renameGroup(selected, renamed) },
+                    enabled = controller.canOrganizeLamps &&
+                        NamedLampGroups.validName(renamed.trim()) &&
+                        renamed.trim() != selected,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Speichern") }
+                TextButton(
+                    onClick = { controller.deleteGroup(selected) },
                     enabled = controller.canOrganizeLamps,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Loft wieder nach Räumen zusammenstellen") }
+                    modifier = Modifier.weight(1f)
+                ) { Text("Gruppe löschen") }
             }
         }
     }
@@ -555,31 +686,74 @@ private fun SceneLampReport(controller: LoftController) {
 }
 
 @Composable
-private fun CollapsibleSettings(controller: LoftController) {
-    var showChase by rememberSaveable { mutableStateOf(false) }
-    var showTransfer by rememberSaveable { mutableStateOf(false) }
+private fun WorkshopNavigation(onChase: () -> Unit, onTransfer: () -> Unit) {
     Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(15.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Szenenwerkstatt", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
-            Text("Lichtshows starten oder gezielt die erweiterten Werkzeuge öffnen.",
-                fontSize = 12.sp, color = muted)
-            OutlinedButton(onClick = { showChase = !showChase }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (showChase) "Lichtlauf-Editor schließen" else "Lichtlauf-Editor öffnen")
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Szenenwerkstatt", color = Color.White,
+                fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Text("Öffne ein übersichtliches Studio statt eines langen Editors mitten in der Liste.",
+                color = muted, fontSize = 12.sp)
+            Button(onClick = onChase, modifier = Modifier.fillMaxWidth()) {
+                Text("Lichtlauf-Studio öffnen")
             }
-            OutlinedButton(onClick = { showTransfer = !showTransfer }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (showTransfer) "Import/Export schließen" else "Szenen importieren / exportieren")
+            OutlinedButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth()) {
+                Text("Szenen importieren & exportieren")
             }
         }
     }
-    if (showChase) ChasePanel(controller)
-    if (showTransfer) SceneExchangePanel(controller)
 }
 
 @Composable
-private fun DeviceTools(controller: LoftController) {
+private fun CompactTargetCard(controller: LoftController, onEdit: () -> Unit) {
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Row(Modifier.fillMaxWidth().padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Aktuelle Lampenauswahl", color = muted, fontSize = 12.sp)
+                Text(controller.targetLabel(controller.target) +
+                    " · " + controller.selectedCount() + " Lampen",
+                    color = Color.White, fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(onClick = onEdit) { Text("Ändern") }
+        }
+    }
+}
+
+@Composable
+private fun DeviceSummaryCard(
+    device: YeelightDevice,
+    controller: LoftController,
+    onDetails: () -> Unit
+) {
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Lightbulb, null, tint = lavender)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontWeight = FontWeight.SemiBold)
+                    Text(controller.roomFor(device) + " · " +
+                        DeviceCapabilities.summary(device),
+                        color = muted, fontSize = 11.sp)
+                }
+                TextButton(onClick = onDetails) { Text("Steuern →") }
+            }
+            TextButton(
+                onClick = { controller.identifyLamp(device) },
+                enabled = controller.canIdentifyLamp(device)
+            ) { Text("Lampe identifizieren") }
+        }
+    }
+}
+
+@Composable
+private fun DeviceTools(controller: LoftController, initiallyExpanded: Boolean = false) {
     var ip by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = controller::discover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Rounded.Search, null)
@@ -600,6 +774,18 @@ private fun DeviceTools(controller: LoftController) {
                 Text(controller.searchDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
                 Text("Yeelight nutzt SSDP-ähnliches UDP-Multicast (nicht mDNS). Antworten kommen einzeln per Unicast; Direkt-LAN prüft unabhängig davon TCP 55443. Je Suchrunde werden unterschiedliche Lampen gezählt.", color = muted, fontSize = 11.sp)
             }
+        }
+        OutlinedButton(
+            onClick = controller::extendedMulticastDiagnostic,
+            enabled = !controller.busy && controller.devices.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("12-Runden-Multicast-Gegenprobe (nur lesend)") }
+        Text("Jede Lampe einzeln: UDP-Antworten pro Suchrunde vs. TCP-Erreichbarkeit",
+            color = muted, fontSize = 12.sp)
+        controller.orderedDevices().forEach { device ->
+            Text(controller.displayName(device) + " · " + controller.discoveryDetail(device),
+                color = if (device.ip in controller.lastMulticastIps)
+                    Color(0xFF80D9C6) else muted, fontSize = 11.sp)
         }
         OutlinedButton(
             onClick = controller::compareDirectedUdp,
@@ -638,8 +824,9 @@ private fun DeviceTools(controller: LoftController) {
 }
 
 @Composable
-private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
-    var expanded by remember(device.id) { mutableStateOf(false) }
+private fun DeviceCard(device: YeelightDevice, controller: LoftController,
+    initiallyExpanded: Boolean = false) {
+    var expanded by remember(device.id) { mutableStateOf(initiallyExpanded) }
     var localAlias by remember(device.id) { mutableStateOf(controller.aliasFor(device)) }
     var showRemoveConfirm by remember(device.id) { mutableStateOf(false) }
     val discovered = device.ip in controller.lastSeenIps
@@ -704,9 +891,19 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                         )
                     }
                 }
-                LampManualPanel(device, controller)
+                DeviceCapabilityPanel(device)
+                OutlinedButton(
+                    onClick = { controller.inspectLamp(device) },
+                    enabled = !controller.busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Gerät prüfen · nur lesend") }
+                LampManualPanel(device, controller, initiallyExpanded = initiallyExpanded)
                 if (!device.canFlow) {
-                    Note("Dieses Gerät meldet kein Yeelight start_cf – nicht in Farbfluss einbeziehen.")
+                    Note("Der erkannte SUPPORT-Eintrag enthält kein start_cf. " +
+                        "Diese Lampe wird nicht in Farbfluss-Szenen aufgenommen.")
+                } else if (device.methods.isEmpty()) {
+                    Note("Farbfluss noch nicht verifiziert: Die reine TCP-Suche liefert " +
+                        "keine vollständige Geräteliste mit unterstützten Methoden.")
                 }
                 TextButton(
                     onClick = { showRemoveConfirm = true },
@@ -750,14 +947,107 @@ private fun TargetPowerControls(controller: LoftController) {
                     modifier = Modifier.weight(1f)
                 ) { Text("Ausschalten") }
             }
+            if (controller.lastPowerResults.isNotEmpty()) {
+                HorizontalDivider(color = Color(0xFF394156))
+                Text("Letzte Schaltmessung · " +
+                    if (controller.lastPowerDesiredOn == true) "EIN" else "AUS",
+                    color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(controller.lastPowerSummary, color = muted, fontSize = 12.sp)
+                controller.orderedDevices().filter {
+                    it.ip in controller.lastPowerResults
+                }.forEach { device ->
+                    PowerTrace(
+                        controller.displayName(device),
+                        controller.lastPowerResults.getValue(device.ip),
+                        discoverySource(controller, device)
+                    )
+                }
+                Text("Zeiten ab Betätigung der einzelnen Lampe, nicht ab dem " +
+                    "ersten Gruppenbefehl. Kein automatischer Retry bei unbekanntem Status.",
+                    color = muted, fontSize = 11.sp)
+            }
         }
     }
 }
 
 @Composable
-private fun LampManualPanel(device: YeelightDevice, controller: LoftController) {
-    var expanded by remember(device.ip) { mutableStateOf(false) }
+private fun discoverySource(controller: LoftController, device: YeelightDevice): String =
+    when {
+        device.ip in controller.lastMulticastIps && device.ip in controller.lastDirectIps ->
+            "UDP + TCP erkannt"
+        device.ip in controller.lastMulticastIps -> "UDP erkannt"
+        device.ip in controller.lastDirectIps -> "nur TCP erkannt"
+        else -> "letzte Erkennung nicht bestätigt"
+    }
+
+@Composable
+private fun PowerTrace(name: String, probe: PowerProbe, discovery: String) {
+    val outcome = when (probe.outcome) {
+        PowerOutcome.VERIFIED -> "Schaltzustand bestätigt"
+        PowerOutcome.ACK_ONLY -> "Befehl angenommen, Zustand unbekannt"
+        PowerOutcome.MISMATCH -> "Zustand weicht vom Ziel ab"
+        PowerOutcome.REJECTED -> "Befehl abgelehnt"
+        PowerOutcome.NO_ACK -> "Geräteantwort fehlt"
+        PowerOutcome.UNREACHABLE -> "TCP nicht erreichbar"
+        PowerOutcome.PROTECTED -> "Durch Wiederherstellung geschützt"
+        PowerOutcome.UNSUPPORTED -> "Gerät unterstützt Ein/Aus nicht"
+    }
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(name + " · " + discovery + " · " + outcome,
+            color = if (probe.outcome == PowerOutcome.VERIFIED)
+                Color(0xFF80D9C6) else Color(0xFFFFC1A6),
+            fontSize = 12.sp)
+        if (probe.totalMs > 0) {
+            Text("TCP: " + (probe.connectMs?.let { "$it ms" } ?: "keine Verbindung") +
+                " · OK: " + (probe.ackMs?.let { "$it ms" } ?: "keine Bestätigung") +
+                " · Status: " + (probe.statusMs?.let { "$it ms" } ?: "nicht verifiziert") +
+                " · Gesamt: " + probe.totalMs + " ms",
+                color = muted, fontSize = 11.sp)
+        }
+        if (probe.message.isNotBlank()) {
+            Text(probe.message.take(140), color = muted, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun DeviceCapabilityPanel(device: YeelightDevice) {
+    Surface(color = Color(0xFF252B3D), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("Vom Gerät gemeldete Funktionen", color = Color.White,
+                fontWeight = FontWeight.SemiBold)
+            if (device.methods.isEmpty()) {
+                Text("Nur TCP-Erkennung: Es liegt keine SUPPORT-Liste vor. " +
+                    "RGB, Weißtemperatur und Lichtlauf sind damit nicht bestätigt. " +
+                    "Eine kombinierte Netzwerksuche kann zusätzliche Daten liefern.",
+                    color = muted, fontSize = 12.sp)
+            } else {
+                DeviceCapabilities.capabilities(device).forEach { capability ->
+                    Text(
+                        capability.label + ": " +
+                            when (capability.evidence) {
+                                CapabilityEvidence.CONFIRMED -> "unterstützt"
+                                CapabilityEvidence.UNVERIFIED -> "nicht bestätigt"
+                                CapabilityEvidence.UNSUPPORTED -> "nicht gemeldet"
+                            },
+                        color = if (capability.evidence == CapabilityEvidence.CONFIRMED)
+                            Color(0xFF80D9C6) else muted,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
+    initiallyExpanded: Boolean = false) {
+    var expanded by remember(device.ip) { mutableStateOf(initiallyExpanded) }
     val live = controller.snapshotFor(device)
+    var allowUnverified by rememberSaveable(device.ip) { mutableStateOf(false) }
     OutlinedButton(
         onClick = { expanded = !expanded },
         modifier = Modifier.fillMaxWidth()
@@ -765,6 +1055,17 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
     if (!expanded) return
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (device.methods.isEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = allowUnverified,
+                    onCheckedChange = { allowUnverified = it },
+                    enabled = controller.canIdentifyLamp(device)
+                )
+                Text("Unbestätigte Funktionen für diese Lampe testen",
+                    color = muted, fontSize = 12.sp)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 when {
@@ -784,15 +1085,23 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
             Text("Nur diese Lampe ist wegen Lichtshow/Wiederherstellung derzeit geschützt.",
                 color = muted, fontSize = 11.sp)
         }
+        controller.lastPowerResults[device.ip]?.let { probe ->
+            Text("Letzte Ein/Aus-Messung", color = Color.White,
+                fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            PowerTrace(controller.displayName(device), probe,
+                discoverySource(controller, device))
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { controller.controlLamp(device, LampCommands.power(true), "Einschalten") },
-                enabled = controller.canIdentifyLamp(device),
+                enabled = controller.canIdentifyLamp(device) &&
+                    DeviceCapabilities.evidence(device, "set_power") != CapabilityEvidence.UNSUPPORTED,
                 modifier = Modifier.weight(1f)
             ) { Text("Ein") }
             OutlinedButton(
                 onClick = { controller.controlLamp(device, LampCommands.power(false), "Ausschalten") },
-                enabled = controller.canIdentifyLamp(device),
+                enabled = controller.canIdentifyLamp(device) &&
+                    DeviceCapabilities.evidence(device, "set_power") != CapabilityEvidence.UNSUPPORTED,
                 modifier = Modifier.weight(1f)
             ) { Text("Aus") }
         }
@@ -807,7 +1116,8 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                 controller.controlLamp(device, LampCommands.brightness(brightness.roundToInt()), "Helligkeit")
             },
             valueRange = 1f..100f,
-            enabled = controller.canIdentifyLamp(device),
+            enabled = controller.canIdentifyLamp(device) &&
+                DeviceCapabilities.canOffer(device, "set_bright", allowUnverified),
         )
         val colors = listOf(
             Triple("Warm", 0xFFAE62, Color(0xFFFFAE62)),
@@ -815,14 +1125,15 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
             Triple("Violett", 0xA47BFF, Color(0xFFA47BFF)),
             Triple("Pink", 0xFF55B4, Color(0xFFFF55B4)),
         )
-        if (device.methods.isEmpty() || "set_rgb" in device.methods) {
+        if (DeviceCapabilities.evidence(device, "set_rgb") != CapabilityEvidence.UNSUPPORTED) {
             Text("Direktfarben", color = Color.White, fontSize = 12.sp)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 colors.forEach { (name, rgb, tint) ->
                     FilterChip(
                         selected = live?.colorMode == 1 && live.rgb == rgb,
                         onClick = { controller.controlLamp(device, LampCommands.rgb(rgb), name) },
-                        enabled = controller.canIdentifyLamp(device),
+                        enabled = controller.canIdentifyLamp(device) &&
+                            DeviceCapabilities.canOffer(device, "set_rgb", allowUnverified),
                         label = { Text(name) },
                         leadingIcon = {
                             Box(Modifier.size(11.dp).clip(RoundedCornerShape(5.dp)).background(tint))
@@ -831,7 +1142,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                 }
             }
         }
-        if (device.methods.isEmpty() || "set_ct_abx" in device.methods) {
+        if (DeviceCapabilities.evidence(device, "set_ct_abx") != CapabilityEvidence.UNSUPPORTED) {
             var kelvin by remember(device.ip, live?.temperature) {
                 mutableFloatStateOf((live?.temperature ?: 3500).toFloat())
             }
@@ -843,7 +1154,43 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
                     controller.controlLamp(device, LampCommands.temperature(kelvin.roundToInt()), "Weißtemperatur")
                 },
                 valueRange = 1700f..6500f,
-                enabled = controller.canIdentifyLamp(device),
+                enabled = controller.canIdentifyLamp(device) &&
+                    DeviceCapabilities.canOffer(device, "set_ct_abx", allowUnverified),
+            )
+        }
+        if (DeviceCapabilities.evidence(device, "set_hsv") != CapabilityEvidence.UNSUPPORTED) {
+            var hue by remember(device.ip, live?.hue) {
+                mutableFloatStateOf((live?.hue ?: 180).toFloat())
+            }
+            var saturation by remember(device.ip, live?.saturation) {
+                mutableFloatStateOf((live?.saturation ?: 70).toFloat())
+            }
+            val hsvEnabled = controller.canIdentifyLamp(device) &&
+                DeviceCapabilities.canOffer(device, "set_hsv", allowUnverified)
+            Text("HSV-Farbsteuerung", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("Farbton · ${hue.roundToInt()}°", color = muted, fontSize = 12.sp)
+            Slider(
+                value = hue,
+                onValueChange = { hue = it },
+                onValueChangeFinished = {
+                    controller.controlLamp(device,
+                        LampCommands.hsv(hue.roundToInt(), saturation.roundToInt()),
+                        "HSV-Farbton")
+                },
+                valueRange = 0f..359f,
+                enabled = hsvEnabled,
+            )
+            Text("Sättigung · ${saturation.roundToInt()} %", color = muted, fontSize = 12.sp)
+            Slider(
+                value = saturation,
+                onValueChange = { saturation = it },
+                onValueChangeFinished = {
+                    controller.controlLamp(device,
+                        LampCommands.hsv(hue.roundToInt(), saturation.roundToInt()),
+                        "HSV-Sättigung")
+                },
+                valueRange = 0f..100f,
+                enabled = hsvEnabled,
             )
         }
         OutlinedButton(

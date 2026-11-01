@@ -6,7 +6,7 @@ import org.junit.Test
 class LoftGroupAndStartTest {
     private val dining = (0 until 3).map {
         YeelightDevice("dining-$it", "192.168.1.${20 + it}",
-            model = "color4", methods = setOf("start_cf", "stop_cf", "set_scene"))
+            model = "color4", methods = setOf("start_cf", "stop_cf", "set_scene", "set_rgb"))
     }
     private val white = YeelightDevice("white", "192.168.1.29",
         model = "lamp", methods = setOf("set_bright"))
@@ -20,7 +20,7 @@ class LoftGroupAndStartTest {
     @Test fun fifteenColor4LampsRemainSelectableWithoutOneGlobalGate() {
         val many = (0 until 15).map {
             YeelightDevice("color-$it", "192.168.1.${30 + it}",
-                model = "color4", methods = setOf("start_cf", "stop_cf"))
+                model = "color4", methods = setOf("start_cf", "stop_cf", "set_rgb"))
         }
         val targets = SceneTargetPolicy.flowTargets(many)
         assertEquals(15, targets.supported.size)
