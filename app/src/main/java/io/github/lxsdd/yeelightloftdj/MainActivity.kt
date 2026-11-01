@@ -954,7 +954,8 @@ private fun DeviceSummaryCard(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedButton(onClick = { controller.refreshLamp(device) },
-                    enabled = !controller.busy, modifier = Modifier.weight(1f)) {
+                    enabled = !controller.busy && !controller.isLampLanQuarantined(device),
+                    modifier = Modifier.weight(1f)) {
                     Text("Status")
                 }
                 OutlinedButton(onClick = { controller.identifyLamp(device) },
@@ -1362,7 +1363,8 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                 fontSize = 12.sp,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = { controller.refreshLamp(device) }, enabled = !controller.busy) {
+            TextButton(onClick = { controller.refreshLamp(device) },
+                enabled = !controller.busy && !lanQuarantined) {
                 Text("Aktualisieren")
             }
         }
