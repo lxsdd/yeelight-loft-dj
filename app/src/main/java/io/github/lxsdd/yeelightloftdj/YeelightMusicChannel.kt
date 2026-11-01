@@ -28,6 +28,9 @@ class YeelightMusicChannel(
     },
 ) : Closeable {
     private val lock = Any()
+    // Keep writes serialized without preventing close() from interrupting a
+    // stalled TCP send. Java Socket.soTimeout does NOT bound OutputStream.write.
+    private val sendLock = Any()
     private var socket: Socket? = null
     private var enabledAttempted = false
     private var closed = false
@@ -41,22 +44,24 @@ class YeelightMusicChannel(
             }
         }
         val listener = listenerFactory(localWifiIp)
+        var candidate: Socket? = null
         try {
             listener.soTimeout = 4_000
             synchronized(lock) { enabledAttempted = true }
             // Listener MUST exist before telling the bulb to connect back.
             enableOnDevice(localWifiIp, listener.localPort)
-            val candidate = listener.accept()
+            candidate = listener.accept()
             if (candidate.inetAddress.hostAddress != deviceIp) {
-                candidate.close()
                 error("Music-Mode-Rückverbindung stammt nicht von der gewählten Lampe")
             }
             candidate.tcpNoDelay = true
             synchronized(lock) {
                 check(!closed) { "Music-Mode wurde zwischenzeitlich beendet" }
                 socket = candidate
+                candidate = null // ownership transferred to this channel
             }
         } catch (failure: Exception) {
+            runCatching { candidate?.close() }
             // A missing ACK does not prove set_music failed: try exactly one
             // compensating disable and retain the original failure.
             runCatching { close() }.exceptionOrNull()?.let(failure::addSuppressed)
@@ -74,20 +79,26 @@ class YeelightMusicChannel(
     /** One non-replayed write; no ACK or fake device-state confirmation. */
     fun sendRgb(rgb: Int) {
         require(rgb in 0..0xFFFFFF)
-        synchronized(lock) {
-            val channel = socket?.takeIf { !closed && it.isConnected && !it.isClosed }
-                ?: error("Music-Mode-Rückkanal ist nicht verbunden")
-            val request = JSONObject()
-                .put("id", nextId++)
-                .put("method", "set_rgb")
-                .put("params", JSONArray(listOf(rgb, "sudden", 0)))
-                .toString() + "\r\n"
+        synchronized(sendLock) {
+            val channel: Socket
+            val request: String
+            synchronized(lock) {
+                channel = socket?.takeIf { !closed && it.isConnected && !it.isClosed }
+                    ?: error("Music-Mode-Rückkanal ist nicht verbunden")
+                request = JSONObject()
+                    .put("id", nextId++)
+                    .put("method", "set_rgb")
+                    .put("params", JSONArray(listOf(rgb, "sudden", 0)))
+                    .toString() + "\r\n"
+            }
             try {
+                // No lock held that stopMusicMode / close() needs. Closing the
+                // socket from another thread interrupts a blocked write.
                 channel.getOutputStream().write(request.toByteArray(StandardCharsets.UTF_8))
                 channel.getOutputStream().flush()
             } catch (failure: Exception) {
-                // Do not transparently reroute to the normal quota-limited
-                // connection: the lamp's actual mode may still be unknown.
+                // Never replay an ambiguous music frame on the quota-limited
+                // control channel: firmware might have processed it already.
                 runCatching { channel.close() }
                 throw failure
             }
