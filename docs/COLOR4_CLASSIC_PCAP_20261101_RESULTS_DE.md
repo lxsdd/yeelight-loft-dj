@@ -51,14 +51,20 @@ Die Nutzerin/der Nutzer stellte am 1. November 2026 zwei FRITZ!Box-Paketmitschni
 
 **Zusammenschau mit PCAPdroid:** Erstes Smartphone-Capture zeigt `com.yeelight.cherry` zu Cloud-API-Hosts per HTTPS; zweites, unabhängiges Router-Capture zeigt zugleich die **Color4 selbst** in bidirektionalem verschlüsseltem TCP-Verkehr zu einem externen Server. Beide Captures zeigen jeweils **keine** lokale Yeelight-TCP-Kommandositzung im beobachteten Pfad. Das ist deutlich stärkere Evidenz für eine tatsächliche Cloud-**Steuerungsmöglichkeit** der Lampe als die alleinige App-Aufzeichnung.
 
-### Noch nicht bewiesen
-- Dass die Bedienhandlungen tatsächlich genau innerhalb des 17:49–17:51-Intervalls ausgeführt wurden und *welche* TLS-Datensätze den Änderungen entsprechen. Ohne Zeitmarker/visuell bestätigte Reaktion bleibt das eine plausible, aber nicht beweisbare Zuordnung.
-- Dass WLAN-to-WLAN-Unicast im betreffenden FRITZ!Box-Interface vollständig erfasst wurde (WLAN-Offload/Interfaceauswahl können das verhindern).
-- Dass die Yeelight-Classic-App ausschließlich über Cloud bedient oder den klassischen LAN-55443-Kanal grundsätzlich **niemals** nutzt.
+### Bestätigtes Benutzerfeedback zur Hardware-Reaktion
+
+**Nachträgliche Bestätigung am 1. November 2026:** Die benutzende Person bestätigte ausdrücklich: **„farbe und heligkeit haben sich jeweils zeitnah geändert“**. Damit sind die sichtbaren Farb- **und** Helligkeitsänderungen der funktionierenden Color4 *während des Router-Mitschnitts* als tatsächlich ausgeführte Bedienaktionen belegt. Eine sekundengenaue manuelle Zuordnung jeder einzelnen Aktion zu einem bestimmten verschlüsselten TLS-Datensatz liegt weiterhin nicht vor.
+
+**Interpretation:** In zeitlicher Verbindung mit diesen bestätigten Farb-/Helligkeitsänderungen sehen wir auf dem Pixel 6a HTTPS-Aufrufe von Yeelight Classic zu Yeelight-/Xiaomi-Servern und auf der FRITZ!Box bidirektionale HTTPS-Kommunikation **der Lampe selbst**. Auf den beobachteten Schnittstellen fehlen lokale Yeelight-LAN-Kommandos auf Port 55443. Daher ist die **Cloud-Steuerung bei genau dieser Beobachtung** nun eine **starke, durch unabhängige Aufzeichnungen und sichtbare Hardware-Reaktion gestützte Arbeitshypothese**, nicht länger nur eine unbeobachtete Vermutung. Es gibt keinen Nachweis dafür, dass Yeelight Classic dieselben lokalen 55443-Befehle wie Loft DJ gesendet hat.
+
+### Weiterhin nicht bewiesen
+- **Welche** TLS-Datensätze jeweils welchen Farb- bzw. Helligkeitsbefehl enthalten. Die HTTPS-Anwendungsdaten sind verschlüsselt.
+- Dass WLAN-to-WLAN-Unicast im betreffenden FRITZ!Box-Interface vollständig erfasst wurde (WLAN-Offload/Interfaceauswahl können das verhindern). **Abwesenheit** von 55443-Paketen in diesen Mitschnitten ist daher kein universeller Nachweis für Abwesenheit lokalen Verkehrs.
+- Dass Yeelight Classic **immer** und ausschließlich über Cloud steuert oder den klassischen LAN-55443-Kanal generell niemals nutzt.
 - Dass der `color4`-`client quota exceeded`-Fehler auf einen bestimmten Firmware-Timer zurückzuführen ist.
 
 ### Technische Folgerung
-**Nicht** versuchen, eine offensichtlich stabile Hersteller-App durch bloßes Wiederholen von `get_prop` und `set_rgb` auf 55443 zu „kopieren“. Einen Cloudweg nur auf Basis **autorisierter, offiziell dokumentierter Authentifizierungs- und Befehls-APIs** einführen. Die gegenwärtige direkte LAN-Steuerung in Loft DJ benötigt weiterhin geräteweise Serialisierung, Pacing und permanente Firmware-Quota-Quarantäne; Draft-PR #31 bleibt ein Sicherheitsfix, kein als hardwarebeständig bewiesener Root-Cause-Fix. Für die endgültige Differenzierung eine Zeitmarke zur **wirklich beobachteten Lampenreaktion** oder einen vollständigen WLAN-Unicast-Mitschnitt als nächsten Beleg einsetzen.
+**Nicht** versuchen, eine offensichtlich stabile Hersteller-App durch bloßes Wiederholen von `get_prop` und `set_rgb` auf 55443 zu „kopieren“. Einen Cloudweg nur auf Basis **autorisierter, offiziell dokumentierter Authentifizierungs- und Befehls-APIs** einführen. Die gegenwärtige direkte LAN-Steuerung in Loft DJ benötigt weiterhin geräteweise Serialisierung, Pacing und permanente Firmware-Quota-Quarantäne; Draft-PR #31 bleibt ein Sicherheitsfix, kein als hardwarebeständig bewiesener Root-Cause-Fix. Die Lampenreaktion bei zwei manuellen Bedienhandlungen wurde inzwischen bestätigt; für einen beweisbaren lokalen-gegen-Cloud-Protokollvergleich bleibt nur die offene Sichtbarkeit von WLAN-Unicast bzw. die sekundengenaue Befehl-zu-TLS-Zuordnung.
 
 ## Auswirkungen auf die Entwicklung
 
@@ -70,4 +76,4 @@ Die Nutzerin/der Nutzer stellte am 1. November 2026 zwei FRITZ!Box-Paketmitschni
 
 ## Nächste notwendige Evidence
 
-Eine *eindeutig bestätigte* Farb- oder Helligkeitsänderung der intakten Color4 während eines passiven Router-/WLAN-Mitschnitts oder – falls kein LAN-Mitschnitt möglich ist – mit einer überprüften Android-17-PCAPdroid-Konfiguration inklusive lokaler Netzwerkberechtigung. Erst danach kann ein direkter Vergleich von TCP-Sitzungsanzahl, auf dem Draht übertragenen Einzelbefehlen und ACK-Abständen mit Loft DJ erfolgen.
+**Erfüllt:** Tatsächliche Farb- und Helligkeitsänderung während des Router-Mitschnitts ausdrücklich bestätigt. **Offen:** Router-/WLAN-Mitschnitt mit nachweislich vollständiger Client-to-Client-Unicast-Abdeckung, nur wenn eine eindeutigere Protokollzuordnung nötig ist. Vor einer behaupteten identischen Implementierung der Yeelight-Classic-Cloud-Steuerung ist außerdem ein **offiziell autorisierter Cloud-API-Zugang** notwendig; privat implementierte oder aus App-Verkehr rekonstruierte Cloud-Authentisierung wird nicht stillschweigend nachgebaut.
