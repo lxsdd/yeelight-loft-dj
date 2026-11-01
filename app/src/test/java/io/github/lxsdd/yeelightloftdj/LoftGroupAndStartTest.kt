@@ -4,25 +4,57 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LoftGroupAndStartTest {
-    @Test fun knownUnsupportedBulbsCannotEnterColourFlow() {
-        val white = YeelightDevice("white", "192.168.1.10", methods = setOf("set_bright"))
-        val color = YeelightDevice("color", "192.168.1.11",
+    private val dining = (0 until 3).map {
+        YeelightDevice("dining-$it", "192.168.1.${20 + it}",
             model = "color4", methods = setOf("start_cf", "stop_cf", "set_scene"))
-        assertFalse(white.canFlow)
-        assertTrue(color.canFlow)
+    }
+    private val white = YeelightDevice("white", "192.168.1.29",
+        model = "lamp", methods = setOf("set_bright"))
+
+    @Test fun threeDiningLampsRemainStartable() {
+        val targets = SceneTargetPolicy.flowTargets(dining)
+        assertEquals(3, targets.supported.size)
+        assertTrue(targets.unsupported.isEmpty())
     }
 
-    @Test fun colourFlowPreviewsRemainBoundedWithManyBulbs() {
-        val cfg = ChaseConfig(style = ChaseStyle.RAINBOW_TAIL, tailLength = 4)
-        val frames = (0 until 15).map { ChaseCompiler.frames(cfg, it, 15) }
-        assertEquals(15, frames.size)
-        assertTrue(frames.all { it.size == 15 })
-        assertEquals(15, frames.count { it[0].brightness >= 1 })
+    @Test fun fifteenColor4LampsRemainSelectableWithoutOneGlobalGate() {
+        val many = (0 until 15).map {
+            YeelightDevice("color-$it", "192.168.1.${30 + it}",
+                model = "color4", methods = setOf("start_cf", "stop_cf"))
+        }
+        val targets = SceneTargetPolicy.flowTargets(many)
+        assertEquals(15, targets.supported.size)
+        assertTrue(targets.unsupported.isEmpty())
     }
 
-    @Test fun loftMembershipModelUsesIndependentIds() {
-        val all = setOf("left", "middle", "right")
-        val edited = all - "middle" + "fourth"
-        assertEquals(setOf("left", "right", "fourth"), edited)
+    @Test fun mixedGroupSkipsKnownUnsupportedAndDeduplicatesIps() {
+        val input = dining + white + dining[0].copy(id = "duplicate-id")
+        val targets = SceneTargetPolicy.flowTargets(input)
+        assertEquals(3, targets.supported.size)
+        assertEquals(listOf(white), targets.unsupported)
+    }
+
+    @Test fun loftDefaultsToThreeRoomsButCanBeExplicitlyEdited() {
+        val devices = dining + white
+        val rooms = mapOf("dining-0" to "Esszimmer",
+            "dining-1" to "Wohnzimmer",
+            "dining-2" to "Hobbyraum",
+            "white" to "Schlafzimmer")
+        assertEquals(dining.map { it.id }.toSet(),
+            SceneTargetPolicy.loftIds(devices, rooms, null))
+        assertEquals(setOf("white", "dining-0"),
+            SceneTargetPolicy.loftIds(devices, rooms, setOf("white", "dining-0")))
+        assertEquals(emptySet<String>(),
+            SceneTargetPolicy.loftIds(devices, rooms, emptySet()))
+    }
+
+    @Test fun fifteenLampFlowHasDistinctPositionsAndValidFrames() {
+        val conf = ChaseConfig(style = ChaseStyle.RAINBOW_TAIL, tailLength = 4)
+        val all = (0 until 15).map { ChaseCompiler.frames(conf, it, 15) }
+        assertEquals(15, all.size)
+        assertTrue(all.all { it.size == 15 })
+        for (step in 0 until 15) {
+            assertEquals(1, all.count { it[step].brightness == conf.brightness })
+        }
     }
 }
