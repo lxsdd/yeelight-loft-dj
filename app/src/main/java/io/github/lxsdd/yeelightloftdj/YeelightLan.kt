@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -43,8 +44,61 @@ data class YeelightDevice(
 }
 
 object YeelightLan {
-    private val commandGate = DeviceCommandGate()
+    private const val QUARANTINED_IPS_KEY = "firmware-quota-blocked-ips"
+    @Volatile private var quotaStore: SharedPreferences? = null
+    private val commandGate = DeviceCommandGate(
+        onQuarantined = { ip -> writeQuarantine(ip, blocked = true) },
+        onRecovered = { ip -> writeQuarantine(ip, blocked = false) }
+    )
     private val tcp = YeelightTcpSessions()
+
+    /**
+     * The firmware-quota lockout must survive an Android activity/process
+     * restart. The stored local IPs remain in app-private preferences.
+     */
+    @Synchronized
+    fun installQuotaState(context: Context) {
+        val prefs = context.applicationContext.getSharedPreferences(
+            "lan-firmware-safety", Context.MODE_PRIVATE
+        )
+        quotaStore = prefs
+        prefs.getStringSet(QUARANTINED_IPS_KEY, emptySet())?.toList()?.forEach {
+            commandGate.markQuarantined(it)
+        }
+    }
+
+    @Synchronized
+    private fun writeQuarantine(ip: String, blocked: Boolean) {
+        val store = quotaStore ?: return
+        val ips = store.getStringSet(QUARANTINED_IPS_KEY, emptySet()).orEmpty().toMutableSet()
+        if (blocked) ips.add(ip) else ips.remove(ip)
+        // Commit before a later process death; never publish these IPs.
+        check(store.edit().putStringSet(QUARANTINED_IPS_KEY, ips).commit()) {
+            "LAN-Quarantäne konnte nicht dauerhaft gespeichert werden"
+        }
+    }
+
+    fun isLanQuarantined(device: YeelightDevice): Boolean =
+        commandGate.isQuarantined(device.ip)
+
+    /**
+     * A single explicitly requested read-only get_prop. Never auto-run it in
+     * discovery, scenes, UI recomposition or background status refresh.
+     */
+    fun verifyLanRecovery(device: YeelightDevice): String {
+        require(isLocalIp(device.ip))
+        return commandGate.explicitRecoveryProbe(device.ip) {
+            val result = tcp.request(device.ip, device.port, seq.getAndIncrement(),
+                "get_prop", listOf("power"))
+            if (result.has("error")) {
+                error("LAN-Recovery durch Firmware abgelehnt: " +
+                    result.optJSONObject("error")?.optString("message", "Gerätefehler"))
+            }
+            result.optJSONArray("result")?.optString(0)
+                ?.takeIf { it == "on" || it == "off" }
+                ?: error("LAN-Recovery: keine gültige Statusantwort; Sperre bleibt bestehen")
+        }
+    }
     /** Release LAN slots when the user leaves the app, including for Yeelight itself. */
     fun releaseTcpConnections() = tcp.closeAll()
     private const val HOST = "239.255.255.250"
@@ -632,6 +686,9 @@ object YeelightLan {
 
     /** Returns false only if the device is using the normal LAN mode. */
     fun sendMusicRgb(device: YeelightDevice, rgb: Int): Boolean {
+        check(!commandGate.isQuarantined(device.ip)) {
+            "Music-Mode pausiert: Firmware-LAN-Quarantäne dieser Lampe"
+        }
         val channel = musicChannels[device.ip] ?: return false
         channel.sendRgb(rgb)
         return true
