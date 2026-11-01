@@ -50,8 +50,11 @@ class InternalAudioCaptureService : Service() {
         if (intent?.action != ACTION_START || worker != null) return START_NOT_STICKY
         try {
             val resultCode = intent.getIntExtra(EXTRA_CODE, Int.MIN_VALUE)
-            val data = intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
-                ?: error("Android-Freigabe fehlt")
+            @Suppress("DEPRECATION")
+            val data = if (android.os.Build.VERSION.SDK_INT >= 33)
+                intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
+            else intent.getParcelableExtra<Intent>(EXTRA_DATA)
+            data ?: error("Android-Freigabe fehlt")
             require(resultCode == android.app.Activity.RESULT_OK) { "Freigabe nicht erteilt" }
             val notifications = getSystemService(NotificationManager::class.java)
             notifications.createNotificationChannel(NotificationChannel(CHANNEL,
