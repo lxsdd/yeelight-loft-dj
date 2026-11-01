@@ -282,31 +282,83 @@ object YeelightLan {
      */
     fun probe(ip: String): YeelightDevice? {
         if (!isLocalIp(ip)) return null
-        // Older Yeelight firmwares may reject "name". In that case retry
-        // with the established power-only probe, rather than lose the bulb.
+        return probeEndpoint(ip, 55443)
+    }
+
+    /**
+     * Probe one endpoint without flooding it. Each actual get_prop is charged
+     * against the SAME per-IP budget as manual control, scenes and recovery.
+     * A missing TCP reply is NOT a reason to open a second connection: the
+     * device may have processed the request even if its ACK was lost.
+     *
+     * Only an explicit, non-quota firmware rejection of the optional "name"
+     * field permits the legacy power-only fallback. Keep this distinct from
+     * device discovery: successful TCP alone never proves a Yeelight bulb.
+     */
+    internal fun probeEndpoint(
+        ip: String,
+        port: Int,
+        gate: DeviceCommandGate = commandGate,
+        connectTimeoutMs: Int = 280,
+        readTimeoutMs: Int = 500,
+    ): YeelightDevice? {
+        require(port in 1..65535 && connectTimeoutMs > 0 && readTimeoutMs > 0)
+        var tryLegacy = false
         for (properties in listOf(listOf("power", "name"), listOf("power"))) {
-            val result = try {
-                Socket().use { socket ->
-                    socket.connect(InetSocketAddress(ip, 55443), 280)
-                    socket.soTimeout = 500
-                    val payload = JSONObject()
-                        .put("id", 9341)
-                        .put("method", "get_prop")
-                        .put("params", JSONArray(properties))
-                        .toString() + "\r\n"
-                    socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
-                    socket.getOutputStream().flush()
-                    val line = socket.getInputStream().bufferedReader().readLine()
-                        ?: return@use null
-                    val obj = JSONObject(line)
-                    val values = obj.optJSONArray("result") ?: return@use null
-                    if (obj.optInt("id", -1) != 9341 || values.length() < 1) return@use null
-                    val lanName = if (properties.size == 2) values.optString(1).trim() else ""
-                    YeelightDevice(id = "ip-" + ip, ip = ip,
-                        model = "unknown", lanName = lanName)
+            if (properties.size == 1 && !tryLegacy) break
+            try {
+                return gate.run(ip) {
+                    Socket().use { socket ->
+                        socket.connect(InetSocketAddress(ip, port), connectTimeoutMs)
+                        socket.soTimeout = readTimeoutMs
+                        val requestId = seq.getAndIncrement()
+                        val payload = JSONObject()
+                            .put("id", requestId)
+                            .put("method", "get_prop")
+                            .put("params", JSONArray(properties))
+                            .toString() + "\r\n"
+                        socket.getOutputStream().write(payload.toByteArray(Charsets.UTF_8))
+                        socket.getOutputStream().flush()
+                        // Devices may emit unsolicited props; never mistake one
+                        // for the response, and never accept a mismatching ID.
+                        var response: JSONObject? = null
+                        for (ignored in 0 until 8) {
+                            val line = socket.getInputStream().bufferedReader().readLine()
+                                ?: break
+                            val candidate = JSONObject(line)
+                            if (matchesReplyId(candidate, requestId)) {
+                                response = candidate
+                                break
+                            }
+                        }
+                        if (response == null) return@run null
+                        if (response.has("error")) {
+                            throw RejectedCommand(
+                                "get_prop abgelehnt: " + response.getJSONObject("error")
+                                    .optString("message", "Yeelight-Fehler")
+                            )
+                        }
+                        val values = response.optJSONArray("result") ?: return@run null
+                        // A valid reply with no real power property is not
+                        // sufficient evidence of a Yeelight device.
+                        if (values.optString(0) !in listOf("on", "off")) return@run null
+                        YeelightDevice(
+                            id = "ip-$ip", ip = ip, model = "unknown",
+                            lanName = if (properties.size == 2) values.optString(1).trim() else ""
+                        )
+                    }
                 }
-            } catch (_: Exception) { null }
-            if (result != null) return result
+            } catch (e: RejectedCommand) {
+                // Firmware quota errors are terminal for this scan. The gate
+                // already applied the per-lamp cooldown to ALL command paths.
+                if (QuotaRecoveryPolicy.isQuotaRejection(e.message)) return null
+                if (properties.size != 2) return null
+                tryLegacy = true
+            } catch (_: Exception) {
+                // Timeout, closed socket, malformed JSON or exhausted budget:
+                // never send a speculative second get_prop on another socket.
+                return null
+            }
         }
         return null
     }
