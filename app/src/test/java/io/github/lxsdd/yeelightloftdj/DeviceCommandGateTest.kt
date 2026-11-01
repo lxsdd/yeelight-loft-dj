@@ -43,6 +43,30 @@ class DeviceCommandGateTest {
         gate.run("A"){}
     }
 
+    @Test fun optionalBeatsReserveEnoughCapacityForStopAndRestore() {
+        var now = 10_000L
+        val gate = DeviceCommandGate({ now }, maxCommandsPerMinute = 20)
+        gate.run("A", 3) { } // initial state capture / arm
+        while (gate.remaining("A") > 6) {
+            gate.run("A") { } // optional beat, last send leaves six slots
+        }
+        assertEquals(6, gate.remaining("A"))
+        // Even when beat traffic stops, recovery can still use its own budget.
+        gate.run("A", 3) { } // OFF + readback + final restore
+        assertEquals(3, gate.remaining("A"))
+        assertEquals(20, gate.remaining("B")) // independent lamp
+        now += 60_001L
+        assertEquals(20, gate.remaining("A"))
+    }
+
+    @Test fun firmwareQuotaMeansNoOptionalBeatHeadroom() {
+        val gate = DeviceCommandGate({ 20_000L }, maxCommandsPerMinute = 20)
+        gate.run("A") { }
+        gate.recordFirmwareRejection("A", "client quota exceeded")
+        assertEquals(0, gate.remaining("A"))
+        assertEquals(20, gate.remaining("B"))
+    }
+
     @Test fun concurrentRequestsCannotExceedPerBulbBudget() {
         val gate=DeviceCommandGate({10000L},maxCommandsPerMinute=50)
         val threads=(0 until 12).map {
