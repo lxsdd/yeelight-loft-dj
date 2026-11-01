@@ -9,9 +9,16 @@ package io.github.lxsdd.yeelightloftdj
  */
 internal object MusicTransportPolicy {
     fun canArmForMusic(device: YeelightDevice): Boolean {
-        val isColor4 = device.model.equals("color4", ignoreCase = true) ||
-            device.model.endsWith(".color4", ignoreCase = true)
-        return !isColor4 || YeelightLan.supportsMusicMode(device)
+        val model = device.model.trim()
+        val isColor4 = model.equals("color4", ignoreCase = true) ||
+            model.endsWith(".color4", ignoreCase = true)
+        // A TCP-only discovery has no model/SUPPORT evidence. It could still
+        // be a Color4; do not enable a silent regular-LAN beat fallback.
+        val isUnidentified = model.isEmpty() ||
+            model.equals("unknown", ignoreCase = true) ||
+            model.equals("Yeelight", ignoreCase = true) ||
+            model.equals("Yeelight (LAN)", ignoreCase = true)
+        return !(isColor4 || isUnidentified) || YeelightLan.supportsMusicMode(device)
     }
 
     fun eligible(
