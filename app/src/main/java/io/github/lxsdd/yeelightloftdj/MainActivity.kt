@@ -227,6 +227,9 @@ private fun LoftApp(controller: LoftController) {
                         item(key = "ceiling1-offline-research") {
                             Ceiling1EventsResearchPanel()
                         }
+                        item(key = "color4-cohort-research") {
+                            Color4CohortResearchPanel()
+                        }
                     }
                     "transfer" -> item(key = "scene-import-export") {
                         SceneExchangePanel(controller)
