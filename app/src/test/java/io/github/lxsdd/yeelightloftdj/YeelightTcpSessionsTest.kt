@@ -26,7 +26,11 @@ class YeelightTcpSessionsTest {
                     }
                 }
             }
-            val tcp=YeelightTcpSessions { ip,port -> Socket(ip,port).apply { soTimeout=1800 } }
+            val events = mutableListOf<String>()
+            val tcp=YeelightTcpSessions(
+                trace = { events.add(it) },
+                connect = { ip,port -> Socket(ip,port).apply { soTimeout=1800 } }
+            )
             try {
                 assertEquals("ok",tcp.request("127.0.0.1",server.localPort,11,"set_rgb",
                     listOf(123,"sudden",0)).getJSONArray("result").getString(0))
@@ -34,6 +38,10 @@ class YeelightTcpSessionsTest {
                     listOf(80,"sudden",0)).getJSONArray("result").getString(0))
                 assertEquals(1,accepted.get())
                 assertEquals(1,tcp.openCount())
+                assertEquals(1, events.count { it.startsWith("event=connect ") })
+                assertEquals(2, events.count { it.startsWith("event=send ") })
+                assertEquals(2, events.count { it.startsWith("event=ack ") })
+                assertTrue(events.all { "0xFF0000" !in it && "password" !in it })
             } finally {
                 tcp.closeAll()
                 worker.join(2500)
