@@ -78,3 +78,18 @@ ESP-IDF kann Secure Boot, signierte OTA-Updates und Flash-Verschlüsselung aktiv
 - [Yeelight-Music-Mode-Quota-Dokumentation](https://www.yeelight.com/en_US/developer)
 - [Modellbegrenzter Yeelight-ESP32-OTA-Forschungsbericht](https://github.com/syssi/esphome-yeelight-ceiling-light/blob/main/docs/flashing-over-the-network.md)
 - [Espressif Secure Boot v2](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/secure-boot-v2.html)
+
+
+## Bereits implementiertes Host-Only-Image-Prüfwerkzeug
+
+\`tools/color4_fw_image_info.py\` ist ein **rein lesender** Python-Standardbibliotheksinspektor für eine **später separat und legitim beschaffte, lokale** Firmwaredatei. Er schreibt keine Quelldatei, öffnet keine Netzwerkverbindung und hat weder OTA- noch USB-/ESP32-Flashcode:
+
+\`python3 tools/color4_fw_image_info.py PFAD_ZUR_LOKALEN_FIRMWARE.bin\`
+
+Er meldet nur SHA-256 der gesamten Datei, Dateigröße, ESP32-\`0xE9\`-Header-Kandidat, Anzahl und Länge der Segmente, XOR-Imagefooter, optionalen unverschlüsselten angehängten SHA-256-Digest und mögliche zusätzliche vier Bytes. Er analysiert maximal 32 MiB und bricht bei fehlenden, widersprüchlichen oder gekürzten Metadaten kontrolliert ab. Der Zusatz \`four_byte_vendor_trailer_candidate\` **beweist weder**, dass die Bytes ein gültiger Yeelight-CRC sind, **noch** dass das Image zum Gerät passt oder installiert werden kann. Das Tool gibt immer \`installable=false\`, \`secure_boot_verified=false\` und \`oem_identity_verified=false\` zurück.
+
+**11 synthetische Tests** prüfen korrektes ESP32-Kandidatenformat, mit und ohne Digest, optionalen 4-Byte-Anhang, defekten Footer, falsche Segmentlänge, manipulierten SHA-Digest, beschädigtes Padding und verkürzte Bytes. Die öffentliche Android-CI führt diese **zusätzlich zu** den Android-JVM-Tests aus; keinerlei OEM-Firmware oder private Gerätedaten werden zur CI hochgeladen.
+
+Source-Format: https://docs.espressif.com/projects/esptool/en/release-v4/esp32/advanced-topics/firmware-image-format.html
+
+**Nächste technische Prüfung:** Erst eine zur \`color4\`-Originalversion passende Firmwaredatei mit belegbarer legaler Herkunft und SHA-256 beschaffen, lokal mit dem Inspektor untersuchen und den ESP32-Kandidatenstatus nur dann konkretisieren. Falls die Datei nicht dem ESP-IDF-Format entspricht, zunächst die wahre Container-/Verschlüsselungsschicht klären, **nicht** das Image ändern oder auf eine Lampe übertragen.
