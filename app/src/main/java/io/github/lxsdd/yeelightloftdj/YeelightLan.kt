@@ -25,7 +25,15 @@ data class YeelightDevice(
     val methods: Set<String> = emptySet(),
     val lanName: String = "",
 ) {
-    val canFlow: Boolean get() = methods.isEmpty() || "start_cf" in methods
+    val canFlow: Boolean get() = if (methods.isEmpty()) {
+        // A TCP-only probe has no SUPPORT evidence. Preserve cautious
+        // diagnostic attempts for unknown devices, never for documented mono.
+        model.lowercase() != "mono"
+    } else {
+        // Our chase frames are RGB (mode 1). start_cf alone could be a
+        // monochrome/temperature flow and is not proof of RGB capability.
+        "start_cf" in methods && "set_rgb" in methods
+    }
 }
 
 object YeelightLan {
