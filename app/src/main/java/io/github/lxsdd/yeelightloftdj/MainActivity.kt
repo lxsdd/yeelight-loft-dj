@@ -433,11 +433,11 @@ private fun Header() {
 @Composable
 private fun RecoveryBanner(controller: LoftController) {
     var releaseIp by rememberSaveable { mutableStateOf<String?>(null) }
-    var physicallyRestarted by rememberSaveable { mutableStateOf(false) }
+    var acceptsRunningFlow by rememberSaveable { mutableStateOf(false) }
     var acceptsLoss by rememberSaveable { mutableStateOf(false) }
     val closeDialog = {
         releaseIp = null
-        physicallyRestarted = false
+        acceptsRunningFlow = false
         acceptsLoss = false
     }
     Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF2C293B)) {
@@ -470,11 +470,11 @@ private fun RecoveryBanner(controller: LoftController) {
                 color = muted, fontSize = 11.sp)
             if (controller.pendingRecoveryCount > 0) {
                 HorizontalDivider(color = Color(0xFF49455A))
-                Text("Alternative bei dauerhaft abgelehntem stop_cf:",
+                Text("Erweiterte Option bei dauerhaft abgelehntem stop_cf:",
                     color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                Text("Nur falls die betreffende Lampe wirklich kurz stromlos war: " +
-                    "Alte Wiederherstellung gezielt freigeben. Dadurch wird der ursprüngliche " +
-                    "Lichtzustand NICHT automatisch wiederhergestellt.",
+                Text("Empfohlen ist zuerst der normale Wiederherstellungsversuch. " +
+                    "Alternativ kannst du nur den gespeicherten App-Eintrag verwerfen – " +
+                    "ohne Stromneustart. Achtung: Ein Lichtlauf kann dann noch aktiv sein.",
                     color = muted, fontSize = 11.sp)
                 controller.pendingRecoveryIps().forEach { ip ->
                     val device = controller.devices.firstOrNull { it.ip == ip }
@@ -483,14 +483,14 @@ private fun RecoveryBanner(controller: LoftController) {
                     OutlinedButton(
                         onClick = {
                             releaseIp = ip
-                            physicallyRestarted = false
+                            acceptsRunningFlow = false
                             acceptsLoss = false
                         },
                         enabled = controller.canRetryRecovery,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(bulbName + " (." + ip.substringAfterLast('.') +
-                            ") nach Stromneustart freigeben")
+                            ") · alten App-Eintrag verwerfen")
                     }
                 }
             }
@@ -501,18 +501,20 @@ private fun RecoveryBanner(controller: LoftController) {
             ?.let(controller::displayName) ?: "Gespeicherte Lampe"
         AlertDialog(
             onDismissRequest = closeDialog,
-            title = { Text("Alten Lichtshow-Eintrag freigeben?") },
+            title = { Text("Alte Wiederherstellung wirklich verwerfen?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(targetName + " · " + ip +
                         ". Dies entfernt ausschließlich den lokalen " +
                         "Lichtshow-/Wiederherstellungseintrag dieser Lampe. " +
-                        "Es sendet keinen Befehl. Der frühere Lichtzustand geht dabei verloren.")
+                        "Es sendet KEINEN Stoppbefehl. Ein eventuell laufender " +
+                        "Lichtlauf wird dadurch nicht beendet. Der frühere Lichtzustand " +
+                        "kann anschließend nicht mehr automatisch wiederhergestellt werden.")
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = physicallyRestarted,
-                            onCheckedChange = { physicallyRestarted = it })
-                        Text("Ich habe genau diese Lampe für mindestens 15 Sekunden " +
-                            "vom Strom getrennt und wieder eingeschaltet.",
+                        Checkbox(checked = acceptsRunningFlow,
+                            onCheckedChange = { acceptsRunningFlow = it })
+                        Text("Ich weiß, dass diese Lampe eventuell noch einen " +
+                            "Lichtlauf ausführt und das Verwerfen ihn NICHT stoppt.",
                             fontSize = 12.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -527,14 +529,14 @@ private fun RecoveryBanner(controller: LoftController) {
             confirmButton = {
                 TextButton(
                     onClick = {
-                        controller.releaseAfterConfirmedPowerCycle(
-                            ip, physicallyRestarted, acceptsLoss
+                        controller.discardRecoveryForLamp(
+                            ip, acceptsRunningFlow, acceptsLoss
                         )
                         closeDialog()
                     },
-                    enabled = physicallyRestarted && acceptsLoss &&
+                    enabled = acceptsRunningFlow && acceptsLoss &&
                         controller.canRetryRecovery
-                ) { Text("Nur diese Lampe freigeben") }
+                ) { Text("App-Eintrag für diese Lampe verwerfen") }
             },
             dismissButton = {
                 TextButton(onClick = closeDialog) { Text("Abbrechen") }
