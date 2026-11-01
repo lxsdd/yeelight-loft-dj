@@ -50,7 +50,13 @@ object YeelightLan {
         onQuarantined = { ip -> writeQuarantine(ip, blocked = true) },
         onRecovered = { ip -> writeQuarantine(ip, blocked = false) }
     )
-    private val tcp = YeelightTcpSessions()
+    private val tcp = YeelightTcpSessions(
+        onFirmwareQuotaRejected = { ip, error ->
+            // Transport-level detection covers power, manual, status and
+            // future callers uniformly. Never wait for a caller's JSON check.
+            commandGate.recordFirmwareRejection(ip, error)
+        }
+    )
 
     /**
      * The firmware-quota lockout must survive an Android activity/process
