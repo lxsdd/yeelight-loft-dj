@@ -557,12 +557,21 @@ object YeelightLan {
     data class RecoveryObservation(
         val flowing: Boolean?,
         val snapshot: LampSnapshot?,
+        val powerOn: Boolean?,
     )
 
     internal fun parseRecoveryProperties(values: List<String>): RecoveryObservation {
+        val powerOn = when (values.getOrNull(1)) {
+            "on" -> true
+            "off" -> false
+            else -> null
+        }
+        // A lamp may legitimately report bright=0 or incomplete color fields
+        // when powered OFF. Power evidence must survive snapshot parse failure.
         return RecoveryObservation(
             flowing = flowStateFromValue(values.getOrNull(0)),
-            snapshot = LampSnapshot.fromValues(values.drop(1))
+            snapshot = LampSnapshot.fromValues(values.drop(1)),
+            powerOn = powerOn
         )
     }
 
