@@ -43,9 +43,6 @@ class LoftController(context: Context) {
         private set
     var customSelectedIds by mutableStateOf(loadSelection())
         private set
-    // null preserves the original room-derived Loft group until explicitly edited.
-    var loftMembersOverride by mutableStateOf<Set<String>?>(loadLoftMembers())
-        private set
     var lastSceneReport by mutableStateOf<List<SceneLampResult>>(emptyList())
         private set
     var lastRecoveryFailures by mutableStateOf<Map<String, String>>(emptyMap())
@@ -67,8 +64,8 @@ class LoftController(context: Context) {
         private set
     var busy by mutableStateOf(false)
         private set
-    var target by mutableStateOf(prefs.getString("selected-target", "Test (1)")
-        ?.takeIf { it.isNotBlank() } ?: "Test (1)")
+    var target by mutableStateOf(prefs.getString("selected-target", "Auswahl")
+        ?.takeIf { it.isNotBlank() } ?: "Auswahl")
         private set
     var activeScene by mutableStateOf<String?>(null)
         private set
@@ -96,6 +93,34 @@ class LoftController(context: Context) {
     var restoreAfterStop by mutableStateOf(prefs.getBoolean("restore-after-stop", false))
         private set
     private var recoveryJournal = SceneRecovery.decode(prefs.getString("pending-scene-recovery", null))
+
+    init {
+        // Migrate old Test (1) and Loft targets without discarding lamp/room data.
+        // No lights are modified by this one-time settings-only migration.
+        val legacy = target
+        val revised = when (legacy) {
+            "Test (1)" -> devices.firstOrNull()?.let { "Lampe:" + it.id } ?: "Auswahl"
+            "Loft" -> {
+                val priorMembers = loadLoftMembers() ?: devices
+                    .filter { assignments[it.id] in setOf("Wohnzimmer", "Esszimmer", "Hobbyraum") }
+                    .map { it.id }.toSet()
+                val combined = customSelectedIds + priorMembers
+                check(prefs.edit().putString("selected-lamp-ids",
+                    JSONArray(combined.toList()).toString()).commit()) {
+                    "Bisherige Lampengruppe konnte nicht übernommen werden"
+                }
+                customSelectedIds = combined
+                "Auswahl"
+            }
+            else -> legacy
+        }
+        if (revised != legacy) {
+            check(prefs.edit().putString("selected-target", revised).commit()) {
+                "Zielauswahl konnte nicht migriert werden"
+            }
+            target = revised
+        }
+    }
     // Live status is intentionally session-only; cached values from yesterday are not live data.
     var lampSnapshots by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
         private set
@@ -127,32 +152,6 @@ class LoftController(context: Context) {
             (0 until arr.length()).map { arr.getString(it) }.toSet()
         }
     }.getOrNull()
-
-    /** Loft can be edited independently of room assignments. Default = historical three rooms. */
-    fun loftMemberIds(): Set<String> =
-        SceneTargetPolicy.loftIds(devices, assignments, loftMembersOverride)
-
-    fun setLoftMember(id: String, selected: Boolean) {
-        if (!canOrganizeLamps || devices.none { it.id == id }) return
-        val current = loftMemberIds()
-        val revised = if (selected) current + id else current - id
-        check(prefs.edit().putBoolean("loft-members-customized", true)
-            .putString("loft-member-ids", JSONArray(revised.toList()).toString()).commit()) {
-            "Loft-Gruppe konnte nicht gespeichert werden"
-        }
-        loftMembersOverride = revised
-        status = "Loft-Gruppe: " + revised.size + " Lampen"
-    }
-
-    fun resetLoftMembers() {
-        if (!canOrganizeLamps) return
-        check(prefs.edit().remove("loft-member-ids")
-            .remove("loft-members-customized").commit()) {
-            "Loft-Gruppe konnte nicht zurückgesetzt werden"
-        }
-        loftMembersOverride = null
-        status = "Loft folgt wieder Wohnzimmer, Esszimmer und Hobbyraum"
-    }
 
     private fun persistRoomNames() {
         check(prefs.edit().putString("room-list", JSONArray(roomNames).toString()).commit()) {
@@ -241,18 +240,11 @@ class LoftController(context: Context) {
     }
 
     fun targetOptions(): List<String> =
-        listOf("Test (1)", "Loft", "Alle", "Auswahl") +
+        listOf("Auswahl", "Alle") +
         roomNames.filter { it != "Nicht zugeordnet" }.map { "Raum:$it" } +
         orderedDevices().map { "Lampe:" + it.id }
 
     fun targetDescription(choice: String): String = when {
-        choice == "Test (1)" -> orderedDevices().firstOrNull()?.let {
-            "Testlampe: " + displayName(it) + " · " + it.ip
-        } ?: "Keine Testlampe vorhanden"
-        choice == "Loft" -> if (loftMembersOverride == null)
-            "Loft: Wohnzimmer + Esszimmer + Hobbyraum (" + loftMemberIds().size +
-                " Lampen). Mitgliedschaft unter Ziel → Loft bearbeiten."
-        else "Loft: " + loftMemberIds().size + " einzeln gewählte Lampen."
         choice == "Alle" ->
             "Alle gespeicherten Lampen, auch offline. Beim Start werden Fehler je Lampe angezeigt."
         choice == "Auswahl" -> "Deine " + customSelectedIds.size +
@@ -532,14 +524,6 @@ class LoftController(context: Context) {
                     }
                     customSelectedIds = revised
                 }
-                if (previous.id in (loftMembersOverride ?: emptySet())) {
-                    val revised = (loftMembersOverride ?: emptySet()) - previous.id + replacement.id
-                    check(prefs.edit().putString("loft-member-ids",
-                        JSONArray(revised.toList()).toString()).commit()) {
-                        "Loft-Mitgliedschaft konnte nicht übertragen werden"
-                    }
-                    loftMembersOverride = revised
-                }
                 val room = updatedRooms[previous.id] ?: prefs.getString("room." + previous.id, null)
                 if (room != null) {
                     updatedRooms[replacement.id] = room
@@ -783,9 +767,7 @@ class LoftController(context: Context) {
 
     private fun selected() = chooseDevices(target)
     private fun chooseDevices(choice: String): List<YeelightDevice> = when {
-        choice == "Test (1)" -> orderedDevices().take(1)
         choice == "Alle" -> orderedDevices()
-        choice == "Loft" -> orderedDevices().filter { it.id in loftMemberIds() }
         choice == "Auswahl" -> orderedDevices().filter { it.id in customSelectedIds }
         choice.startsWith("Raum:") -> orderedDevices().filter {
             roomFor(it) == choice.removePrefix("Raum:")
@@ -1066,7 +1048,7 @@ class LoftController(context: Context) {
     /**
      * A second explicit user action arms actual bulbs. Capture every original
      * state and commit recovery data BEFORE sending a single lighting command.
-     * User-selected Test (1) remains the safe default.
+     * Only explicitly selected user targets may control music lighting.
      */
     fun armMusicLights() {
         if (!microphoneRunning || musicLightArmed) return
