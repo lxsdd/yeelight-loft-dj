@@ -2,80 +2,114 @@ package io.github.lxsdd.yeelightloftdj
 
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
 
 class DeviceCommandGateTest {
-    @Test fun locksOutRepeatedCommandsAndReleasesAfterRollingWindow() {
-        var clock = 10000L
-        val gate = DeviceCommandGate({clock}, maxCommandsPerMinute=3)
-        gate.run("bulb-A",2) { }
-        gate.run("bulb-A") { }
-        assertEquals(3,gate.consumed("bulb-A"))
-        val ex=runCatching { gate.run("bulb-A") {} }.exceptionOrNull()
-        assertTrue(ex is DeviceCommandGate.Deferred)
-        // Unrelated lamp must remain usable.
-        gate.run("bulb-B",2) { }
-        clock += 60_001
-        gate.run("bulb-A") {}
-        assertEquals(1,gate.consumed("bulb-A"))
-    }
-
-    @Test fun firmwareQuotaRejectsAndThrottlesOnlyOneBulb() {
-        var clock=20000L
-        val gate=DeviceCommandGate({clock},maxCommandsPerMinute=4)
-        assertTrue(runCatching { gate.run("A") {
-            throw IllegalStateException("stop_cf abgelehnt: client quota exceeded")
-        }}.isFailure)
-        val ex=runCatching { gate.run("A") {} }.exceptionOrNull()
-        assertTrue(ex is DeviceCommandGate.Deferred)
-        gate.run("B"){}
-        clock+=60_001
-        gate.run("A"){}
-    }
-
-    @Test fun rejectedPowerReplyAlsoTriggersCooldown() {
-        var clock=20000L
-        val gate=DeviceCommandGate({clock},maxCommandsPerMinute=4)
-        gate.run("A",2){ }
-        gate.recordFirmwareRejection("A","Client quota exceeded")
-        assertTrue(runCatching { gate.run("A"){} }.exceptionOrNull()
+    @Test fun commandsArePacedAndNeverBurstWithinRollingBudget() {
+        var now = 10_000L
+        val waits = mutableListOf<Long>()
+        val gate = DeviceCommandGate(nowMs = { now }, maxCommandsPerMinute = 3,
+            sleepMs = { duration -> waits.add(duration); now += duration })
+        gate.run("Wellness", 2) { }
+        gate.run("Wellness") { }
+        assertEquals(listOf(1_500L), waits)
+        assertEquals(3, gate.consumed("Wellness"))
+        assertTrue(runCatching { gate.run("Wellness") { } }.exceptionOrNull()
             is DeviceCommandGate.Deferred)
-        clock+=60_001
-        gate.run("A"){}
+        // Neither remote socket nor app-side traffic from other bulbs shares
+        // the local budget of Wellness.
+        gate.run("Couchtisch", 2) { }
+        now += 60_001L
+        gate.run("Wellness") { }
+        assertEquals(1, gate.consumed("Wellness"))
+    }
+
+    @Test fun realFirmwareQuotaPersistsAfterOneMinuteAndIsPerBulb() {
+        var now = 20_000L
+        val recorded = mutableListOf<String>()
+        val gate = DeviceCommandGate(nowMs = { now }, maxCommandsPerMinute = 4,
+            onQuarantined = { recorded.add(it) })
+        assertTrue(runCatching { gate.run("Wellness") {
+            error("set_rgb abgelehnt: client quota exceeded")
+        } }.isFailure)
+        assertTrue(gate.isQuarantined("Wellness"))
+        assertEquals(listOf("Wellness"), recorded)
+        gate.run("Couchtisch") { }
+        now += 120_001L
+        assertTrue(runCatching { gate.run("Wellness") { } }.exceptionOrNull()
+            is DeviceCommandGate.Deferred)
+        assertEquals(0, gate.remaining("Wellness"))
+        assertEquals(4, gate.remaining("Couchtisch"))
+    }
+
+    @Test fun jsonReplyRejectionQuarantinesWithoutRepeatingCallback() {
+        val events = AtomicInteger()
+        val gate = DeviceCommandGate(nowMs = { 20_000L }, maxCommandsPerMinute = 10,
+            minSpacingMs = 0, onQuarantined = { events.incrementAndGet() })
+        gate.run("Wellness", 2) { }
+        gate.recordFirmwareRejection("Wellness", "Client quota exceeded")
+        gate.recordFirmwareRejection("Wellness", "Client quota exceeded")
+        assertEquals(1, events.get())
+        assertEquals(0, gate.remaining("Wellness"))
+        assertTrue(runCatching { gate.run("Wellness") { } }.exceptionOrNull()
+            is DeviceCommandGate.Deferred)
+    }
+
+    @Test fun explicitRecoveryIsOncePerMinuteAndRequiresValidResponse() {
+        var now = 30_000L
+        var recovered = 0
+        val gate = DeviceCommandGate(nowMs = { now }, maxCommandsPerMinute = 10,
+            minSpacingMs = 0, onRecovered = { recovered++ })
+        gate.recordFirmwareRejection("Wellness", "client quota exceeded")
+        assertTrue(runCatching {
+            gate.explicitRecoveryProbe("Wellness") { error("invalid get_prop") }
+        }.isFailure)
+        assertTrue(gate.isQuarantined("Wellness"))
+        assertTrue(runCatching {
+            gate.explicitRecoveryProbe("Wellness") { "on" }
+        }.exceptionOrNull() is DeviceCommandGate.Deferred)
+        now += 60_001L
+        assertEquals("off", gate.explicitRecoveryProbe("Wellness") { "off" })
+        assertFalse(gate.isQuarantined("Wellness"))
+        assertEquals(1, recovered)
+        gate.run("Wellness") { }
+    }
+
+    @Test fun incompleteProbeNeverClearsQuarantineWhenActionThrows() {
+        var now = 10_000L
+        val gate = DeviceCommandGate(nowMs = { now }, maxCommandsPerMinute = 10,
+            minSpacingMs = 0)
+        gate.markQuarantined("Wellness") // persistent state from prior process
+        assertTrue(runCatching {
+            gate.explicitRecoveryProbe("Wellness") { error("empty JSON array") }
+        }.isFailure)
+        assertTrue(gate.isQuarantined("Wellness"))
+        now += 60_001L
+        assertEquals("on", gate.explicitRecoveryProbe("Wellness") { "on" })
     }
 
     @Test fun optionalBeatsReserveEnoughCapacityForStopAndRestore() {
         var now = 10_000L
-        val gate = DeviceCommandGate({ now }, maxCommandsPerMinute = 20)
-        gate.run("A", 3) { } // initial state capture / arm
-        while (gate.remaining("A") > 6) {
-            gate.run("A") { } // optional beat, last send leaves six slots
-        }
+        val gate = DeviceCommandGate(nowMs = { now }, maxCommandsPerMinute = 20,
+            minSpacingMs = 0)
+        gate.run("A", 3) { }
+        while (gate.remaining("A") > 6) gate.run("A") { }
         assertEquals(6, gate.remaining("A"))
-        // Even when beat traffic stops, recovery can still use its own budget.
-        gate.run("A", 3) { } // OFF + readback + final restore
+        gate.run("A", 3) { }
         assertEquals(3, gate.remaining("A"))
-        assertEquals(20, gate.remaining("B")) // independent lamp
+        assertEquals(20, gate.remaining("B"))
         now += 60_001L
         assertEquals(20, gate.remaining("A"))
     }
 
-    @Test fun firmwareQuotaMeansNoOptionalBeatHeadroom() {
-        val gate = DeviceCommandGate({ 20_000L }, maxCommandsPerMinute = 20)
-        gate.run("A") { }
-        gate.recordFirmwareRejection("A", "client quota exceeded")
-        assertEquals(0, gate.remaining("A"))
-        assertEquals(20, gate.remaining("B"))
-    }
-
-    @Test fun concurrentRequestsCannotExceedPerBulbBudget() {
-        val gate=DeviceCommandGate({10000L},maxCommandsPerMinute=50)
-        val threads=(0 until 12).map {
-            Thread {
-                repeat(20) { runCatching { gate.run("same-bulb") {} } }
-            }
+    @Test fun concurrentTrafficStillSharesThePerBulbQuota() {
+        val gate = DeviceCommandGate(nowMs = { 10_000L }, maxCommandsPerMinute = 50,
+            minSpacingMs = 0)
+        val tasks = (0 until 12).map {
+            Thread { repeat(20) { runCatching { gate.run("Wellness") { } } } }
         }
-        threads.forEach(Thread::start)
-        threads.forEach(Thread::join)
-        assertEquals(50,gate.consumed("same-bulb"))
+        tasks.forEach(Thread::start)
+        tasks.forEach(Thread::join)
+        assertEquals(50, gate.consumed("Wellness"))
     }
 }
