@@ -26,6 +26,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -166,9 +167,27 @@ private fun LoftApp(controller: LoftController) {
             }
             if (detailRoute != null) {
                 item(key = "detail-back") {
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        OutlinedButton(onClick = goBack) { Text("← Zurück") }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Compact Material navigation, not a prominent
+                        // outlined "← Zurück" action on every detail page.
+                        // Android's system back gesture continues using goBack.
+                        IconButton(
+                            onClick = goBack,
+                            modifier = Modifier.size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(panel)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Zurück zur vorherigen Ansicht",
+                                tint = lavender,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                         Text(
                             when (detailRoute) {
                                 "chase" -> "Lichtlauf-Studio"
@@ -180,7 +199,12 @@ private fun LoftApp(controller: LoftController) {
                                 "network" -> "Geräte & Netzwerk prüfen"
                                 else -> "Lampendetails"
                             },
-                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                            modifier = Modifier.weight(1f),
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
