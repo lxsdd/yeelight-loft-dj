@@ -81,6 +81,9 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         controller.requestStopScanner()
         controller.stopMicrophone()
+        // Do not monopolize the device's four TCP slots when Yeelight/Home
+        // apps may need control. Active scanner cleanup owns its sockets.
+        if (!controller.scannerRunning) YeelightLan.releaseTcpConnections()
         super.onStop()
     }
     override fun onDestroy() {
