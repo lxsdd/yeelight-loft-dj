@@ -48,6 +48,10 @@ object YeelightLan {
         private set
     @Volatile var lastSearchRoundUnique: List<Int> = emptyList()
         private set
+    @Volatile var lastSearchRoundResponders: List<Set<String>> = emptyList()
+        private set
+    @Volatile var lastSearchRepliesPerIp: Map<String, Int> = emptyMap()
+        private set
     @Volatile var lastSearchSourceAddress: String = "unbekannt"
         private set
     @Volatile var lastSearchSourceMismatches: Int = 0
@@ -95,7 +99,10 @@ object YeelightLan {
      * Multi-round multicast discovery. Keep listening through quiet periods:
      * previously, a single 400ms timeout prematurely ended every round.
      */
-    fun discover(context: Context): List<YeelightDevice> {
+    fun discover(context: Context, rounds: Int = 5, listenMs: Long = 1150L): List<YeelightDevice> {
+        require(rounds in 1..12 && listenMs in 500L..2000L) {
+            "Ungültige Grenzen für die lokale UDP-Diagnose"
+        }
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val lock = wifi.createMulticastLock("yeelight-loft-dj")
         lock.setReferenceCounted(false)
@@ -104,6 +111,8 @@ object YeelightLan {
         var invalid = 0
         var mismatches = 0
         val roundUnique = mutableListOf<Int>()
+        val roundResponders = mutableListOf<Set<String>>()
+        val receivedByIp = mutableMapOf<String, Int>()
         val source = wifiIpv4Address()
             ?: error("Keine lokale WLAN-IPv4-Adresse erkannt; Multicast nicht auf Mobilfunk umleiten")
         try {
@@ -114,10 +123,10 @@ object YeelightLan {
                 lastSearchSourceAddress = socket.localAddress.hostAddress ?: "unbekannt"
                 socket.soTimeout = 220
                 val packet = DatagramPacket(search, search.size, InetAddress.getByName(HOST), PORT)
-                repeat(5) {
+                repeat(rounds) {
                     val round = mutableSetOf<String>()
                     socket.send(packet)
-                    val deadline = System.nanoTime() + 1_150_000_000L
+                    val deadline = System.nanoTime() + listenMs * 1_000_000L
                     while (System.nanoTime() < deadline) {
                         try {
                             val buffer = ByteArray(4096)
@@ -127,6 +136,7 @@ object YeelightLan {
                             val parsed = parseAnnouncement(String(received.data, received.offset, received.length, Charsets.UTF_8))
                             if (parsed == null) invalid++ else {
                                 round.add(parsed.ip)
+                                receivedByIp[parsed.ip] = (receivedByIp[parsed.ip] ?: 0) + 1
                                 if (received.address.hostAddress != parsed.ip) mismatches++
                                 found[parsed.ip] = parsed
                             }
@@ -135,12 +145,15 @@ object YeelightLan {
                         }
                     }
                     roundUnique.add(round.size)
+                    roundResponders.add(round.toSet())
                 }
             }
         } finally {
             lastSearchPackets = packets
             lastSearchInvalidPackets = invalid
             lastSearchRoundUnique = roundUnique.toList()
+            lastSearchRoundResponders = roundResponders.toList()
+            lastSearchRepliesPerIp = receivedByIp.toMap()
             lastSearchSourceMismatches = mismatches
             if (lock.isHeld) lock.release()
         }
