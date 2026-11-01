@@ -33,6 +33,13 @@ class StockImageAuditTest(unittest.TestCase):
         self.assertNotIn("DO_NOT_LOG", str(result))
         self.assertNotIn("Signature", str(result))
 
+    def test_nonzero_or_malformed_cloud_error_code_fails_closed(self):
+        for code in (-1, "0", True):
+            r = audit({"code": code, "result": self.meta()}, self.fw)
+            self.assertEqual("REJECTED", r["status"])
+            self.assertIn("cloud", r["reason"])
+            self.assertNotIn("Signature", str(r))
+
     def test_older_version_request_cannot_silently_return_current(self):
         result = audit(self.meta(), self.fw, expected_version="2.1.7_0038")
         self.assertEqual("REJECTED", result["status"])

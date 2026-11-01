@@ -72,3 +72,6 @@ Diese Meta-Binär-Prüfung ergänzt den bereits vorhandenen \`color4_fw_image_in
 4. Das parallele Produkt-PR #31 soll weiterhin die **gesondert beobachtete** Quota-Last schützen, unabhängig von der Root-Cause-Frage. Keine automatische Stromtrennung, Cloud-OTA oder Kommandoflut.
 
 **Fazit:** Die Kohorte macht den einfachen Schluss „jede Lampe mit 50 Tagen Stromversorgung muss sofort ausfallen“ unzulässig. Der originale \`color4\`-Timerdefekt bleibt gut begründet, wird aber erst nach konkreter OEM-Binär-/Uptime-Evidenz belegbar. Das eigentliche Firmwareziel bleibt eine originalkompatible Reparatur, nicht das Abschalten der Quoten.
+
+
+**Härtung:** Eine formell richtige \`result\`-Struktur in einer Cloudantwort mit einem fehlgeschlagenen, nicht ganzzahligen oder nicht-null \`code\` darf **nie** als erfolgreiche Hersteller-Metadatenabfrage gewertet werden; der Offline-Validator verwirft sie ohne Ausgabe von Antworttexten/Signaturen. Zusätzlicher Negativtest ergänzt.

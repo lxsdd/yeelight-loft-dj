@@ -43,6 +43,11 @@ def audit(metadata: dict, firmware: bytes, *, expected_version: str = VERSION) -
     if not isinstance(metadata, dict) or len(firmware) == 0 or len(firmware) > MAX_IMAGE_BYTES:
         outcome["reason"] = "invalid metadata or image size"
         return outcome
+    # A valid result nested inside an unsuccessful Xiaomi response must never
+    # pass: abort without disclosing the cloud response body.
+    if "code" in metadata and (type(metadata["code"]) is not int or metadata["code"] != 0):
+        outcome["reason"] = "cloud response indicates failure"
+        return outcome
     data = metadata.get("result", metadata)
     if not isinstance(data, dict):
         outcome["reason"] = "metadata result must be object"
