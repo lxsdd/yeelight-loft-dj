@@ -45,6 +45,48 @@ class Color4DualAcceptancePolicyTest {
         assertEquals(10_000L,Color4DualAcceptancePolicy.DURATION_MS)
         assertEquals(40,Color4DualAcceptancePolicy.MAX_TOTAL_RGB_WRITES)
     }
+    @Test fun simulatedHighFrequencyAudioNeverExceedsWholePairBudget() {
+        val frame = MusicFrame(
+            rms=.3f, peak=.7f,
+            bands=listOf(.65f,.4f,.17f,.15f,.12f,.11f),
+            bass=.55f, beat=true, estimatedBpm=120, timeMs=1000L
+        )
+        var lastSent = Long.MIN_VALUE / 2
+        var total = 0L
+        var events = 0
+        for (elapsed in 0L..10_000L step 64) {
+            val sockets = if (elapsed >= 7_000L) 1 else 2
+            if (!Color4DualAcceptancePolicy.permitsFrame(
+                    lastSent,elapsed,total,2,sockets)) continue
+            val trigger = Color4MusicFrameDispatch.decide(
+                frame,lastSent,elapsed,acceptanceTest=true,allStreaming=true
+            )
+            if (trigger == MusicFrameDispatch.NONE) continue
+            lastSent = elapsed
+            total += 2
+            events++
+        }
+        assertTrue("Must generate some real bounded music frames",events >= 8)
+        assertTrue("Total writes across BOTH bulbs", total <= 40)
+        assertEquals(events * 2L,total)
+        assertFalse(Color4DualAcceptancePolicy.permitsFrame(
+            lastSent,10_064L,total,2,1))
+    }
+
+    @Test fun bothChannelsMustRemainActiveEvenWhenOriginalAudioHasNoBassBeat() {
+        val noBeat=MusicFrame(
+            rms=.2f,peak=.4f,
+            bands=listOf(.07f,.09f,.14f,.17f,.26f,.31f),
+            bass=.076f,beat=false,estimatedBpm=null,timeMs=1000L,
+            accent=MusicAccent.HIGH
+        )
+        assertEquals(MusicFrameDispatch.ACCENT,
+            Color4MusicFrameDispatch.decide(
+                noBeat,0L,500L,acceptanceTest=true,allStreaming=true
+            ))
+        assertFalse(Color4DualAcceptancePolicy.permitsFrame(0L,500L,2L,2,1))
+    }
+
     @Test fun independentPerDeviceDiagnosticsNeverClaimOpticalAck() {
         val line=Color4DualAcceptancePolicy.perDeviceReport(
             listOf("192.168.178.21","192.168.178.22"),
