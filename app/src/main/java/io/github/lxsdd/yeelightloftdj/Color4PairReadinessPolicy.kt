@@ -5,7 +5,25 @@ package io.github.lxsdd.yeelightloftdj
  * Passing this check is NOT an authorization to run a multi-device show:
  * individual optical, restore, and official-app validations are still needed.
  */
+internal data class Color4PairCheckResult(
+    val eligible: Boolean,
+    val explanation: String,
+)
+
 internal object Color4PairReadinessPolicy {
+    fun assess(
+        selected: List<YeelightDevice>,
+        blockedIps: Set<String>,
+        recoveryPending: Boolean,
+    ): Color4PairCheckResult {
+        val reason = refusal(selected, blockedIps, recoveryPending)
+        return if (reason == null) Color4PairCheckResult(
+            eligible = true,
+            explanation = "Beide Color4 melden set_music und set_rgb; " +
+                "keine lokale Quarantäne oder offene Wiederherstellung erkannt."
+        ) else Color4PairCheckResult(eligible = false, explanation = reason)
+    }
+
     fun refusal(
         selected: List<YeelightDevice>,
         blockedIps: Set<String>,

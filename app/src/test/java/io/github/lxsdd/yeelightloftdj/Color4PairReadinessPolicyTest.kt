@@ -8,6 +8,18 @@ class Color4PairReadinessPolicyTest {
                      methods:Set<String> = setOf("set_music","set_rgb")) =
         YeelightDevice(id=ip, ip=ip, model=model, methods=methods)
 
+    @Test fun assessmentSeparatesCapabilityPassFromLightTestAndFailures() {
+        val valid = listOf(lamp("10.0.0.1"), lamp("10.0.0.2"))
+        val passed = Color4PairReadinessPolicy.assess(valid, emptySet(), false)
+        assertTrue(passed.eligible)
+        assertTrue(passed.explanation.contains("set_music"))
+        val blocked = Color4PairReadinessPolicy.assess(valid, setOf("10.0.0.2"), false)
+        assertFalse(blocked.eligible)
+        assertTrue(blocked.explanation.contains("Quarantäne"))
+        val empty = Color4PairReadinessPolicy.assess(emptyList(), emptySet(), false)
+        assertFalse(empty.eligible)
+    }
+
     @Test fun exactlyTwoDistinctCapableColor4AreOnlyReadinessCandidates() {
         val pair=listOf(lamp("10.0.0.1"),lamp("10.0.0.2"))
         assertNull(Color4PairReadinessPolicy.refusal(pair, emptySet(),false))
