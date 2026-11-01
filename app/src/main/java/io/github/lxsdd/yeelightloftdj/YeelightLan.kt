@@ -186,44 +186,61 @@ object YeelightLan {
 
 
     /**
-     * Explicit, read-only experiment: send the Yeelight search payload as
-     * directed UDP to already confirmed local TCP bulbs. Some firmwares ignore
-     * unicast search by design: a positive reply is useful evidence, a missing
-     * reply is NOT evidence of a fault.
+     * Complement M-SEARCH multicast with a bounded, directed M-SEARCH to
+     * already known, TCP-confirmed bulbs. Responses include real Yeelight
+     * model/id/support; unlike TCP get_prop, they prove capabilities.
+     * A directed UDP responder is NEVER counted as multicast discovery.
      */
-    fun directedUdpProbe(context: Context, targets: List<YeelightDevice>): Set<String> {
+    fun directedUdpDiscover(
+        context: Context,
+        targets: List<YeelightDevice>,
+    ): List<YeelightDevice> {
         val source = wifiIpv4Address() ?: error("Kein WLAN aktiv")
         val allowed = targets.asSequence()
             .filter { isLocalIp(it.ip) }
-            .distinctBy { it.ip }
-            .take(24).toList()
-        val answered = mutableSetOf<String>()
-        DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+            .distinctBy { it.ip }.take(24).toList()
+        if (allowed.isEmpty()) return emptyList()
+        val expected = allowed.map { it.ip }.toSet()
+        val responses = linkedMapOf<String, YeelightDevice>()
+        val endpoint = InetAddress.getByName(source)
+        DatagramSocket(InetSocketAddress(endpoint, 0)).use { socket ->
             wifiNetworkFor(context, source)?.bindSocket(socket)
             socket.soTimeout = 100
-            allowed.forEach { device ->
-                val address = InetAddress.getByName(device.ip)
-                socket.send(DatagramPacket(search, search.size, address, PORT))
-                val deadline = System.nanoTime() + 360_000_000L
+            // At most two query datagrams per device. Collect all responses
+            // on the same socket to avoid per-bulb receiver races and churn.
+            repeat(2) {
+                val missing = allowed.filter { it.ip !in responses }
+                if (missing.isEmpty()) return@use
+                missing.forEach { device ->
+                    socket.send(DatagramPacket(search, search.size,
+                        InetAddress.getByName(device.ip), PORT))
+                }
+                val deadline = System.nanoTime() + 700_000_000L
                 while (System.nanoTime() < deadline) {
                     try {
                         val buffer = ByteArray(4096)
-                        val reply = DatagramPacket(buffer, buffer.size)
-                        socket.receive(reply)
-                        val parsed = parseAnnouncement(
-                            String(reply.data, reply.offset, reply.length, Charsets.UTF_8)
-                        )
-                        if (parsed?.ip == device.ip && reply.address.hostAddress == device.ip) {
-                            answered.add(device.ip)
+                        val packet = DatagramPacket(buffer, buffer.size)
+                        socket.receive(packet)
+                        val parsed = parseAnnouncement(String(packet.data,
+                            packet.offset, packet.length, Charsets.UTF_8))
+                        // A malicious advertisement from a different sender
+                        // cannot upgrade a saved bulb or its supported methods.
+                        if (parsed != null && parsed.ip in expected &&
+                            packet.address.hostAddress == parsed.ip) {
+                            responses[parsed.ip] = parsed
                         }
                     } catch (_: SocketTimeoutException) {
-                        // Continue through the bounded deadline.
+                        // Respect the bounded 700ms collection window.
                     }
                 }
             }
         }
-        return answered
+        return responses.values.toList()
     }
+
+    /** Positive direct-UDP discovery is useful even without multicast. */
+    fun directedUdpProbe(context: Context, targets: List<YeelightDevice>): Set<String> =
+        directedUdpDiscover(context, targets).map { it.ip }.toSet()
 
     /** Safe fallback: one /24 block from the phone's Wi-Fi interface only. */
     fun subnetCandidates(ip: String): List<String> {
@@ -623,6 +640,14 @@ object YeelightLan {
         try {
             send(device, "stop_cf", emptyList())
         } catch (failure: Exception) {
+            // client quota exceeded is an *explicit* firmware rejection.
+            // A second socket/get_prop only adds pressure to the quota and
+            // does not establish whether a previous flow is running.
+            if (QuotaRecoveryPolicy.isQuotaRejection(failure.message)) {
+                throw IllegalStateException(
+                    "Yeelight-LAN-Limit erreicht (client quota exceeded): " +
+                        "andere Steuer-Clients beenden und später erneut versuchen", failure)
+            }
             // A no-longer-running flow is already safely stopped. Only clear
             // the persisted stop marker when the bulb confirms flowing=0.
             val flowing = runCatching { readFlowing(device) }.getOrNull()

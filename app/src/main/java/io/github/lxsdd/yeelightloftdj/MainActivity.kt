@@ -441,6 +441,13 @@ private fun RecoveryBanner(controller: LoftController) {
             controller.pendingLampDescriptions().forEach { desc ->
                 Text(desc, color = Color(0xFFFFC1A6), fontSize = 12.sp)
             }
+            if (controller.quotaRecoveryHint) {
+                Text("Yeelight-LAN-Limit erreicht. Weitere Wiederholungen innerhalb " +
+                    "einer Minute sind kontraproduktiv. Bitte parallele Lichtsteuerungen " +
+                    "(z. B. andere Apps, Home Assistant oder Integrationen) für diese " +
+                    "Lampe prüfen. Die Wiederherstellung wird nicht gelöscht.",
+                    color = Color(0xFFFFC1A6), fontSize = 12.sp)
+            }
             OutlinedButton(
                 onClick = controller::stop,
                 enabled = controller.canRetryRecovery,
@@ -780,12 +787,31 @@ private fun DeviceTools(controller: LoftController, initiallyExpanded: Boolean =
             enabled = !controller.busy && controller.devices.isNotEmpty(),
             modifier = Modifier.fillMaxWidth()
         ) { Text("12-Runden-Multicast-Gegenprobe (nur lesend)") }
-        Text("Jede Lampe einzeln: UDP-Antworten pro Suchrunde vs. TCP-Erreichbarkeit",
+        Text("Multicast und direktes UDP sind verschiedene Suchwege. " +
+            "Ein TCP-only-Treffer ist kein Hinweis auf weniger unterstützte Funktionen.",
             color = muted, fontSize = 12.sp)
         controller.orderedDevices().forEach { device ->
-            Text(controller.displayName(device) + " · " + controller.discoveryDetail(device),
-                color = if (device.ip in controller.lastMulticastIps)
-                    Color(0xFF80D9C6) else muted, fontSize = 11.sp)
+            val multicast = device.ip in controller.lastMulticastIps
+            val directed = device.ip in controller.lastDirectedUdpIps
+            Column(Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontWeight = FontWeight.Medium, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f))
+                    Text(
+                        when {
+                            multicast -> "Multicast"
+                            directed -> "Direkt-UDP"
+                            else -> "Ohne UDP-Treffer"
+                        },
+                        color = if (multicast || directed) Color(0xFF80D9C6)
+                            else Color(0xFFFFC1A6),
+                        fontSize = 11.sp
+                    )
+                }
+                Text(controller.discoveryDetail(device), color = muted, fontSize = 11.sp)
+            }
         }
         OutlinedButton(
             onClick = controller::compareDirectedUdp,
@@ -795,7 +821,10 @@ private fun DeviceTools(controller: LoftController, initiallyExpanded: Boolean =
         if (controller.directedUdpDiagnostics.isNotBlank()) {
             Text(controller.directedUdpDiagnostics, color = Color(0xFFB6C4E7), fontSize = 12.sp)
         }
-        Text("Die UDP-Gegenprobe ist experimentell und verändert keine Lampe. Nur positive Antworten sind aussagekräftig; negative Antworten beweisen keinen Defekt.",
+        Text("Die direkte UDP-Suche ist ein begrenzter, lesender Fallback " +
+            "und kann Modell und unterstützte Befehle liefern. Ein Direkt-UDP-Treffer " +
+            "wird nicht fälschlich als Multicast-Erfolg gezählt. " +
+            "Ausbleibende Multicast-Antworten bleiben separat sichtbar.",
             color = muted, fontSize = 11.sp)
         Text("Gespeicherte Geräte bleiben bei erneuter Suche erhalten. Nicht bestätigte Geräte können inzwischen offline sein.", color = muted, fontSize = 12.sp)
         OutlinedTextField(

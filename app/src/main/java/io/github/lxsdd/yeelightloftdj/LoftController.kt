@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -87,6 +88,8 @@ class LoftController(context: Context) {
         private set
     var lastDirectIps by mutableStateOf<Set<String>>(emptySet())
         private set
+    var lastDirectedUdpIps by mutableStateOf<Set<String>>(emptySet())
+        private set
     var searchDiagnostics by mutableStateOf("Noch keine vergleichende Suche durchgeführt")
         private set
     var directedUdpDiagnostics by mutableStateOf("")
@@ -105,6 +108,8 @@ class LoftController(context: Context) {
     var restoreAfterStop by mutableStateOf(prefs.getBoolean("restore-after-stop", false))
         private set
     private var recoveryJournal = SceneRecovery.decode(prefs.getString("pending-scene-recovery", null))
+    // Session-local cooldown: a quota rejection cannot cause a retry storm.
+    private val lastQuotaRejectionAt = mutableMapOf<String, Long>()
 
     init {
         InternalAudioBridge.attach(internalAudioSink) {
@@ -387,6 +392,12 @@ class LoftController(context: Context) {
     val canRetryRecovery: Boolean
         get() = !busy && !musicStopPending && !musicSending
 
+    val quotaRecoveryHint: Boolean
+        get() = lastRecoveryFailures.values.any {
+            QuotaRecoveryPolicy.isQuotaRejection(it) ||
+                it.contains("Yeelight-LAN-Limit", ignoreCase = true)
+        }
+
     val recoveryExplanation: String
         get() = when {
             musicStopPending -> "Musiklicht wird bereits gestoppt und wiederhergestellt."
@@ -661,29 +672,40 @@ class LoftController(context: Context) {
     }
 
     fun discover() = task("Suche Yeelights automatisch (WLAN + LAN) …") {
-        val (multicast, direct) = withContext(Dispatchers.IO) {
+        val (multicast, direct, directed) = withContext(Dispatchers.IO) {
             val udp = YeelightLan.discover(app)
-            // Keep the two discovery results separate for diagnosis.
+            // Multicast can fail to reach selected Wi-Fi clients even when
+            // the same device responds to a directed Yeelight M-SEARCH.
             val tcp = try { YeelightLan.deepDiscover() } catch (_: Exception) { emptyList() }
-            Pair(udp, tcp)
+            val missing = DirectedDiscoveryPlan.candidates(tcp, udp)
+            val unicast = runCatching {
+                YeelightLan.directedUdpDiscover(app, missing)
+            }.getOrDefault(emptyList())
+            Triple(udp, tcp, unicast)
         }
         directedUdpDiagnostics = ""
         lastMulticastIps = multicast.map { it.ip }.toSet()
         lastDirectIps = direct.map { it.ip }.toSet()
+        lastDirectedUdpIps = directed.map { it.ip }.toSet()
         val both = lastMulticastIps.intersect(lastDirectIps)
         val directOnly = lastDirectIps - lastMulticastIps
         searchDiagnostics = "Multicast: " + lastMulticastIps.size +
-            " · Direkt-LAN: " + lastDirectIps.size +
-            " · Beide: " + both.size +
-            " · Nur direkt: " + directOnly.size +
+            " · TCP: " + lastDirectIps.size +
+            " · Multicast + TCP: " + both.size +
+            " · Nur TCP: " + directOnly.size +
+            " · davon Direkt-UDP mit vollständiger Geräteantwort: " + lastDirectedUdpIps.size +
             "\nUDP-Antwortpakete: " + YeelightLan.lastSearchPackets +
             " · davon nicht auswertbar: " + YeelightLan.lastSearchInvalidPackets +
             "\nWLAN-Sendeadresse: " + YeelightLan.lastSearchSourceAddress +
             " · Wi-Fi-Netzbindung: " + YeelightLan.lastSearchBoundToWifiNetwork +
             " · Treffer je Suchrunde: " + YeelightLan.lastSearchRoundUnique.joinToString("/") +
             " · Absender-/Location-Abweichungen: " + YeelightLan.lastSearchSourceMismatches
-        val merged = YeelightLan.mergeDevices(multicast, direct)
-        mergeFound(merged, "Kombinierte Suche")
+        // Directed UDP contributes real model/ID/support, but never inflates
+        // the count of packets that physically arrived from multicast.
+        val merged = YeelightLan.mergeDevices(
+            YeelightLan.mergeDevices(multicast, direct), directed
+        )
+        mergeFound(merged, "Multicast + TCP + gezieltes UDP")
     }
 
     fun missingMulticastCount(): Int =
@@ -721,11 +743,14 @@ class LoftController(context: Context) {
         val rounds = YeelightLan.lastSearchRoundResponders
         val responseRounds = rounds.count { device.ip in it }
         val packets = YeelightLan.lastSearchRepliesPerIp[device.ip] ?: 0
-        val tcp = if (device.ip in lastDirectIps) "TCP bestätigt" else "TCP nicht geprüft"
-        val udp = if (device.ip in lastMulticastIps) "UDP geantwortet"
-            else "UDP keine Antwort"
-        return tcp + " · " + udp + " · " + responseRounds + "/" + rounds.size +
-            " Runden · " + packets + " Antwortpakete"
+        val tcp = if (device.ip in lastDirectIps) "TCP bestätigt" else "TCP zuletzt nicht bestätigt"
+        val udp = if (device.ip in lastMulticastIps) "Multicast geantwortet"
+            else "Multicast keine Antwort"
+        val directed = if (device.ip in lastDirectedUdpIps) " · Direkt-UDP bestätigt"
+            else ""
+        return tcp + " · " + udp + directed + " · " + responseRounds +
+            "/" + rounds.size + " Multicast-Runden · " +
+            packets + " Multicast-Antwortpakete"
     }
 
     fun compareDirectedUdp() {
@@ -737,11 +762,20 @@ class LoftController(context: Context) {
             return
         }
         task("Experimentelle UDP-Gegenprobe bei " + missing.size + " Lampen …") {
-            val replied = withContext(Dispatchers.IO) { YeelightLan.directedUdpProbe(app, missing) }
+            val replied = withContext(Dispatchers.IO) {
+                YeelightLan.directedUdpDiscover(app, missing)
+            }
+            val replyIps = replied.map { it.ip }.toSet()
+            lastDirectedUdpIps = lastDirectedUdpIps + replyIps
+            if (replied.isNotEmpty()) {
+                mergeFound(replied, "Direkt-UDP mit Gerätefähigkeiten")
+                lastSeenIps = lastSeenIps + lastDirectIps + lastMulticastIps
+            }
             directedUdpDiagnostics = "Gezielte UDP-Gegenprobe: " + replied.size + "/" +
                 missing.size + " antworten · " +
-                if (replied.isEmpty()) "Kein eindeutiger Rückschluss möglich (Multicast ist das Standardverfahren)"
-                else "Mindestens eine Lampe beantwortet direktes UDP, aber nicht Multicast"
+                if (replied.isEmpty()) "Kein eindeutiger Rückschluss möglich"
+                else "Modell und unterstützte Methoden aus Direkt-UDP übernommen. " +
+                    "Die Multicast-Nichtantwort bleibt als Netzwerkhinweis sichtbar."
             directedUdpDiagnostics
         }
     }
@@ -798,6 +832,7 @@ class LoftController(context: Context) {
         lastSeenIps = lastSeenIps - device.ip
         lastMulticastIps = lastMulticastIps - device.ip
         lastDirectIps = lastDirectIps - device.ip
+        lastDirectedUdpIps = lastDirectedUdpIps - device.ip
         lampSnapshots = lampSnapshots - device.ip
         lampOrder = lampOrder - device.id
         prefs.edit().putString("lamp-order", JSONArray(lampOrder).toString()).apply()
@@ -951,12 +986,19 @@ class LoftController(context: Context) {
             }
         } else if (allowTargetFallback) selected() else emptyList()
         if (chosen.isEmpty()) return "Keine Lampen zum Stoppen ausgewählt"
+        val lastQuotaSnapshot = lastQuotaRejectionAt.toMap()
         var stopped = 0
         val outcomes = withContext(Dispatchers.IO) {
             val limit = Semaphore(3)
             chosen.map { device -> async {
                 limit.withPermit {
-                    val issue = runCatching {
+                    val waitMs = QuotaRecoveryPolicy.remainingMs(
+                        SystemClock.elapsedRealtime(), lastQuotaSnapshot[device.ip]
+                    )
+                    val issue = if (waitMs > 0) {
+                        IllegalStateException("Yeelight-LAN-Limit: erneuter Versuch in " +
+                            ((waitMs + 999L) / 1000L) + " Sekunden möglich")
+                    } else runCatching {
                         if (!musicDeviceSession) YeelightLan.stop(device)
                         recoveryJournal[device.ip]?.let { snapshot ->
                             SceneRecovery.commands(snapshot).forEach { command ->
@@ -976,6 +1018,14 @@ class LoftController(context: Context) {
         val failures = outcomes.mapNotNull { (ip, problem) ->
             problem?.let { ip to (it.message ?: it.javaClass.simpleName) }
         }.toMap()
+        val now = SystemClock.elapsedRealtime()
+        outcomes.forEach { (ip, problem) ->
+            if (QuotaRecoveryPolicy.isQuotaRejection(problem?.message)) {
+                lastQuotaRejectionAt[ip] = now
+            } else if (problem == null) {
+                lastQuotaRejectionAt.remove(ip)
+            }
+        }
         val failed = failures.keys
         val beforeCount = recoveryJournal.size
         setRunningIps(failed)
@@ -1025,12 +1075,13 @@ class LoftController(context: Context) {
             return
         }
         task("Prüfe " + chosen.size + " Lampen für " + name + " …") {
-            // Preserve a previous unconfirmed stop journal. Never discard it
-            // on a second scene start or race a stop with new light commands.
+            // Do not automatically retry unresolved bulbs on every scene
+            // start: client quota exceeded must not trigger reconnect storms.
+            // The target filter below excludes every unresolved IP and
+            // preserves the original recovery journal without overwriting.
             if (musicDeviceSession || musicStopPending) {
                 return@task "Musiklicht zuerst stoppen und wiederherstellen"
             }
-            if (recoveryPending) haltRunning(false)
             val targets = SceneTargetPolicy.flowTargets(chosen)
             val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
             val incompatible = targets.unsupported
