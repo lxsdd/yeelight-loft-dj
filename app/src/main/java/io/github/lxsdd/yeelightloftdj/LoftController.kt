@@ -767,8 +767,11 @@ class LoftController(context: Context) {
             val directOnly = lastDirectIps - lastMulticastIps
             searchDiagnostics = "Erweiterte UDP-Diagnose: " + lastMulticastIps.size +
                 " eindeutige Multicast-Antworter in 12 Suchrunden" +
-                "\nTCP bestätigt: " + lastDirectIps.size +
-                " · Beide: " + both + " · Nur TCP: " + directOnly.size +
+                "\nTCP wird bei der 12-Runden-Probe NICHT neu getestet." +
+                " Letzte kombinierte Suche: " + lastDirectIps.size +
+                " TCP-Treffer, " + both + " davon auch per Multicast." +
+                " Nur TCP: " + directOnly.size +
+                (if (lastDirectIps.isEmpty()) "\nFür einen aktuellen TCP-Vergleich zuerst „Alle Lampen suchen“ ausführen." else "") +
                 "\nPro Runde UDP-Antworter: " +
                 YeelightLan.lastSearchRoundUnique.joinToString("/") +
                 "\nAntwortpakete insgesamt: " + YeelightLan.lastSearchPackets +
