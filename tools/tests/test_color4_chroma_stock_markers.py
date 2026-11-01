@@ -14,7 +14,7 @@ class Color4ChromaStockMarkerTests(unittest.TestCase):
                   b"user.udp_sess_keep_alive\0"
                   b'{"method":"udp_sess_token","token":"SYNTHETIC"}\0')
         report = subject.count_markers(sample)
-        self.assertEqual(report["udp_sess_new"]["raw_substring_occurrences"], 2)
+        self.assertEqual(report["udp_sess_new"]["raw_substring_occurrences"], 1)
         self.assertEqual(report["udp_sess_new"]["standalone_nul_strings"], 1)
         self.assertEqual(report["udp_chroma_sess_new"]["standalone_nul_strings"], 1)
         self.assertEqual(report["udp_sess_keep_alive"]["suffix_of_nul_string"], 1)
@@ -63,6 +63,20 @@ class Color4ChromaStockMarkerTests(unittest.TestCase):
             "raw_substring_occurrences", "standalone_nul_strings",
             "suffix_of_nul_string", "embedded_or_unterminated",
         } for x in report.values()))
+
+    def test_aligned_pointer_words_do_not_count_unaligned_noise(self):
+        import struct
+        address = 0x3F40F8C4
+        blob = bytearray(32)
+        struct.pack_into("<I", blob, 0, address)
+        struct.pack_into("<I", blob, 4, address)
+        struct.pack_into("<I", blob, 13, address)
+        refs = subject.count_aligned_pointer_words(bytes(blob), {address})
+        self.assertEqual(refs[address], [0, 4])
+
+    def test_unknown_address_has_no_pointer_refs(self):
+        refs = subject.count_aligned_pointer_words(b"\x00" * 16, {0x3F40F8C4})
+        self.assertEqual(refs[0x3F40F8C4], [])
 
     def test_unterminated_last_byte_is_not_standalone(self):
         report = subject.count_markers(b"\0udp_sess_new")

@@ -13,7 +13,9 @@ import argparse
 import json
 from pathlib import Path
 
-from color4_lan_quota_firmware_evidence import inspect as verify_stock
+from color4_lan_quota_firmware_evidence import (
+    inspect as verify_stock, map_offset_to_address,
+)
 
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 MARKERS = (
@@ -52,6 +54,46 @@ def count_markers(data: bytes) -> dict[str, dict[str, int]]:
     return counts
 
 
+
+def count_aligned_pointer_words(data: bytes, addresses: set[int]) -> dict[int, list[int]]:
+    """Private helper: offsets are returned only to the caller, NEVER JSON."""
+    found = {address: [] for address in addresses}
+    for pos in range(0, len(data) - 3, 4):
+        word = int.from_bytes(data[pos:pos + 4], "little")
+        if word in found:
+            found[word].append(pos)
+    return found
+
+
+def v2_stock_pointer_counts(data: bytes) -> dict[str, int]:
+    """Count mapped aligned pointer words to unique exact v2 method strings."""
+    targets = {}
+    for marker in ("udp_sess_new", "udp_chroma_sess_new"):
+        needle = marker.encode("ascii")
+        offsets = []
+        pos = 0
+        while True:
+            at = data.find(needle, pos)
+            if at < 0:
+                break
+            if (at == 0 or data[at - 1] == 0) and (
+                at + len(needle) < len(data) and data[at + len(needle)] == 0
+            ):
+                offsets.append(at)
+            pos = at + 1
+        if len(offsets) != 1:
+            return {}  # ambiguous string provenance; do not promote it
+        address = map_offset_to_address(data, offsets[0])
+        if address is None:
+            return {}
+        targets[marker] = address
+    refs = count_aligned_pointer_words(data, set(targets.values()))
+    return {
+        marker: sum(map_offset_to_address(data, pos) is not None
+                    for pos in refs[address])
+        for marker, address in targets.items()
+    }
+
 def inspect_stock_chroma(data: bytes) -> dict:
     # Bound even the verification work; no partial read is accepted.
     if len(data) > MAX_IMAGE_BYTES:
@@ -67,6 +109,7 @@ def inspect_stock_chroma(data: bytes) -> dict:
         "version": verified["version"],
         "stock_image_verified": True,
         "markers": count_markers(data),
+        "v2_exact_marker_aligned_mapped_pointer_counts": v2_stock_pointer_counts(data),
         "runtime_chroma_capability_proven": False,
         "udp_v2_handshake_verified_on_hardware": False,
         "firmware_quota_root_cause_proven": False,
