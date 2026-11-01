@@ -27,6 +27,29 @@ class YeelightLanTest {
             YeelightLan.rejectionMessage("set_music", listOf(0), error))
     }
 
+    @Test fun musicPreflightNeverAssumesUnsupportedPropertyMeansOff() {
+        assertEquals(false, YeelightLan.musicStateFromValue("0"))
+        assertEquals(true, YeelightLan.musicStateFromValue("1"))
+        assertNull(YeelightLan.musicStateFromValue(""))
+        assertNull(YeelightLan.musicStateFromValue(null))
+        assertNull(YeelightLan.musicPreflightRefusal(false))
+        assertNotNull(YeelightLan.musicPreflightRefusal(true))
+        assertNotNull(YeelightLan.musicPreflightRefusal(null))
+    }
+
+    @Test fun recoveryParserKeepsMusicEvidenceIndependentOfPower() {
+        val readings = listOf("0", "off", "50", "1", "16711680", "2700",
+            "0", "100", "0")
+        val observation = YeelightLan.parseRecoveryProperties(readings)
+        assertEquals(false, observation.flowing)
+        assertEquals(false, observation.powerOn)
+        assertEquals(false, observation.musicOn)
+        assertNotNull(observation.snapshot)
+        assertNull(YeelightLan.parseRecoveryProperties(readings.dropLast(1)).musicOn)
+        assertEquals(true, YeelightLan.parseRecoveryProperties(
+            readings.dropLast(1) + "1").musicOn)
+    }
+
     @Test fun discoveryParsesColor4() {
         val device = YeelightLan.parseAnnouncement(response)
         assertNotNull(device)
