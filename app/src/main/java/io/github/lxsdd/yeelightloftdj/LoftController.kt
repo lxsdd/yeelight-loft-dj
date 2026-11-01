@@ -327,7 +327,12 @@ class LoftController(context: Context) {
         LampOperationGate.canIdentifyLamp(
             busy, device.ip, runningDeviceIps, recoveryJournal.keys,
             musicDeviceSession, musicStopPending || musicSending
-        )
+        ) &&
+        // Identification requires a safely restorable power/brightness pulse.
+        // Do not present a clickable identify action on a device explicitly
+        // advertising that either method is unsupported.
+        DeviceCapabilities.evidence(device, "set_power") != CapabilityEvidence.UNSUPPORTED &&
+        DeviceCapabilities.evidence(device, "set_bright") != CapabilityEvidence.UNSUPPORTED
 
     fun pendingLampDescriptions(): List<String> =
         LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
