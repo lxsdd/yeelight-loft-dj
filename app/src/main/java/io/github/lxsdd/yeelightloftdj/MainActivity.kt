@@ -144,12 +144,24 @@ private fun LoftApp(controller: LoftController) {
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item { Header() }
-            item { Status(controller) }
-            if (controller.recoveryPending) {
-                item(key = "recovery-action") {
-                    if (controller.scannerRunning) ScannerRunningBanner(controller)
-                    else RecoveryBanner(controller)
+            item(key = "app-header") { Header() }
+            // A shifting global error/recovery banner above a slider changes
+            // the LazyColumn's scroll anchor while the user is touching it.
+            // Detail pages keep a fixed-height status; full diagnostics are
+            // still present on the main tabs.
+            if (detailRoute == null) {
+                item(key = "global-status") { Status(controller) }
+                if (controller.recoveryPending) {
+                    item(key = "recovery-action") {
+                        if (controller.scannerRunning) ScannerRunningBanner(controller)
+                        else RecoveryBanner(controller)
+                    }
+                }
+            } else {
+                item(key = "detail-status") {
+                    Text(controller.status, color = muted, fontSize = 11.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth().height(20.dp))
                 }
             }
             if (detailRoute != null) {
@@ -1056,6 +1068,7 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
     var expanded by remember(device.id) { mutableStateOf(initiallyExpanded) }
     var localAlias by remember(device.id) { mutableStateOf(controller.aliasFor(device)) }
     var showRemoveConfirm by remember(device.id) { mutableStateOf(false) }
+    var showAdvanced by rememberSaveable(device.id) { mutableStateOf(false) }
     val discovered = device.ip in controller.lastSeenIps
     Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1084,6 +1097,13 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
             ) { Text("Identifizieren · 2,5 s") }
             if (expanded) {
                 HorizontalDivider(color = Color(0xFF384057))
+                LampManualPanel(device, controller, initiallyExpanded = initiallyExpanded)
+                OutlinedButton(onClick = { showAdvanced = !showAdvanced },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(if (showAdvanced) "Geräteverwaltung ausblenden"
+                        else "Geräteverwaltung & Diagnose")
+                }
+                if (showAdvanced) {
                 Text("Geräteverwaltung", color = Color.White, fontWeight = FontWeight.Medium)
                 Text("Modell: " + (if (YeelightLan.isSpecificModel(device.model))
                     device.model else "über LAN unbekannt") +
@@ -1130,7 +1150,6 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
                     enabled = !controller.busy,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Gerät prüfen · nur lesend") }
-                LampManualPanel(device, controller, initiallyExpanded = initiallyExpanded)
                 if (!device.canFlow) {
                     Note("Der erkannte SUPPORT-Eintrag enthält kein start_cf. " +
                         "Diese Lampe wird nicht in Farbfluss-Szenen aufgenommen.")
@@ -1143,6 +1162,7 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
                     enabled = controller.canOrganizeLamps,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Gerät aus dieser App entfernen") }
+                }
             }
         }
     }
@@ -1339,11 +1359,16 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
             Text("Nur diese Lampe ist wegen Lichtshow/Wiederherstellung derzeit geschützt.",
                 color = muted, fontSize = 11.sp)
         }
+        var showPowerTrace by rememberSaveable(device.ip) { mutableStateOf(false) }
         controller.lastPowerResults[device.ip]?.let { probe ->
-            Text("Letzte Ein/Aus-Messung", color = Color.White,
-                fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-            PowerTrace(controller.displayName(device), probe,
-                discoverySource(controller, device))
+            TextButton(onClick = { showPowerTrace = !showPowerTrace }) {
+                Text(if (showPowerTrace) "Schaltdiagnose verbergen"
+                    else "Details zur letzten Ein/Aus-Messung")
+            }
+            if (showPowerTrace) {
+                PowerTrace(controller.displayName(device), probe,
+                    discoverySource(controller, device))
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
@@ -1359,7 +1384,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                 modifier = Modifier.weight(1f)
             ) { Text("Aus") }
         }
-        var brightness by remember(device.ip, live?.brightness) {
+        var brightness by remember(device.ip) {
             mutableFloatStateOf((live?.brightness ?: 60).toFloat())
         }
         Text("Helligkeit · ${brightness.roundToInt()} %", color = Color.White, fontSize = 12.sp)
@@ -1401,7 +1426,7 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
             }
         }
         if (DeviceCapabilities.evidence(device, "set_ct_abx") != CapabilityEvidence.UNSUPPORTED) {
-            var kelvin by remember(device.ip, live?.temperature) {
+            var kelvin by remember(device.ip) {
                 mutableFloatStateOf((live?.temperature ?: 3500).toFloat())
             }
             Text("Weißtemperatur · ${kelvin.roundToInt()} K", color = Color.White, fontSize = 12.sp)
@@ -1417,10 +1442,10 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
             )
         }
         if (DeviceCapabilities.evidence(device, "set_hsv") != CapabilityEvidence.UNSUPPORTED) {
-            var hue by remember(device.ip, live?.hue) {
+            var hue by remember(device.ip) {
                 mutableFloatStateOf((live?.hue ?: 180).toFloat())
             }
-            var saturation by remember(device.ip, live?.saturation) {
+            var saturation by remember(device.ip) {
                 mutableFloatStateOf((live?.saturation ?: 70).toFloat())
             }
             val hsvEnabled = controller.canIdentifyLamp(device) &&
