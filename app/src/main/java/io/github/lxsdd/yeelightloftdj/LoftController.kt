@@ -126,8 +126,8 @@ class LoftController(context: Context) {
     }.getOrNull()
 
     /** Loft can be edited independently of room assignments. Default = historical three rooms. */
-    fun loftMemberIds(): Set<String> = loftMembersOverride
-        ?: devices.filter { roomFor(it) in loftRooms }.map { it.id }.toSet()
+    fun loftMemberIds(): Set<String> =
+        SceneTargetPolicy.loftIds(devices, assignments, loftMembersOverride)
 
     fun setLoftMember(id: String, selected: Boolean) {
         if (!canOrganizeLamps || devices.none { it.id == id }) return
@@ -729,6 +729,7 @@ class LoftController(context: Context) {
             }
         } else if (allowTargetFallback) selected() else emptyList()
         if (chosen.isEmpty()) return "Keine Lampen zum Stoppen ausgewählt"
+        var stopped = 0
         val outcomes = withContext(Dispatchers.IO) {
             val limit = Semaphore(3)
             chosen.map { device -> async {
@@ -741,6 +742,11 @@ class LoftController(context: Context) {
                             }
                         }
                     }.exceptionOrNull()
+                    withContext(Dispatchers.Main.immediate) {
+                        stopped++
+                        status = "Stoppe Lichtshow: " + stopped + "/" + chosen.size +
+                            " Lampen geprüft …"
+                    }
                     device.ip to issue
                 }
             } }.awaitAll()
@@ -798,9 +804,10 @@ class LoftController(context: Context) {
             // Preserve a previous unconfirmed stop journal. Never discard it
             // on a second scene start or race a stop with new light commands.
             if (recoveryPending) haltRunning(false)
-            val unique = chosen.distinctBy { it.ip }
-            val incompatible = unique.filterNot { it.canFlow }
-            val eligible = unique.filter { it.canFlow }
+            val targets = SceneTargetPolicy.flowTargets(chosen)
+            val incompatible = targets.unsupported
+            val eligible = targets.supported
+            val uniqueCount = eligible.size + incompatible.size
             val skipped = incompatible.map {
                 SceneLampResult(displayName(it), "Übersprungen",
                     "start_cf wird vom Gerät nicht unterstützt")
@@ -841,7 +848,7 @@ class LoftController(context: Context) {
             val runnable = safe.map { it.first }
             lastSceneReport = skipped + failedPreflight
             if (runnable.isEmpty()) {
-                return@task "0/" + unique.size +
+                return@task "0/" + uniqueCount +
                     " Lampen startbereit. Gerätebericht unter Szenen prüfen."
             }
             // Durable safety state is committed before the first light command.
@@ -877,8 +884,8 @@ class LoftController(context: Context) {
                     SceneLampResult(displayName(device), "Läuft", "Animation über flowing bestätigt")
                 } + failed
             activeScene = if (started > 0) id else null
-            val missed = unique.size - started
-            name + ": " + started + "/" + unique.size + " Lampen bestätigt" +
+            val missed = uniqueCount - started
+            name + ": " + started + "/" + uniqueCount + " Lampen bestätigt" +
                 (if (missed > 0) " · " + missed + " nicht gestartet – Bericht ansehen" else "") +
                 (if (restoreAfterStop) " · vorheriger Lichtzustand gespeichert" else "")
         }
