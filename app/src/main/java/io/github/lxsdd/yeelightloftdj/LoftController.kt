@@ -510,21 +510,34 @@ class LoftController(context: Context) {
                 reportedPowerOn = read.powerOn
             )
             val label = displayName(device)
-            if (RecoveryReadPolicy.canClear(decision, musicSessionUnconfirmed = musicDeviceSession)) {
+            val musicStillUnconfirmed = RecoveryReadPolicy.musicStillUnconfirmed(
+                musicDeviceSession, read.musicOn)
+            if (RecoveryReadPolicy.canClear(decision, musicSessionUnconfirmed = musicStillUnconfirmed)) {
                 val nextRunning = runningDeviceIps - ip
                 val nextJournal = recoveryJournal - ip
                 val nextScanner = scannerOffIps - ip
+                val nextUnconfirmedStops = unconfirmedMusicStopIps - ip
+                val keepMusicSession = musicDeviceSession &&
+                    (nextRunning.isNotEmpty() || nextJournal.isNotEmpty())
                 check(prefs.edit()
                     .putString("running-flow-ips", JSONArray(nextRunning.toList()).toString())
                     .putString("pending-scene-recovery", SceneRecovery.encode(nextJournal))
                     .putString("scanner-off-ips", JSONArray(nextScanner.toList()).toString())
+                    .putStringSet("music-stop-unconfirmed-ips", nextUnconfirmedStops)
+                    .putBoolean("music-light-session", keepMusicSession)
                     .commit()) { "Bestätigte Wiederherstellung konnte nicht gespeichert werden" }
                 runningDeviceIps = nextRunning
                 recoveryJournal = nextJournal
                 scannerOffIps = nextScanner
+                unconfirmedMusicStopIps = nextUnconfirmedStops
+                musicDeviceSession = keepMusicSession
+                if (!keepMusicSession) {
+                    musicLightArmed = false
+                    musicLightStatus = "Musikmodus lesend als beendet bestätigt"
+                }
                 lastRecoveryFailures = lastRecoveryFailures - ip
                 lastQuotaRejectionAt.remove(ip)
-                if (nextRunning.isEmpty() && nextJournal.isEmpty() && !musicDeviceSession) {
+                if (nextRunning.isEmpty() && nextJournal.isEmpty()) {
                     activeScene = null
                 }
                 val success = when(decision) {
@@ -541,8 +554,12 @@ class LoftController(context: Context) {
                     RecoveryReadDecision.ALREADY_RESTORED,
                     RecoveryReadDecision.FLOW_STOPPED_NO_SNAPSHOT,
                     RecoveryReadDecision.SCANNER_OFF ->
-                        "Lichtzustand lesend geprüft; Musikmodus-Stopp wurde noch nicht " +
-                            "bestätigt. Schutz bleibt bestehen. Keine automatischen Befehle."
+                        "Lichtzustand geprüft, aber music_on=" +
+                            when (read.musicOn) {
+                                true -> "1 (Musikmodus aktiv). "
+                                false -> "0 (Musikmodus aus). "
+                                null -> "unbekannt. "
+                            } + "Schutz bleibt bestehen; keine automatischen Befehle."
                     RecoveryReadDecision.FLOW_STILL_RUNNING ->
                         "Farbfluss läuft noch. Bitte normal stoppen."
                     RecoveryReadDecision.RESTORE_REQUIRED ->
@@ -1719,7 +1736,11 @@ class LoftController(context: Context) {
             }
             val snapshots = withContext(Dispatchers.IO) {
                 chosen.map { device -> async {
-                    val snapshot = YeelightLan.readStatus(device)
+                    val snapshot = if (YeelightLan.supportsMusicMode(device)) {
+                        YeelightLan.readMusicPreflight(device)
+                    } else {
+                        YeelightLan.readStatus(device)
+                    }
                     require(SceneRecovery.supported(snapshot)) {
                         "Musiklicht abgebrochen: Farbzustand von " + displayName(device) + " nicht vollständig lesbar"
                     }
@@ -1771,7 +1792,9 @@ class LoftController(context: Context) {
                 musicLightArmed = false
                 val restored = haltRunning(false)
                 return@task "Music-Mode-Rückkanal konnte nicht aufgebaut werden · " +
-                    "keine Farbimpulse gesendet · " + restored
+                    streamFailures.joinToString("; ") { (ip, message) ->
+                        ip.substringAfterLast('.') + ": " + message.take(145)
+                    } + " · keine Farbimpulse gesendet · " + restored
             }
             val streamingCount = chosen.count(YeelightLan::musicModeActive)
             musicLightStatus = "$streamingCount Musik-Rückkanäle · " +
