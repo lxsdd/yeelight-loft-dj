@@ -197,8 +197,11 @@ fun MusicScreen(controller: LoftController) {
                         "über den ausdrücklich gewählten Zielbereich wandern lassen.",
                     color = Color(0xFFAAB6CE), fontSize = 12.sp
                 )
-                Text("Sicherheitsgrenze: maximal ein RGB-Befehl alle 1,5 Sekunden je Lampe. " +
-                    "Keine Stroboskop-Effekte, kein unkontrolliertes Dauerfeuer.",
+                Text("Kompatible Lampen mit bestätigtem set_music erhalten Farbimpulse über " +
+                    "den Yeelight-Musikrückkanal (maximal ca. 3 pro Sekunde). " +
+                    "Andere Lampen bleiben bei höchstens einem RGB-Befehl je 1,5 Sekunden " +
+                    "und behalten eine Stoppreserve. " +
+                    "Keine Stroboskop-Effekte.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
                 if (!controller.musicLightArmed && controller.runningDeviceIps.isEmpty()) {
                     Button(

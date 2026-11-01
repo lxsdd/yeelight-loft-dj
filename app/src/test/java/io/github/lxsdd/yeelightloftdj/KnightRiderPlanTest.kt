@@ -26,7 +26,7 @@ class KnightRiderPlanTest {
                 val worst = (0 until n).maxOf { i -> cycle.count { it == i } }
                 val rate = (60_000.0 * worst * 3) /
                     (KnightRiderPlan.effectiveStepMs(180,n,bounce) * cycle.size)
-                assertTrue("n=$n,bounce=$bounce,rate=$rate",rate <= 55.1)
+                assertTrue("n=$n,bounce=$bounce,rate=$rate",rate <= 35.1)
             }
         }
     }

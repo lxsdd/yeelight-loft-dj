@@ -64,6 +64,10 @@ class MusicAnalyzerTest {
         val a = MusicFrame(0.25f, 0.7f, listOf(.7f,.3f,.1f,.1f,.1f,.1f),
             0.6f, true, null, 2400L)
         assertTrue(MusicLightPolicy.maySend(a, 0L, 1500L))
+        assertTrue(MusicLightPolicy.maySend(a, 0L, 350L, 350L))
+        assertFalse(MusicLightPolicy.maySend(a, 0L, 200L, 350L))
+        assertFalse(MusicLightPolicy.maySend(a, 0L, 350L, 1500L))
+        assertFalse(MusicLightPolicy.maySend(a, 0L, 350L, 100L))
         assertFalse(MusicLightPolicy.maySend(a, 1000L, 2000L))
         assertFalse(MusicLightPolicy.maySend(a.copy(beat = false), 0L, 3000L))
         assertEquals(MusicLightPolicy.color(a, 0, 1L), MusicLightPolicy.color(a, 3, 1L))

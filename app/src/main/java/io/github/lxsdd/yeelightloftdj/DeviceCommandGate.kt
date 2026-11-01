@@ -11,7 +11,9 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class DeviceCommandGate(
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
-    private val maxCommandsPerMinute: Int = 110,
+    // One persistent Yeelight TCP connection allows 60/min; reserve capacity
+    // for delayed confirmations, firmware notifications and other clients.
+    private val maxCommandsPerMinute: Int = 45,
     private val windowMs: Long = 60_000L,
     private val quotaCooldownMs: Long = 60_000L,
 ) {
@@ -58,6 +60,22 @@ class DeviceCommandGate(
         if (!QuotaRecoveryPolicy.isQuotaRejection(text)) return
         val state = states.computeIfAbsent(ip) { State() }
         synchronized(state) { state.quotaBlockedUntil = nowMs() + quotaCooldownMs }
+    }
+
+    /**
+     * Read-only quota headroom for optional continuous effects. Unlike normal
+     * commands, music beats must yield enough capacity for a user-requested
+     * STOP and the original-state restoration. No reserve is a quota reset.
+     */
+    fun remaining(ip: String): Int {
+        val state = states[ip] ?: return maxCommandsPerMinute
+        synchronized(state) {
+            val now = nowMs()
+            if (now < state.quotaBlockedUntil) return 0
+            while (state.timestamps.isNotEmpty() &&
+                now - state.timestamps.first >= windowMs) state.timestamps.removeFirst()
+            return (maxCommandsPerMinute - state.timestamps.size).coerceAtLeast(0)
+        }
     }
 
     fun consumed(ip: String): Int {
