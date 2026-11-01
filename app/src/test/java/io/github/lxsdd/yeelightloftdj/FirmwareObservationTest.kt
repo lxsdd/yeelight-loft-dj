@@ -15,6 +15,21 @@ class FirmwareObservationTest {
         assertFalse(r.flashAllowed)
     }
 
+    @Test fun cachedUdpSessionWithoutRgbSceneIsNotPresentedAsReady() {
+        val result = FirmwareInsightReport.summarize("color4",
+            setOf("chroma", "udp_sess_new"))
+        assertTrue(result.chroma.contains("RGB-set_scene nicht belegt"))
+        assertTrue(result.evidence.contains("nicht live"))
+    }
+
+    @Test fun cachedUdpWithSceneStillHasNoHardwareConfirmation() {
+        val result = FirmwareInsightReport.summarize("color4",
+            setOf("chroma", "udp_sess_new", "set_scene"))
+        assertTrue(result.chroma.contains("nur Offline-Simulation"))
+        assertTrue(result.chroma.contains("kein Gerätetest"))
+        assertFalse(result.flashAllowed)
+    }
+
     @Test fun noSupportMeansUnknownNotUnsupported() {
         val r = FirmwareInsightReport.summarize("color4", emptySet())
         assertTrue(r.chroma.contains("unbekannt"))
