@@ -1,0 +1,81 @@
+# TEMPORARY, ONE-OFF workflow for the explicitly authorized PR #31
+# hardware-acceptance APK. Never publish a release; delete after successful
+# signature verification + artifact upload. Keep the permanent main-only CI
+# signing restrictions in android.yml unchanged.
+name: Color4 PR31 Signed Acceptance (temporary)
+on:
+  push:
+    branches: [fix/firmware-quota-failsafe-20261101]
+permissions:
+  contents: read
+concurrency:
+  group: color4-pr31-acceptance
+  cancel-in-progress: true
+jobs:
+  signed-hardware-acceptance:
+    if: ${{ github.repository == 'lxsdd/yeelight-loft-dj' && github.actor == 'lxsdd' && github.ref == 'refs/heads/fix/firmware-quota-failsafe-20261101' && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check exact PR #31 source and preview version before using secrets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          head="$(gh api repos/lxsdd/yeelight-loft-dj/pulls/31 --jq '.head.sha')"
+          [[ "$GITHUB_SHA" == "$head" ]] || { echo "::error::PR head changed"; exit 1; }
+          [[ "$(gh api repos/lxsdd/yeelight-loft-dj/pulls/31 --jq '.head.ref')" == 'fix/firmware-quota-failsafe-20261101' ]] || exit 1
+          grep -Fq 'versionCode = 19' app/build.gradle.kts
+          grep -Fq 'versionName = "0.2.8-rc1"' app/build.gradle.kts
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Load permanent signing certificate for this approved same-repo push
+        shell: bash
+        env:
+          STORE_B64: ${{ secrets.YEELIGHT_SIGNING_STORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.YEELIGHT_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$STORE_B64" && -n "$STORE_PASSWORD" ]] || {
+            echo "::error::Stable signing credentials not available"
+            exit 1
+          }
+          echo "::add-mask::$STORE_PASSWORD"
+          printf '%s' "$STORE_B64" | base64 --decode > "$RUNNER_TEMP/loft-dj.p12"
+          chmod 600 "$RUNNER_TEMP/loft-dj.p12"
+          keytool -list -storetype PKCS12 -keystore "$RUNNER_TEMP/loft-dj.p12" -alias loft-dj-app -storepass "$STORE_PASSWORD" >/dev/null
+          echo "YEELIGHT_SIGNING_STORE=$RUNNER_TEMP/loft-dj.p12" >> "$GITHUB_ENV"
+          echo "YEELIGHT_SIGNING_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+      - name: All JVM regression tests and signed acceptance APK
+        run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+      - name: Verify exact permanent APK certificate and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          signer="$(find "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
+          [[ -n "$signer" ]] || exit 1
+          "$signer" verify --verbose "$apk"
+          actual="$("$signer" verify --print-certs "$apk" | bash .github/scripts/extract-apk-cert-sha256.sh)"
+          expected="dc5fce6c385279a97e35f74d0b659a95ff960cc7d6be912cba3016bcfbb7dbca"
+          [[ "$actual" == "$expected" ]] || { echo "::error::APK certificate mismatch"; exit 1; }
+          mkdir -p signed
+          cp "$apk" signed/Yeelight-Loft-DJ-v0.2.8-rc1-build19-PR31-signed.apk
+          sha256sum signed/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: color4-pr31-signed-acceptance-build19
+          path: signed/*.apk
+          retention-days: 14
+          if-no-files-found: error
