@@ -1331,6 +1331,16 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val lanQuarantined = controller.isLampLanQuarantined(device)
+        if (device.model.equals("color4", ignoreCase = true)) {
+            Text(
+                "Steuerweg: lokales Yeelight-LAN (TCP 55443) · " +
+                    "Hersteller-Cloud in Loft DJ nicht gekoppelt · " +
+                    if (YeelightLan.supportsMusicMode(device))
+                        "Music Mode laut Gerätemeldung unterstützt"
+                    else "Music Mode noch nicht bestätigt",
+                color = muted, fontSize = 11.sp,
+            )
+        }
         if (lanQuarantined) {
             Note("LAN-Steuerung dieser Lampe geschützt: Die Firmware hat " +
                 "'client quota exceeded' gemeldet. Es werden keine regulären " +
