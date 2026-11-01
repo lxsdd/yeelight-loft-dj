@@ -478,21 +478,20 @@ object YeelightLan {
     private class RejectedCommand(message: String) : IllegalStateException(message)
 
     /**
-     * One TCP connection for a requested power change AND its verification.
-     * Never auto-retry a command when the ACK is missing: the bulb may already
-     * have switched and the ACK alone could have been lost.
+     * Power and verification use one TCP session, but are TWO distinct LAN
+     * requests. Never charge two budget tokens at one timestamp and then send
+     * the two physical packets back-to-back: each request must pass the shared
+     * paced gate separately. No replay of an ambiguous power command.
      */
     fun setPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
         return try {
-            commandGate.run(device.ip, requests = 2) {
-                directSetPowerVerified(device, on)
-            }.also { result ->
+            directSetPowerVerified(device, on).also { result ->
                 if (result.outcome == PowerOutcome.REJECTED)
                     commandGate.recordFirmwareRejection(device.ip, result.message)
             }
         } catch (e: DeviceCommandGate.Deferred) {
             PowerProbe(PowerOutcome.REJECTED,
-                message = e.message ?: "Yeelight-Befehlslimit erreicht")
+                message = e.message ?: "Lokales Yeelight-Sicherheitsbudget erreicht")
         }
     }
 
@@ -507,8 +506,10 @@ object YeelightLan {
         var ackMs: Long? = null
         try {
             val powerId=seq.getAndIncrement()
-            val result=tcp.request(device.ip,device.port,powerId,"set_power",
-                listOf(if(on) "on" else "off","sudden",0))
+            val result=commandGate.run(device.ip) {
+                tcp.request(device.ip,device.port,powerId,"set_power",
+                    listOf(if(on) "on" else "off","sudden",0))
+            }
             if (result.has("error")) {
                 return PowerProbe(PowerOutcome.REJECTED,totalMs=ms(),
                     message=result.optJSONObject("error")?.optString("message","Gerätefehler")
@@ -525,11 +526,14 @@ object YeelightLan {
             }
             Thread.sleep(75)
             val observed=runCatching {
-                val response=tcp.request(device.ip,device.port,seq.getAndIncrement(),
-                    "get_prop", listOf("power"))
-                check(!response.has("error")) {
-                    "Statusabfrage abgelehnt: " +
-                        response.optJSONObject("error")?.optString("message","Gerätefehler")
+                val response=commandGate.run(device.ip) {
+                    val reply=tcp.request(device.ip,device.port,seq.getAndIncrement(),
+                        "get_prop", listOf("power"))
+                    check(!reply.has("error")) {
+                        "Statusabfrage abgelehnt: " +
+                            reply.optJSONObject("error")?.optString("message","Gerätefehler")
+                    }
+                    reply
                 }
                 when(response.optJSONArray("result")?.optString(0)) {
                     "on" -> true
