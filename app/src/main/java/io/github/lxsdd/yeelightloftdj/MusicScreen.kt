@@ -295,17 +295,54 @@ fun MusicScreen(controller: LoftController) {
                     ) { Text("Musiklicht stoppen und vorheriges Licht wiederherstellen") }
                 }
                 Text(controller.musicLightStatus, color = Color(0xFF98A6C0), fontSize = 12.sp)
-                var pairReadiness by remember { mutableStateOf("") }
+                HorizontalDivider(color = Color(0xFF323A50))
+                Text("Zwei-Lampen-Eignungsprüfung", color = Color.White,
+                    fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(
+                    "Nur vorhandene Geräteinformationen. Es werden keine Lampen geschaltet " +
+                        "und keine Musikkanäle gestartet.",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp
+                )
+                val pairKey = controller.color4PairSelectionKey()
+                var pairReadiness by remember(pairKey) {
+                    mutableStateOf<Color4PairCheckResult?>(null)
+                }
                 OutlinedButton(
                     onClick = { pairReadiness = controller.color4PairReadiness() },
                     enabled = !controller.busy && !controller.musicLightArmed,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Zwei Color4 · Eignung ohne Schalten prüfen") }
-                if (pairReadiness.isNotBlank()) {
-                    Text(pairReadiness,
-                        color = Color(0xFF98A6C0), fontSize = 11.sp)
+                ) { Text("Zwei ausgewählte Color4 prüfen") }
+                pairReadiness?.let { result ->
+                    Surface(
+                        color = Color(0xFF2B3144),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(
+                                if (result.eligible) "✓ EIGNUNGSPRÜFUNG BESTANDEN"
+                                else "EIGNUNGSPRÜFUNG NICHT BESTANDEN",
+                                color = if (result.eligible) Color(0xFF67E1C8)
+                                else Color(0xFFFFD38A),
+                                fontWeight = FontWeight.Bold, fontSize = 13.sp
+                            )
+                            Text("Auswahl: " + controller.color4PairSelectionNames(),
+                                color = Color.White, fontSize = 12.sp)
+                            Text(result.explanation, color = Color(0xFFAAB6CE),
+                                fontSize = 12.sp)
+                            Text("0 Lampenbefehle · kein Lichttest. " +
+                                "Die Stabilität und Wiederherstellung sind damit " +
+                                "noch nicht bestätigt.",
+                                color = Color(0xFF98A6C0), fontSize = 11.sp)
+                        }
+                    }
                 }
                 if (controller.lastColor4TestReport.isNotBlank()) {
+                    HorizontalDivider(color = Color(0xFF323A50))
+                    Text("Letzter Color4-Einzeltest – keine Zwei-Lampen-Messung",
+                        color = Color(0xFFAAB6CE), fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp)
                     Text(
                         controller.lastColor4TestReport,
                         color = Color(0xFF67E1C8), fontSize = 12.sp

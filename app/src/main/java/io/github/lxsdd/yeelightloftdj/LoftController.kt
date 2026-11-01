@@ -1733,13 +1733,29 @@ class LoftController(context: Context) {
         return null
     }
 
-    fun color4PairReadiness(): String {
+    /** UI-only snapshot identity: invalidate an old readiness result if targets,
+     * discovered capabilities, quarantine, or recovery state change. */
+    fun color4PairSelectionKey(): String {
+        val devicesKey = selected().distinctBy { it.ip }.map { device ->
+            listOf(
+                device.id,
+                device.ip,
+                device.model,
+                device.methods.sorted().joinToString(","),
+                YeelightLan.isLanQuarantined(device).toString()
+            ).joinToString("#")
+        }.sorted().joinToString("|")
+        return "$devicesKey;recovery=$recoveryPending"
+    }
+
+    fun color4PairSelectionNames(): String =
+        selected().distinctBy { it.ip }.joinToString(" + ") { displayName(it) }
+            .ifBlank { "keine Lampen ausgewählt" }
+
+    internal fun color4PairReadiness(): Color4PairCheckResult {
         val requested = selected().distinctBy { it.ip }
         val blocked = requested.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet()
-        return Color4PairReadinessPolicy.refusal(requested, blocked, recoveryPending)
-            ?: "Zwei Color4 melden die nötigen Funktionen und sind nicht quarantänisiert. " +
-                "Dies ist nur eine lokale Eignungsprüfung – kein Gerätetest und " +
-                "keine Bestätigung der Stabilität oder Wiederherstellung."
+        return Color4PairReadinessPolicy.assess(requested, blocked, recoveryPending)
     }
 
     fun armMusicLights() {
