@@ -41,7 +41,7 @@ class ChromaUdpOfflineFleetTest {
     @Test fun noCapabilityOrOnlySubstringCannotBegin() {
         val fleet = ChromaUdpOfflineFleet(listOf(
             ChromaOfflineLampSpec("a", ChromaUdpOfflineSession(aIp,
-                setOf("not_chroma", "udp_sess_new", "set_scene"))))
+                setOf("not_chroma", "udp_sess_new", "set_scene")))))
         assertNull(fleet.begin("a", 0))
         assertNull(fleet.color("a", 100, 50, 1))
         assertEquals(0, fleet.snapshot("a")!!.framesAttempted)
