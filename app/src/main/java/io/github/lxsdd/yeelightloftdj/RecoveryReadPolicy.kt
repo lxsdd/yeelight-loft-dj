@@ -19,14 +19,17 @@ object RecoveryReadPolicy {
         current: LampSnapshot?,
         original: LampSnapshot?,
         scannerOffRequired: Boolean,
+        reportedPowerOn: Boolean? = current?.isOn,
     ): RecoveryReadDecision {
         if (scannerOffRequired) {
-            return if (current?.isOn == false) RecoveryReadDecision.SCANNER_OFF
+            return if (reportedPowerOn == false) RecoveryReadDecision.SCANNER_OFF
             else RecoveryReadDecision.UNKNOWN
         }
         if (flowing == true) return RecoveryReadDecision.FLOW_STILL_RUNNING
         if (flowing != false) return RecoveryReadDecision.UNKNOWN
         if (original == null) return RecoveryReadDecision.FLOW_STOPPED_NO_SNAPSHOT
+        if (!original.isOn && reportedPowerOn == false)
+            return RecoveryReadDecision.ALREADY_RESTORED
         if (current == null) return RecoveryReadDecision.UNKNOWN
         return if (matches(original, current)) RecoveryReadDecision.ALREADY_RESTORED
             else RecoveryReadDecision.RESTORE_REQUIRED
