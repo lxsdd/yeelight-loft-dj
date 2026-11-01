@@ -46,6 +46,14 @@ class RecoveryReadPolicyTest {
             RecoveryReadDecision.ALREADY_RESTORED, musicSessionUnconfirmed = false))
     }
 
+    @Test fun uncertainMusicOrFlowMustNotTriggerStaticReplay() {
+        assertTrue(RecoveryReadPolicy.safeToRestoreAfterLostMusicChannel(false, false))
+        assertFalse(RecoveryReadPolicy.safeToRestoreAfterLostMusicChannel(true, false))
+        assertFalse(RecoveryReadPolicy.safeToRestoreAfterLostMusicChannel(false, true))
+        assertFalse(RecoveryReadPolicy.safeToRestoreAfterLostMusicChannel(null, false))
+        assertFalse(RecoveryReadPolicy.safeToRestoreAfterLostMusicChannel(false, null))
+    }
+
     @Test fun musicRecoveryNeedsExplicitMusicOffAndStaticMatch() {
         assertTrue(RecoveryReadPolicy.musicStillUnconfirmed(true, null))
         assertTrue(RecoveryReadPolicy.musicStillUnconfirmed(true, true))
