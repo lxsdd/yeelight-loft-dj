@@ -483,6 +483,22 @@ class LoftController(context: Context) {
                     lampOrder = lampOrder.map { if (it == previous.id) replacement.id else it }.distinct()
                     prefs.edit().putString("lamp-order", JSONArray(lampOrder).toString()).apply()
                 }
+                if (previous.id in customSelectedIds) {
+                    val revised = (customSelectedIds - previous.id) + replacement.id
+                    check(prefs.edit().putString("selected-lamp-ids",
+                        JSONArray(revised.toList()).toString()).commit()) {
+                        "Geräteauswahl konnte nicht übertragen werden"
+                    }
+                    customSelectedIds = revised
+                }
+                if (previous.id in (loftMembersOverride ?: emptySet())) {
+                    val revised = (loftMembersOverride ?: emptySet()) - previous.id + replacement.id
+                    check(prefs.edit().putString("loft-member-ids",
+                        JSONArray(revised.toList()).toString()).commit()) {
+                        "Loft-Mitgliedschaft konnte nicht übertragen werden"
+                    }
+                    loftMembersOverride = revised
+                }
                 val room = updatedRooms[previous.id] ?: prefs.getString("room." + previous.id, null)
                 if (room != null) {
                     updatedRooms[replacement.id] = room
