@@ -29,8 +29,8 @@ android {
         applicationId = "io.github.lxsdd.yeelightloftdj"
         minSdk = 29
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.2.7"
+        versionCode = 19
+        versionName = "0.2.8-rc1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
