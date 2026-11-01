@@ -50,3 +50,36 @@ automatische TCP-Rückfallsteuerung noch eine versteckte Reconnect-Schleife.
 Der Forschungs-Adapter ist absichtlich **nicht** mit Android-DatagramSockets
 oder produktiver Lampensteuerung verbunden. Ein erfolgreicher
 Offline-JVM-Test beweist ausschließlich die Sicherheitslogik.
+
+## Erweiterung: verlässlicheres Capability-/Protokollgate
+
+Die bislang gespeicherte SSDP-`support`-Liste wird jetzt **zweistufig** bewertet:
+`chroma` + `udp_new`/`udp_sess_new` belegt allenfalls einen beworbenen
+Sitzungsmodus; für die im OEM-Connector gezeigten normalen Farbframes ist
+zusätzlich `set_scene` nötig. `set_music` (Reverse-TCP), `set_rgb`
+(klassisches LAN), `bg_set_rgb` (anderer Gerätetyp) oder Namensähnlichkeiten
+dürfen diese zweite Bedingung nicht ersetzen. Die bestehende passive
+Geräte-Forschungsanzeige unterscheidet ab jetzt explizit, ob RGB noch
+unbelegt oder nur **für die Offline-Simulation** plausibel ist.
+Die `ChromaColorReadinessReport`-Auswertung kennt außerdem ein
+vorrangiges Quarantäne-Gate; `maySendUdp` bleibt unter **allen**
+Testergebnissen `false`.
+
+Zusätzliche Protokollhärtung: JSON-Antwort-IDs müssen echte numerische
+Integer sein, keine zu Zahlen konvertierbaren Strings. Tokenfelder
+müssen echte 32-stellige Hex-Strings sein. Die monotone virtuelle
+Zeit wird nach **jedem** akzeptierten Farb-/Keepalive-/Antwortzeitpunkt
+geprüft, nicht nur gegenüber der letzten Geräteantwort. Die simulierte
+Lampen-Lane wird jetzt bereits beim exakt **45. RGB-Sendeversuch**
+geschlossen, auch wenn kein weiterer Event ankommt. Ein gescheiterter
+Sitzungsbeginn führt nicht zu unbegrenzten erneuten Begin-Versuchen.
+Alle Schutz- und Zeitlimits sind weiterhin nur synthetische
+Forschungsannahmen und keine OEM-Firmware-Grenzen.
+
+Der Hersteller-Connector `CUdpLight.cpp` dient als Protokollreferenz
+für die separat tokenisierten UDP-v1/v2-Sitzungen und
+`set_scene`-Frames; dessen permissives Substring-Parsing wird bewusst
+nicht übernommen. Die Android-App enthält durch diese Erweiterung
+weiterhin **keinen** aktiven Chroma-UDP-Socket, keinen Backgroundsender,
+keinen automatisch ausgelösten Discovery-Scan und keinen TCP-RGB-Fallback.
+Hardwarequalifikation nur nach eigenständiger Freigabe.
