@@ -220,8 +220,13 @@ private fun LoftApp(controller: LoftController) {
                     "rooms" -> item(key = "room-manager") {
                         RoomAssignmentEditor(controller, initiallyExpanded = true)
                     }
-                    "network" -> item(key = "network-diagnostics") {
-                        DeviceTools(controller, initiallyExpanded = true)
+                    "network" -> {
+                        item(key = "network-diagnostics") {
+                            DeviceTools(controller, initiallyExpanded = true)
+                        }
+                        item(key = "ceiling1-offline-research") {
+                            Ceiling1EventsResearchPanel()
+                        }
                     }
                     "transfer" -> item(key = "scene-import-export") {
                         SceneExchangePanel(controller)
@@ -1145,6 +1150,7 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
                     }
                 }
                 DeviceCapabilityPanel(device)
+                FirmwareResearchPanel(device)
                 OutlinedButton(
                     onClick = { controller.inspectLamp(device) },
                     enabled = !controller.busy,
