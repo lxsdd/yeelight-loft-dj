@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -88,9 +90,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun LoftApp(controller: LoftController) {
     var page by remember { mutableIntStateOf(0) }
+    var detailRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    BackHandler(enabled = detailRoute != null) { detailRoute = null }
     var orderMode by remember { mutableStateOf(false) }
     var stagedOrder by remember { mutableStateOf<List<String>>(emptyList()) }
     val scrollState = rememberLazyListState()
+    LaunchedEffect(detailRoute, page) { scrollState.scrollToItem(0) }
     val feedback = LocalHapticFeedback.current
     val dragState = rememberReorderableLazyListState(scrollState) { from, to ->
         val source = (from.key as? String)?.takeIf { it.startsWith("sort:") }
@@ -107,7 +112,7 @@ private fun LoftApp(controller: LoftController) {
     Scaffold(
         containerColor = night,
         bottomBar = {
-            NavigationBar(containerColor = panel) {
+            if (detailRoute == null) NavigationBar(containerColor = panel) {
                 val pages = listOf("Home", "Szenen", "Geräte", "Musik")
                 val icons = listOf(Icons.Rounded.Home, Icons.Rounded.AutoAwesome, Icons.Rounded.Devices, Icons.Rounded.GraphicEq)
                 pages.forEachIndexed { index, label ->
@@ -132,12 +137,61 @@ private fun LoftApp(controller: LoftController) {
             if (controller.recoveryPending) {
                 item(key = "recovery-action") { RecoveryBanner(controller) }
             }
-            when (page) {
+            if (detailRoute != null) {
+                item(key = "detail-back") {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        OutlinedButton(onClick = { detailRoute = null }) { Text("← Zurück") }
+                        Text(
+                            when (detailRoute) {
+                                "chase" -> "Lichtlauf-Studio"
+                                "transfer" -> "Szenenbibliothek"
+                                "target" -> "Lampen auswählen"
+                                "rooms" -> "Räume verwalten"
+                                "network" -> "Geräte & Netzwerk prüfen"
+                                else -> "Lampendetails"
+                            },
+                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                        )
+                    }
+                }
+                when (detailRoute) {
+                    "chase" -> {
+                        item(key = "chase-target") {
+                            CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                        }
+                        item(key = "chase-editor") { ChasePanel(controller) }
+                        item(key = "chase-results") { SceneLampReport(controller) }
+                    }
+                    "target" -> item(key = "target-manager") { TargetSelector(controller) }
+                    "rooms" -> item(key = "room-manager") {
+                        RoomAssignmentEditor(controller, initiallyExpanded = true)
+                    }
+                    "network" -> item(key = "network-diagnostics") {
+                        DeviceTools(controller, initiallyExpanded = true)
+                    }
+                    "transfer" -> item(key = "scene-import-export") {
+                        SceneExchangePanel(controller)
+                    }
+                    else -> {
+                        val id = detailRoute?.removePrefix("device:")
+                        val device = controller.devices.firstOrNull { it.id == id }
+                        if (device != null) {
+                            item(key = "device-details") {
+                                DeviceCard(device, controller, initiallyExpanded = true)
+                            }
+                        } else {
+                            item { Note("Das Gerät ist nicht mehr vorhanden. Zurück zur Geräteliste wechseln.") }
+                        }
+                    }
+                }
+            } else when (page) {
                 0 -> {
                     item { Hero(controller, onScene = { page = 1 }, onDevice = { page = 2 }) }
                     item { Heading("Deine Lichtwelten", "Ein Tipp – und dein Loft verwandelt sich.") }
-                    item { TargetSelector(controller) }
-                    item { SceneRestoreOption(controller) }
+                    item {
+                        CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                    }
                     item { TargetPowerControls(controller) }
                     items(SceneLibrary.scenes.take(2), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
@@ -146,12 +200,19 @@ private fun LoftApp(controller: LoftController) {
                 }
                 1 -> {
                     item { Heading("Lichtshows", "Farbverläufe direkt auf den Lampen") }
-                    item { TargetSelector(controller) }
+                    item {
+                        CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                    }
                     item { SceneRestoreOption(controller) }
                     items(controller.allScenes(), key = { it.id }) { scene ->
                         SceneCard(scene, !controller.busy, controller.activeScene == scene.id) { controller.play(scene) }
                     }
-                    item(key = "scene-workshop") { CollapsibleSettings(controller) }
+                    item(key = "scene-workshop") {
+                        WorkshopNavigation(
+                            onChase = { detailRoute = "chase" },
+                            onTransfer = { detailRoute = "transfer" },
+                        )
+                    }
                     item(key = "scene-lamp-report") { SceneLampReport(controller) }
                     if (!controller.recoveryPending) item { StopButton(controller) }
                     item { Note("Lichtläufe nutzen Yeelight-native Farbsequenzen. Tempo und Schweif wirken pro Lampe; der Start vieler Lampen ist nicht millisekundengenau synchron. Echte Musikreaktion findest du unter Musik.") }
@@ -289,10 +350,28 @@ private fun LoftApp(controller: LoftController) {
                             }
                         }
                     } else {
-                        item { RoomAssignmentEditor(controller) }
-                        item { DeviceTools(controller) }
+                        item {
+                            Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Button(onClick = controller::discover, enabled = !controller.busy,
+                                        modifier = Modifier.fillMaxWidth()) { Text("Lampen suchen") }
+                                    OutlinedButton(onClick = { detailRoute = "rooms" },
+                                        modifier = Modifier.fillMaxWidth()) {
+                                        Text("Räume & Gruppen verwalten")
+                                    }
+                                    OutlinedButton(onClick = { detailRoute = "network" },
+                                        modifier = Modifier.fillMaxWidth()) {
+                                        Text("Netzwerkdiagnose & Geräte hinzufügen")
+                                    }
+                                }
+                            }
+                        }
                         items(controller.orderedDevices(), key = { it.id }) { device ->
-                            DeviceCard(device, controller)
+                            DeviceSummaryCard(
+                                device, controller,
+                                onDetails = { detailRoute = "device:" + device.id }
+                            )
                         }
                     }
                     if (controller.devices.isEmpty()) {
@@ -300,7 +379,9 @@ private fun LoftApp(controller: LoftController) {
                     }
                 }
                 else -> {
-                    item { TargetSelector(controller) }
+                    item {
+                        CompactTargetCard(controller, onEdit = { detailRoute = "target" })
+                    }
                     item { MusicScreen(controller) }
                 }
             }
@@ -555,31 +636,74 @@ private fun SceneLampReport(controller: LoftController) {
 }
 
 @Composable
-private fun CollapsibleSettings(controller: LoftController) {
-    var showChase by rememberSaveable { mutableStateOf(false) }
-    var showTransfer by rememberSaveable { mutableStateOf(false) }
+private fun WorkshopNavigation(onChase: () -> Unit, onTransfer: () -> Unit) {
     Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(15.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Szenenwerkstatt", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 16.sp)
-            Text("Lichtshows starten oder gezielt die erweiterten Werkzeuge öffnen.",
-                fontSize = 12.sp, color = muted)
-            OutlinedButton(onClick = { showChase = !showChase }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (showChase) "Lichtlauf-Editor schließen" else "Lichtlauf-Editor öffnen")
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Szenenwerkstatt", color = Color.White,
+                fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Text("Öffne ein übersichtliches Studio statt eines langen Editors mitten in der Liste.",
+                color = muted, fontSize = 12.sp)
+            Button(onClick = onChase, modifier = Modifier.fillMaxWidth()) {
+                Text("Lichtlauf-Studio öffnen")
             }
-            OutlinedButton(onClick = { showTransfer = !showTransfer }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (showTransfer) "Import/Export schließen" else "Szenen importieren / exportieren")
+            OutlinedButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth()) {
+                Text("Szenen importieren & exportieren")
             }
         }
     }
-    if (showChase) ChasePanel(controller)
-    if (showTransfer) SceneExchangePanel(controller)
 }
 
 @Composable
-private fun DeviceTools(controller: LoftController) {
+private fun CompactTargetCard(controller: LoftController, onEdit: () -> Unit) {
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Row(Modifier.fillMaxWidth().padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Aktuelle Lampenauswahl", color = muted, fontSize = 12.sp)
+                Text(controller.targetLabel(controller.target) +
+                    " · " + controller.selectedCount() + " Lampen",
+                    color = Color.White, fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(onClick = onEdit) { Text("Ändern") }
+        }
+    }
+}
+
+@Composable
+private fun DeviceSummaryCard(
+    device: YeelightDevice,
+    controller: LoftController,
+    onDetails: () -> Unit
+) {
+    Surface(color = panel, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Lightbulb, null, tint = lavender)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(controller.displayName(device), color = Color.White,
+                        fontWeight = FontWeight.SemiBold)
+                    Text(controller.roomFor(device) + " · " +
+                        DeviceCapabilities.summary(device),
+                        color = muted, fontSize = 11.sp)
+                }
+                TextButton(onClick = onDetails) { Text("Steuern →") }
+            }
+            TextButton(
+                onClick = { controller.identifyLamp(device) },
+                enabled = controller.canIdentifyLamp(device)
+            ) { Text("Lampe identifizieren") }
+        }
+    }
+}
+
+@Composable
+private fun DeviceTools(controller: LoftController, initiallyExpanded: Boolean = false) {
     var ip by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(onClick = controller::discover, enabled = !controller.busy, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Rounded.Search, null)
@@ -638,8 +762,9 @@ private fun DeviceTools(controller: LoftController) {
 }
 
 @Composable
-private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
-    var expanded by remember(device.id) { mutableStateOf(false) }
+private fun DeviceCard(device: YeelightDevice, controller: LoftController,
+    initiallyExpanded: Boolean = false) {
+    var expanded by remember(device.id) { mutableStateOf(initiallyExpanded) }
     var localAlias by remember(device.id) { mutableStateOf(controller.aliasFor(device)) }
     var showRemoveConfirm by remember(device.id) { mutableStateOf(false) }
     val discovered = device.ip in controller.lastSeenIps
@@ -704,7 +829,7 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController) {
                         )
                     }
                 }
-                LampManualPanel(device, controller)
+                LampManualPanel(device, controller, initiallyExpanded = initiallyExpanded)
                 if (!device.canFlow) {
                     Note("Dieses Gerät meldet kein Yeelight start_cf – nicht in Farbfluss einbeziehen.")
                 }
@@ -755,8 +880,9 @@ private fun TargetPowerControls(controller: LoftController) {
 }
 
 @Composable
-private fun LampManualPanel(device: YeelightDevice, controller: LoftController) {
-    var expanded by remember(device.ip) { mutableStateOf(false) }
+private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
+    initiallyExpanded: Boolean = false) {
+    var expanded by remember(device.ip) { mutableStateOf(initiallyExpanded) }
     val live = controller.snapshotFor(device)
     OutlinedButton(
         onClick = { expanded = !expanded },
