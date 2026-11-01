@@ -438,25 +438,24 @@ class LoftController(context: Context) {
                     else " · " + reason.take(120)
             }
 
-    /** A journal entry has no expiry: only explicit, per-device confirmation
-     * following a real physical power cycle permits abandoning recovery.
-     *
-     * This does NOT claim original lamp state was restored, does not send LAN
-     * commands, and must not release any unrelated bulb. Both preference keys
-     * are persisted atomically before Compose state changes.
+    /** Explicitly discard only one stale app-side recovery marker.
+     * No power-cycle claim, no LAN command, NO hardware-state verification.
+     * Use only if the user accepts a possibly still-running bulb flow and
+     * agrees that its original static state won't be restored.
+     * Both local journal keys commit atomically before state changes.
      */
-    fun releaseAfterConfirmedPowerCycle(
+    fun discardRecoveryForLamp(
         ip: String,
-        powerCycled: Boolean,
+        acceptsPossibleRunningFlow: Boolean,
         acceptsLostRestore: Boolean,
     ): Boolean {
         val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
-        if (!PowerCycleRecoveryPolicy.canRelease(
-                ip, pending, powerCycled, acceptsLostRestore,
+        if (!RecoveryAbandonPolicy.canDiscard(
+                ip, pending, acceptsPossibleRunningFlow, acceptsLostRestore,
                 busy || musicDeviceSession || musicStopPending || musicSending
             )) {
-            status = "Freigabe abgelehnt: Nur nach bestätigtem Stromneustart " +
-                "und ausdrücklichem Verzicht auf die alte Lichtwiederherstellung."
+            status = "Freigabe abgelehnt: Beide Folgen des Verwerfens müssen " +
+                "ausdrücklich bestätigt werden."
             return false
         }
         val nextRunning = runningDeviceIps - ip
@@ -474,9 +473,10 @@ class LoftController(context: Context) {
         lastRecoveryFailures = lastRecoveryFailures - ip
         lastQuotaRejectionAt.remove(ip)
         if (nextRunning.isEmpty() && nextJournal.isEmpty()) activeScene = null
-        status = "Nur Lampe ." + ip.substringAfterLast('.') +
-            " nach bestätigtem Stromneustart freigegeben. " +
-            "Ursprüngliche Lichtfarbe/Helligkeit wurde NICHT wiederhergestellt."
+        status = "Lokale Wiederherstellung für Lampe ." +
+            ip.substringAfterLast('.') + " bewusst verworfen. " +
+            "Ein eventuell noch laufender Farbfluss wurde NICHT gestoppt; " +
+            "frühere Farbe/Helligkeit wurde NICHT wiederhergestellt."
         return true
     }
 
