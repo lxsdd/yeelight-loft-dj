@@ -154,6 +154,7 @@ private fun LoftApp(controller: LoftController) {
                         Text(
                             when (detailRoute) {
                                 "chase" -> "Lichtlauf-Studio"
+                                "scanner" -> "Knight-Rider-Scanner"
                                 "transfer" -> "Szenenbibliothek"
                                 "target" -> "Lampen auswählen"
                                 "rooms" -> "Räume verwalten"
@@ -165,7 +166,7 @@ private fun LoftApp(controller: LoftController) {
                     }
                 }
                 when (detailRoute) {
-                    "chase" -> {
+                    "chase", "scanner" -> {
                         item(key = "chase-target") {
                             CompactTargetCard(controller, onEdit = {
                                 parentRoute = detailRoute
@@ -173,8 +174,12 @@ private fun LoftApp(controller: LoftController) {
                             })
                         }
                         item(key = "chase-editor") {
-                            routeState.SaveableStateProvider("chase-editor") {
-                                ChasePanel(controller)
+                            routeState.SaveableStateProvider(
+                                if (detailRoute == "scanner") "scanner-editor" else "chase-editor"
+                            ) {
+                                ChasePanel(controller,
+                                    initialStyle = if (detailRoute == "scanner")
+                                        ChaseStyle.KNIGHT_RIDER else ChaseStyle.RAINBOW_TAIL)
                             }
                         }
                         item(key = "chase-results") { SceneLampReport(controller) }
@@ -232,6 +237,7 @@ private fun LoftApp(controller: LoftController) {
                     item(key = "scene-workshop") {
                         WorkshopNavigation(
                             onChase = { detailRoute = "chase" },
+                            onScanner = { detailRoute = "scanner" },
                             onTransfer = { detailRoute = "transfer" },
                         )
                     }
@@ -777,7 +783,9 @@ private fun SceneLampReport(controller: LoftController) {
 }
 
 @Composable
-private fun WorkshopNavigation(onChase: () -> Unit, onTransfer: () -> Unit) {
+private fun WorkshopNavigation(
+    onChase: () -> Unit, onScanner: () -> Unit, onTransfer: () -> Unit
+) {
     Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(15.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -785,8 +793,11 @@ private fun WorkshopNavigation(onChase: () -> Unit, onTransfer: () -> Unit) {
                 fontWeight = FontWeight.Bold, fontSize = 17.sp)
             Text("Öffne ein übersichtliches Studio statt eines langen Editors mitten in der Liste.",
                 color = muted, fontSize = 12.sp)
-            Button(onClick = onChase, modifier = Modifier.fillMaxWidth()) {
-                Text("Lichtlauf-Studio öffnen")
+            Button(onClick = onScanner, modifier = Modifier.fillMaxWidth()) {
+                Text("Knight-Rider-Scanner öffnen")
+            }
+            OutlinedButton(onClick = onChase, modifier = Modifier.fillMaxWidth()) {
+                Text("Weitere Lichtläufe bearbeiten")
             }
             OutlinedButton(onClick = onTransfer, modifier = Modifier.fillMaxWidth()) {
                 Text("Szenen importieren & exportieren")
@@ -1341,17 +1352,23 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
 
 
 @Composable
-private fun ChasePanel(controller: LoftController) {
-    var style by rememberSaveable { mutableStateOf(ChaseStyle.RAINBOW_TAIL) }
+private fun ChasePanel(controller: LoftController,
+    initialStyle: ChaseStyle = ChaseStyle.RAINBOW_TAIL
+) {
+    var style by rememberSaveable { mutableStateOf(initialStyle) }
     // The top-level target selector controls ALL scene types, including chases.
     val choice = controller.target
     var direction by rememberSaveable { mutableStateOf(ChaseDirection.FORWARD) }
-    var bounce by rememberSaveable { mutableStateOf(false) }
-    var palette by rememberSaveable { mutableStateOf("#FF3ABF, #FFB12C, #5A4BFF, #25D9E6, #FFE474") }
+    var bounce by rememberSaveable { mutableStateOf(initialStyle == ChaseStyle.KNIGHT_RIDER) }
+    var palette by rememberSaveable { mutableStateOf(
+        if (initialStyle == ChaseStyle.KNIGHT_RIDER) "#FF0000"
+        else "#FF3ABF, #FFB12C, #5A4BFF, #25D9E6, #FFE474"
+    ) }
     var ms by rememberSaveable { mutableFloatStateOf(450f) }
-    var tail by rememberSaveable { mutableFloatStateOf(4f) }
+    var tail by rememberSaveable { mutableFloatStateOf(if (initialStyle == ChaseStyle.KNIGHT_RIDER) 1f else 4f) }
     var intensity by rememberSaveable { mutableFloatStateOf(75f) }
-    var name by rememberSaveable { mutableStateOf("Meine Sternschnuppe") }
+    var name by rememberSaveable { mutableStateOf(if (initialStyle == ChaseStyle.KNIGHT_RIDER)
+        "Knight Rider Scanner" else "Meine Sternschnuppe") }
     var previewStep by rememberSaveable { mutableFloatStateOf(0f) }
     val parsedPalette = remember(palette) { runCatching { ChaseCompiler.decodePalette(palette) } }
     val config = parsedPalette.getOrNull()?.let { colors ->
