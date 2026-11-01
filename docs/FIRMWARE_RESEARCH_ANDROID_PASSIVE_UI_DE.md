@@ -41,3 +41,27 @@ Unsere passive Forschungsanzeige setzt folglich **keine** unbewiesene Kommunikat
 ## Ergebnis und verbleibende Hardwaregrenze
 
 Mit diesem Entwicklungsblock wird die Firmware-Forschung **erstmals aus der Android-App erreichbar**, ohne Geräte zu belasten. Die beiden manuellen Diagnoseflächen sind rein lesend/analytisch. Die echte Chroma-Sitzung, echte Color4-Hardware-ID/Firmware und tatsächliche ceiling1-Routerereignisse bleiben bis zur entsprechenden getrennten Geräteabnahme offen.
+
+
+## Ergänzung: Anmeldung sichtbar, Abmeldung aus Ereignisprotokoll verschwunden
+
+**Neue Beobachtungsklasse:** Die FRITZ!Box zeigt eine historische WLAN-Anmeldung einer \`ceiling1\`; der dazugehörige Abmeldeeintrag ist im aktuellen Ausschnitt der Ereignisliste nicht mehr sichtbar. **Kein** Rückschluss auf kontinuierliche WLAN-Verbindung, auf einen FW-Timer oder darauf, ob das Gerät zum Zeitpunkt der Prüfung online ist. Ereignisse können im angezeigten Zeitfenster fehlen. Das **Vorhandensein** einer protokollierten Anmeldung belegt nur eine Anmeldung zu diesem Zeitpunkt.
+
+Stattdessen unterscheidet der neue \`CeilingCurrentDiagnostic\` explizit zwischen
+\`CURRENT_WLAN_UNKNOWN\`, \`CURRENT_WLAN_ABSENT\`, aktuell WLAN-assoziiert mit funktionsfähiger Hersteller-App, aktuell WLAN-assoziiert mit nicht funktionierender App und unbekanntem lokalen/Cloud-Pfad, einem **nur separat belegten** lokalen TCP-/Dienstproblem, einer ausdrücklich erkannten LAN-Quota und widersprüchlichen bzw. nicht zeitgleich gewonnenen Beobachtungen. Kein Vorgang klassifiziert allein aus der Historie als aktuell online/offline; \`firmwareFailureProven\` bleibt immer \`false\`.
+
+Die eingeblendete, rein lokale **Momentaufnahme** lässt Anwender die aktuelle WLAN-Assoziation und die Yeelight-App-Bedienbarkeit aus eigener Prüfung auswählen; zeitliche Vergleichbarkeit ist gesondert zu bestätigen. Der neue Diagnosekern besitzt **keine** Routerintegration, führt keine TCP-/UDP-Kommandos aus und erfordert keine neuen Berechtigungen. Die Wahl wird nur flüchtig in Compose gehalten und nicht in einem öffentlichen Log/Repository gespeichert. Alle UI-Labels kennzeichnen diese Einschätzungen als Beobachtungen, nicht als Gerätebefund des Programms.
+
+**Wichtige externe Herstellerinformation:** AVM beschreibt unter WLAN > Funknetz einen Unterschied zwischen **bekannten WLAN-Geräten** (auch in der Vergangenheit verbunden) und gerade verbundenen Clients. Selbst ein RSSI-Symbol kann nach einer Abmeldung noch eine Weile eine Verbindung anzeigen. Die reine Geräteliste oder eine noch vorhandene DHCP-Adresse darf deshalb nicht als zwingender Beleg aktueller aktiver Assoziation behandelt werden.
+
+Quellen:
+- https://help.avm.de/fritzbox.php?deviceFeatures=100010011101110100101111010010&hardware=106&language=de&oem=avm&set=002&topic=hilfe_wlan_monitor&userSettings=11
+- https://help.avm.de/fritzbox.php?deviceFeatures=101000111111010101101111101111110001111&hardware=139&language=de&oem=1und1&set=005&topic=hilfe_syslog&userSettings=011
+
+### Software-Abnahme
+
+Zusätzliche **12 JVM-Negativ-/Positivtests** für (a) sichtbare Anmeldung ohne sichtbare Abmeldung bei unvollständigem oder vollständig angenommenem Ereignisfenster, (b) unbekannten aktuellen Routerzustand, (c) zeitlich versetzte Messungen, (d) WLAN-assoziiert aber lokaler Dienst nicht nachgewiesen, (e) tatsächlich beobachtete Nichtassoziation, (f) App-Erreichbarkeit bei bestehender Assoziation, (g) ausdrücklich bestätigte Firmware-Quota, (h) widersprüchliche Router-/LAN-Befunde. Sie werden zusätzlich zu den bisherigen Forschungsregressionen mit dem Android-Pflichtbuild ausgeführt.
+
+### Nicht ohne realen Beleg feststellbar
+
+Die wirkliche Verbindungsart der Hersteller-App (erste Android-PCAP zeigte Cloud, aber keinen nachgewiesenen lokalen LAN-Steuerungsfluss), aktuelle lokale IP-Connectivity, aktive WLAN-Assoziation, LAN-Dienstzustand und Hersteller-Cloud-Erreichbarkeit lassen sich **nicht** aus einer historischen Router-Anmeldung ableiten. Diese Daten müssen gegebenenfalls im Fehlerfall durch zeitgleiche, ausdrücklich kontrollierte, nicht-invasive Beobachtungen ermittelt werden. Keinen Neustart/Flash/Factory Reset oder zusätzliche Lampen-Kommandos daraus auslösen.

@@ -68,6 +68,7 @@ internal fun Ceiling1EventsResearchPanel() {
                 Text(if (expanded) "Zeitanalyse schließen" else "Zeitanalyse öffnen")
             }
             if (expanded) {
+                CeilingCurrentStatusPanel()
                 Text("FRITZ!Box: System → Ereignisse → WLAN. Gegebenenfalls zuerst " +
                     "die Protokollierung zusätzlicher WLAN-An-/Abmeldungen aktivieren. " +
                     "Nur wirkliche Abmeldungen der betreffenden Lampe zählen.",
