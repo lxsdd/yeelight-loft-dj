@@ -19,15 +19,16 @@ enum class ChromaUdpResearchEvidence {
 
 object ChromaUdpResearch {
     fun fromSupport(methods: Set<String>): ChromaUdpResearchEvidence {
-        if (methods.isEmpty()) return ChromaUdpResearchEvidence.NO_SSDP_SUPPORT_EVIDENCE
-        // "chroma" appears in different provider implementations under
-        // differing method names. It must come from this device's own
-        // authenticated-by-source SSDP discovery, never a marketing feature.
-        val chroma = methods.any { it.contains("chroma", ignoreCase = true) }
+        // Exact methods only: reject lookalikes such as not_chroma.
+        // udp_chroma_sess_new is a separate official Chroma marker.
+        val known = methods.map { it.trim().lowercase(java.util.Locale.ROOT) }
+            .filter { it.isNotEmpty() }.toSet()
+        if (known.isEmpty()) return ChromaUdpResearchEvidence.NO_SSDP_SUPPORT_EVIDENCE
+        val chroma = "chroma" in known || "udp_chroma_sess_new" in known
         if (!chroma) return ChromaUdpResearchEvidence.NOT_ADVERTISED
         return when {
-            "udp_sess_new" in methods -> ChromaUdpResearchEvidence.UDP_SESSION_V2_ADVERTISED
-            "udp_new" in methods -> ChromaUdpResearchEvidence.UDP_SESSION_V1_ADVERTISED
+            "udp_sess_new" in known -> ChromaUdpResearchEvidence.UDP_SESSION_V2_ADVERTISED
+            "udp_new" in known -> ChromaUdpResearchEvidence.UDP_SESSION_V1_ADVERTISED
             else -> ChromaUdpResearchEvidence.CHROMA_ADVERTISED_BUT_NO_SESSION_METHOD
         }
     }

@@ -184,6 +184,36 @@ class ChromaUdpOfflineSessionTest {
         assertNull(noScene.previewColor(123, 50, 60))
     }
 
+    @Test fun previousColorFrameSetsMonotonicClockBarrierWithoutKeepalive() {
+        val sim = startActive()
+        assertNotNull(sim.previewColor(0x112233, 50, 500))
+        assertNull(sim.previewColor(0x112234, 50, 499))
+        assertEquals(ChromaPreviewState.CLOSED, sim.state)
+        assertFalse(sim.tokenHeld)
+    }
+
+    @Test fun numericStringIdCannotImpersonateHandshakeReply() {
+        val sim = ChromaUdpOfflineSession(ip, v2)
+        sim.begin(0)
+        val forged = JSONObject().put("id", "1").put("method", "udp_sess_token")
+            .put("params", JSONObject().put("token", validToken))
+        assertEquals(ChromaPreviewEvent.IGNORED_UNEXPECTED_REPLY,
+            sim.acceptReply(ip, forged.toString(), 10))
+        assertFalse(sim.tokenHeld)
+        assertEquals(ChromaPreviewEvent.ACCEPTED_TOKEN,
+            sim.acceptReply(ip, response(1), 20))
+    }
+
+    @Test fun sceneMethodCaseAndWhitespaceAreNormalizedForPreview() {
+        val sim = ChromaUdpOfflineSession(ip, setOf(" CHROMA ", " UDP_SESS_NEW ", " SET_SCENE "))
+        val frame = JSONObject(sim.begin(0)!!.forSimulatorOnly())
+        assertEquals("udp_sess_new", frame.getString("method"))
+        assertEquals(ChromaPreviewEvent.ACCEPTED_TOKEN,
+            sim.acceptReply(ip, response(1), 20))
+        val color = JSONObject(sim.previewColor(0x123456, 90, 30)!!.forSimulatorOnly())
+        assertEquals("set_scene", color.getString("method"))
+    }
+
     @Test fun backwardVirtualClockClosesRatherThanReplaying() {
         val sim = startActive()
         assertNull(sim.previewColor(100, 50, 40))

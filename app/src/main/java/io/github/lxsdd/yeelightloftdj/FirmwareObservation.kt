@@ -29,6 +29,16 @@ object FirmwareInsightReport {
             ChromaUdpResearchEvidence.UDP_SESSION_V2_ADVERTISED ->
                 "Chroma-UDP v2 gemeldet, nicht an der Lampe getestet"
         }
+        // A cached session advertisement is not enough for Chroma RGB.
+        val colorEvidence = ChromaColorReadinessReport.fromCachedSupport(methods).evidence
+        val rgbNote = when (colorEvidence) {
+            ChromaColorEvidence.UDP_V1_RGB_CANDIDATE,
+            ChromaColorEvidence.UDP_V2_RGB_CANDIDATE ->
+                "set_scene ebenfalls gemeldet; nur Offline-Simulation, kein Gerätetest"
+            ChromaColorEvidence.RGB_SCENE_NOT_ADVERTISED ->
+                "UDP-Sitzung gemeldet, RGB-set_scene nicht belegt"
+            else -> null
+        }
         val path = when (p.route) {
             FirmwareResearchRoute.NONE_VERIFIED -> "Keine bestätigte Alternativfirmware"
             FirmwareResearchRoute.CONTROLLER_REPLACEMENT_REFERENCE ->
@@ -40,7 +50,11 @@ object FirmwareInsightReport {
         }
         val evidence = if (methods.isEmpty()) "Keine gespeicherte SUPPORT-Liste"
             else "Aus zuletzt gespeicherten SUPPORT-Daten, nicht live geprüft"
-        return FirmwareInsight(chroma, path, evidence)
+        return FirmwareInsight(
+            if (rgbNote == null) chroma else "$chroma · $rgbNote",
+            path,
+            evidence,
+        )
     }
 }
 

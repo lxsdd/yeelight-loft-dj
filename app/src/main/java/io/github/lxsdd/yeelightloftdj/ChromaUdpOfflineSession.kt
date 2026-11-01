@@ -51,6 +51,7 @@ class ChromaUdpOfflineSession(
     private var pendingKeepaliveId: Int? = null
     private var startedAtMs = -1L
     private var lastActivityMs = -1L
+    private var lastObservedMs = -1L
     private var lastKeepaliveMs = -1L
     private var missedKeepalives = 0
     private var token: String? = null
@@ -64,6 +65,7 @@ class ChromaUdpOfflineSession(
         state = ChromaPreviewState.AWAITING_TOKEN
         startedAtMs = nowMs
         lastActivityMs = nowMs
+        lastObservedMs = nowMs
         handshakeId = nextId++
         return frame(handshakeId!!, handshakeMethod, JSONArray())
     }
@@ -96,7 +98,9 @@ class ChromaUdpOfflineSession(
         }
         // Device failures need not include params/method; fail CLOSED as soon
         // as a matching response ID carries an error, with no retry or token.
-        val replyId = parsed.optInt("id", -1)
+        // Never coerce "1" or 1.0 into the integer request ID.
+        val rawId = parsed.opt("id")
+        val replyId = if (rawId is Int) rawId else -1
         val expectedId = if (state == ChromaPreviewState.AWAITING_TOKEN)
             handshakeId else pendingKeepaliveId
         if (replyId <= 0 || replyId != expectedId) {
@@ -112,8 +116,9 @@ class ChromaUdpOfflineSession(
         }
         val method = parsed.optString("method")
         if (method != expectedReplyMethod) return ChromaPreviewEvent.IGNORED_UNEXPECTED_REPLY
-        val candidate = parsed.getJSONObject("params").optString("token", "")
-        if (!HEX_TOKEN.matches(candidate)) return ChromaPreviewEvent.IGNORED_INVALID_REPLY
+        val candidate = parsed.getJSONObject("params").opt("token")
+        if (candidate !is String || !HEX_TOKEN.matches(candidate))
+            return ChromaPreviewEvent.IGNORED_INVALID_REPLY
         return if (state == ChromaPreviewState.AWAITING_TOKEN) {
             token = candidate.lowercase()
             handshakeId = null
@@ -158,7 +163,7 @@ class ChromaUdpOfflineSession(
     fun previewColor(rgb: Int, brightness: Int, nowMs: Long): ChromaPreviewFrame? {
         if (!advance(nowMs) || state != ChromaPreviewState.ACTIVE) return null
         if (rgb !in 0..0xFFFFFF || brightness !in 1..100) return null
-        if ("set_scene" !in support) return null
+        if (!support.any { it.trim().equals("set_scene", ignoreCase = true) }) return null
         val params = JSONArray().put("color").put(rgb).put(brightness)
             .put(0).put("sudden")
         return frame(nextId++, "set_scene", params, token)
@@ -166,10 +171,12 @@ class ChromaUdpOfflineSession(
 
     /** Caller-monotonic virtual time, no scheduler/background behavior. */
     fun advance(nowMs: Long): Boolean {
-        if (nowMs < 0 || (lastActivityMs >= 0 && nowMs < lastActivityMs)) {
+        // Compare against *all* observed frames, not just the last ACK.
+        if (nowMs < 0 || (lastObservedMs >= 0 && nowMs < lastObservedMs)) {
             close()
             return false
         }
+        lastObservedMs = nowMs
         if (state == ChromaPreviewState.AWAITING_TOKEN &&
             nowMs - startedAtMs > HANDSHAKE_TIMEOUT_MS) {
             close()

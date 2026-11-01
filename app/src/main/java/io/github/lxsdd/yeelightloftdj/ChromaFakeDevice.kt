@@ -29,13 +29,16 @@ class ChromaFakeDevice(
     private val expectedClientIp: String,
     private val version: Int,
     private val deviceIp: String = "192.168.1.21",
+    private val syntheticToken: String = "fedcba9876543210fedcba9876543210",
 ) {
-    init { require(version == 1 || version == 2) }
+    init {
+        require(version == 1 || version == 2)
+        require(Regex("^[0-9a-fA-F]{32}$").matches(syntheticToken))
+    }
 
     private val handshakeName = if (version == 2) "udp_sess_new" else "udp_new"
     private val tokenMethod = if (version == 2) "udp_sess_token" else "udp_token"
     private val keepAliveName = if (version == 2) "udp_sess_keep_alive" else "udp_keep_alive"
-    private val syntheticToken = "fedcba9876543210fedcba9876543210"
     private var active = false
     private var mostRecentId = 0
 
@@ -53,13 +56,15 @@ class ChromaFakeDevice(
             incoming.payload.toByteArray(StandardCharsets.UTF_8).size > 1024 ||
             incoming.payload.any { it == '\u0000' }) return null
         val packet = try { JSONObject(incoming.payload) } catch (_: Exception) { return null }
-        val id = packet.optInt("id", -1)
+        val rawId = packet.opt("id")
+        val id = if (rawId is Int) rawId else -1
         val method = packet.optString("method")
         if (id <= mostRecentId || id <= 0 || packet.opt("params") !is JSONArray) return null
         if (method != handshakeName && method != keepAliveName && method != "set_scene") return null
-        mostRecentId = id
-
+        // Do not let malformed or forged frames consume the fake's sequence ID.
+        // The error injector is deliberately synthetic and bypasses validation.
         if (rejectNextCommand) {
+            mostRecentId = id
             rejectNextCommand = false
             active = false
             return emit(id, JSONObject().put("id", id).put("error",
@@ -70,6 +75,7 @@ class ChromaFakeDevice(
             handshakeName -> {
                 if (active || packet.getJSONArray("params").length() != 0) return null
                 active = true
+                mostRecentId = id
                 emit(id, tokenReply(id))
             }
             keepAliveName -> {
@@ -79,6 +85,7 @@ class ChromaFakeDevice(
                     params.optString(0) != "keeplive_interval" ||
                     params.optString(1) != "10") return null
                 acceptedKeepAlives++
+                mostRecentId = id
                 emit(id, tokenReply(id))
             }
             "set_scene" -> {
@@ -89,6 +96,7 @@ class ChromaFakeDevice(
                     p.optInt(2, -1) !in 1..100 ||
                     p.optInt(3, -1) != 0 || p.optString(4) != "sudden") return null
                 acceptedColorFrames++
+                mostRecentId = id
                 // The sample's color path does not wait for per-frame ACK.
                 null
             }
