@@ -530,9 +530,10 @@ object YeelightLan {
                     message="Keine gültige OK-Bestätigung")
             }
             ackMs=ms()
-            if (device.methods.isNotEmpty() && "get_prop" !in device.methods) {
+            if (!PowerReadbackPolicy.shouldAutomaticallyRead(device)) {
                 return PowerProbe(PowerOutcome.ACK_ONLY,ackMs=ackMs,totalMs=ms(),
-                    message="get_prop nicht gemeldet")
+                    message="Manueller Befehl bestätigt; keine automatische get_prop-Abfrage " +
+                        "(Color4-/unbekanntes Firmwareverhalten). Status separat prüfen.")
             }
             Thread.sleep(75)
             val observed=runCatching {
