@@ -75,6 +75,18 @@ class LoftController(context: Context) {
         private set
     var microphoneRunning by mutableStateOf(false)
         private set
+    var microphoneAnalysisGain by mutableStateOf(
+        MicrophoneAnalysisGain.normalize(prefs.getFloat("microphone-analysis-gain", 1f))
+    )
+        private set
+
+    fun setMicrophoneAnalysisGain(value: Float) {
+        val safe = MicrophoneAnalysisGain.normalize(value)
+        if (safe == microphoneAnalysisGain) return
+        microphoneAnalysisGain = safe
+        microphone?.setAnalysisGain(safe)
+        prefs.edit().putFloat("microphone-analysis-gain", safe).apply()
+    }
     var musicFrame by mutableStateOf<MusicFrame?>(null)
         private set
     var musicBeatCount by mutableStateOf(0L)
@@ -1639,7 +1651,7 @@ class LoftController(context: Context) {
             return
         }
         if (microphoneRunning) return
-        microphone = MicrophoneCapture()
+        microphone = MicrophoneCapture().apply { setAnalysisGain(microphoneAnalysisGain) }
         val capture = microphone ?: return
         microphoneRunning = true
         musicFrame = null
@@ -1709,9 +1721,33 @@ class LoftController(context: Context) {
      * state and commit recovery data BEFORE sending a single lighting command.
      * Only explicitly selected user targets may control music lighting.
      */
-    fun armMusicLights() = armMusicLightsInternal(acceptanceTest = false)
+    fun unrestrictedMusicRefusal(): String? {
+        val requested = selected().distinctBy { it.ip }
+        if (requested.any { device ->
+            val model = device.model.trim().lowercase()
+            model == "color4" || model.endsWith(".color4") ||
+                model.isEmpty() || model == "unknown" ||
+                model == "yeelight" || model == "yeelight (lan)"
+        }) return "Color4 und unklare Geräte nur im abgesicherten Einzeltest. " +
+            "Für Mehrlampenbetrieb erst gemeinsame Eignung und Restore prüfen."
+        return null
+    }
 
-    /** Exactly one explicitly chosen Color4; self-stops after 8 seconds. */
+    fun color4PairReadiness(): String {
+        val requested = selected().distinctBy { it.ip }
+        val blocked = requested.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet()
+        return Color4PairReadinessPolicy.refusal(requested, blocked, recoveryPending)
+            ?: "Zwei Color4 melden die nötigen Funktionen und sind nicht quarantänisiert. " +
+                "Dies ist nur eine lokale Eignungsprüfung – kein Gerätetest und " +
+                "keine Bestätigung der Stabilität oder Wiederherstellung."
+    }
+
+    fun armMusicLights() {
+        unrestrictedMusicRefusal()?.let { status = it; return }
+        armMusicLightsInternal(acceptanceTest = false)
+    }
+
+    /** Exactly one explicitly chosen Color4; self-stops after 15 seconds. */
     fun armColor4MusicAcceptance() = armMusicLightsInternal(acceptanceTest = true)
 
     fun color4AcceptanceTargetName(): String? =
@@ -1736,6 +1772,10 @@ class LoftController(context: Context) {
             }
         }
         val requested = selected().distinctBy { it.ip }
+        if (!acceptanceTest && unrestrictedMusicRefusal() != null) {
+            status = unrestrictedMusicRefusal() ?: "Dieser Musikmodus ist nicht freigegeben."
+            return
+        }
         val blocked = requested.filter(YeelightLan::isLanQuarantined)
             .map { it.ip }.toSet()
         val chosen = MusicTransportPolicy.eligible(requested, blocked)
@@ -1759,6 +1799,13 @@ class LoftController(context: Context) {
             } else if (recoveryPending) {
                 haltRunning(false)
             }
+            // Defensive second gate inside the operation, independent of UI.
+            if (!acceptanceTest && chosen.any { device ->
+                val model = device.model.trim().lowercase()
+                model == "color4" || model.endsWith(".color4") ||
+                    model.isEmpty() || model == "unknown" ||
+                    model == "yeelight" || model == "yeelight (lan)"
+            }) return@task "Color4 darf nicht unbegrenzt als Musikshow laufen."
             val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
             check(chosen.none { it.ip in pending }) {
                 "Musiklicht: mindestens eine gewählte Lampe hat eine offene Wiederherstellung. " +
@@ -1848,7 +1895,7 @@ class LoftController(context: Context) {
                         disarmMusicLights()
                     }
                 }
-                "Color4-Einzeltest läuft · automatischer Stopp und Wiederherstellung nach 8 s"
+                "Color4-Einzeltest läuft · automatischer Stopp und Wiederherstellung nach 15 s"
             } else "Musiklicht aktiviert · vorheriger Zustand gesichert"
         }
     }
@@ -1865,6 +1912,8 @@ class LoftController(context: Context) {
             allStreaming = allStreaming
         )
         if (dispatch == MusicFrameDispatch.NONE) return
+        if (acceptanceTestActive &&
+            acceptanceStats.writeAttempts >= Color4MusicAcceptancePolicy.MAX_RGB_WRITES) return
         musicSending = true
         lastMusicCommandAt = now
         musicColorBeat++

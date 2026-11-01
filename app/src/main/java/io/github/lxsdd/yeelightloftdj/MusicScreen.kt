@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 
 private val shades = listOf(
     Color(0xFF49E0D0), Color(0xFF5DC9FF), Color(0xFF9F9DFB),
@@ -161,6 +162,27 @@ fun MusicScreen(controller: LoftController) {
                         Text("Mikrofon stoppen")
                     }
                 }
+                if (!internalRunning) {
+                    Text(
+                        "Mikrofon · Analyseempfindlichkeit ×" +
+                            String.format(Locale.GERMANY, "%.2f", controller.microphoneAnalysisGain),
+                        color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp
+                    )
+                    Slider(
+                        value = controller.microphoneAnalysisGain,
+                        onValueChange = controller::setMicrophoneAnalysisGain,
+                        valueRange = 0.5f..4f,
+                        steps = 13,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Wirkt nur auf die lokale Mikrofon-PCM-Analyse, nicht auf Androids " +
+                            "Hardware-Mikrofon oder Deezer/BubbleUPnP. Höhere Werte " +
+                            "verstärken auch Rauschen und können digital übersteuern. " +
+                            "Standard ×1,00; keine zusätzlichen Lampenbefehle.",
+                        color = Color(0xFF98A6C0), fontSize = 11.sp
+                    )
+                }
                 if (reading != null && audioRunning) {
                     Text("Live-Frequenzspektrum", color = Color.White, fontWeight = FontWeight.Medium)
                     reading.bands.forEachIndexed { index, value ->
@@ -246,18 +268,25 @@ fun MusicScreen(controller: LoftController) {
                         controller.runningDeviceIps.isEmpty() &&
                         acceptanceRefusal == null,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Color4-Einzeltest · 8 Sekunden · automatisch stoppen") }
+                ) { Text("Color4-Einzeltest · 15 Sekunden · automatisch stoppen") }
                 Text(
                     acceptanceRefusal ?: "Testziel: $acceptanceTarget · begrenzter Music Mode",
                     color = Color(0xFF98A6C0), fontSize = 11.sp
                 )
+                val unboundedRefusal = controller.unrestrictedMusicRefusal()
                 if (!controller.musicLightArmed && controller.runningDeviceIps.isEmpty()) {
                     Button(
                         onClick = controller::armMusicLights,
                         enabled = audioRunning && !controller.busy &&
-                            controller.selectedCount() > 0 && controller.runningDeviceIps.isEmpty(),
+                            controller.selectedCount() > 0 &&
+                            controller.runningDeviceIps.isEmpty() &&
+                            unboundedRefusal == null,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Licht auf ${controller.selectedCount()} Lampen aktivieren") }
+                    if (unboundedRefusal != null) {
+                        Text(unboundedRefusal,
+                            color = Color(0xFFFFD38A), fontSize = 11.sp)
+                    }
                 } else {
                     OutlinedButton(
                         onClick = controller::disarmMusicLights,
@@ -266,6 +295,16 @@ fun MusicScreen(controller: LoftController) {
                     ) { Text("Musiklicht stoppen und vorheriges Licht wiederherstellen") }
                 }
                 Text(controller.musicLightStatus, color = Color(0xFF98A6C0), fontSize = 12.sp)
+                var pairReadiness by remember { mutableStateOf("") }
+                OutlinedButton(
+                    onClick = { pairReadiness = controller.color4PairReadiness() },
+                    enabled = !controller.busy && !controller.musicLightArmed,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Zwei Color4 · Eignung ohne Schalten prüfen") }
+                if (pairReadiness.isNotBlank()) {
+                    Text(pairReadiness,
+                        color = Color(0xFF98A6C0), fontSize = 11.sp)
+                }
                 if (controller.lastColor4TestReport.isNotBlank()) {
                     Text(
                         controller.lastColor4TestReport,
@@ -285,7 +324,8 @@ fun MusicScreen(controller: LoftController) {
                 text = {
                     Text("Ausgewählte Lampe: ${controller.color4AcceptanceTargetName() ?: "unbekannt"}. " +
                         "Nur fortfahren, wenn dies Couchtisch ist. " +
-                        "Der Test läuft höchstens 8 Sekunden. Bei messbarer Musik " +
+                        "Der Test läuft höchstens 15 Sekunden, sendet höchstens " +
+                        "45 RGB-Telegramme über den Rückkanal. Bei messbarer Musik " +
                         "werden echte Bassimpulse oder langsamere Audioaktivitäts-" +
                         "Farbwechsel ausschließlich über den Rückkanal gesendet. " +
                         "Anschließend wird der vorherige Zustand wiederhergestellt. " +

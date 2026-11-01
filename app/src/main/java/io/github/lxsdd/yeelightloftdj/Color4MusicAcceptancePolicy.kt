@@ -1,12 +1,15 @@
 package io.github.lxsdd.yeelightloftdj
 
 /**
- * An explicit, short, single-device Color4 acceptance test. No automatic
+ * An explicit, time-bounded, single-device Color4 acceptance test. No automatic
  * capability probing or fallback onto the quota-limited normal LAN transport.
  * This is intentionally distinct from unrestricted user-selected music shows.
  */
 internal object Color4MusicAcceptancePolicy {
-    const val DURATION_MS = 8_000L
+    const val DURATION_MS = 15_000L
+    // Independent bound on reverse-channel frames even if timing logic is
+    // accidentally changed. Beat pacing itself remains at >=350ms.
+    const val MAX_RGB_WRITES = 45
 
     fun refusal(
         selected: List<YeelightDevice>,
