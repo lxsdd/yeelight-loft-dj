@@ -1,6 +1,9 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.media.projection.MediaProjectionManager
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,15 +44,72 @@ fun MusicScreen(controller: LoftController) {
         if (granted) controller.startMicrophone()
         else controller.report("Mikrofonberechtigung nicht erteilt · keine Audioaufnahme")
     }
-    val reading = controller.musicFrame
+    val projection = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            controller.startInternalAudio(result.resultCode, result.data!!)
+        } else controller.report("Interne Audiofreigabe abgelehnt · keine Audioaufnahme")
+    }
+    val playbackPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                as MediaProjectionManager
+            projection.launch(manager.createScreenCaptureIntent())
+        } else controller.report("Mikrofon-/Playback-Capture-Berechtigung abgelehnt")
+    }
+    val internalRunning = InternalAudioBridge.running
+    val audioRunning = controller.microphoneRunning || internalRunning
+    val reading = controller.musicFrame ?: InternalAudioBridge.frame
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Musik im Loft", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Text(
-            "Echte Audioanalyse über das Smartphone-Mikrofon. Für DJ-Sets, Lautsprecher " +
-                "und Musik am Google-Cast-Empfänger.",
+            "Analysiere erlaubte Wiedergabe anderer Apps direkt im Android-Audiosystem " +
+                "oder nutze das Mikrofon für Lautsprecher und Google Cast.",
             color = Color(0xFFAAB6CE), fontSize = 13.sp
         )
+        Surface(color = Color(0xFF1D2232), shape = RoundedCornerShape(22.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                Text("Interne Audioquelle anderer Apps", color = Color.White,
+                    fontWeight = FontWeight.SemiBold)
+                Text("BubbleUPnP, YouTube oder andere Player können erfasst werden, " +
+                    "wenn Android und die Quell-App die Wiedergabe ausdrücklich freigeben. " +
+                    "Kein eigener MP3-Player nötig.", color = Color(0xFFAAB6CE), fontSize = 12.sp)
+                if (!internalRunning) {
+                    Button(
+                        enabled = !controller.microphoneRunning,
+                        onClick = {
+                            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                                PackageManager.PERMISSION_GRANTED) {
+                                val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                                    as MediaProjectionManager
+                                projection.launch(manager.createScreenCaptureIntent())
+                            } else playbackPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Internes Android-Audio freigeben") }
+                } else {
+                    OutlinedButton(onClick = controller::stopInternalAudio,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("Internen Audiomodus stoppen")
+                    }
+                }
+                Text(InternalAudioBridge.status,
+                    color = Color(0xFFAAB6CE), fontSize = 12.sp)
+                Text("Android zeigt eine Systemfreigabe und bei aktiver Analyse eine " +
+                    "Benachrichtigung. Es wird ausschließlich Audio ausgewertet, " +
+                    "kein Bildschirmvideo gespeichert.",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp)
+                Text("Cast auf einen externen Empfänger oder durch die Quell-App " +
+                    "gesperrtes Audio liefern möglicherweise Stille. Dafür Mikrofon nutzen.",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp)
+            }
+        }
+
         Surface(color = Color(0xFF1D2232), shape = RoundedCornerShape(22.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -67,6 +127,7 @@ fun MusicScreen(controller: LoftController) {
                 }
                 if (!controller.microphoneRunning) {
                     Button(
+                        enabled = !internalRunning,
                         onClick = {
                             if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                                 PackageManager.PERMISSION_GRANTED) {
@@ -90,7 +151,7 @@ fun MusicScreen(controller: LoftController) {
                         Text("Mikrofon stoppen")
                     }
                 }
-                if (reading != null && controller.microphoneRunning) {
+                if (reading != null && audioRunning) {
                     Text("Live-Frequenzspektrum", color = Color.White, fontWeight = FontWeight.Medium)
                     reading.bands.forEachIndexed { index, value ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -112,7 +173,7 @@ fun MusicScreen(controller: LoftController) {
                     }
                     Text(
                         if (reading.beat) "Bass-Transient erkannt" else
-                            "Höre auf deutliche Bass-Impulse · BPM nur bei stabilen Ereignissen",
+                            "Erkannte Audio-Transienten · BPM nur bei stabilen Ereignissen",
                         color = if (reading.beat) Color(0xFF67E1C8) else Color(0xFF98A6C0),
                         fontSize = 12.sp
                     )
@@ -142,7 +203,7 @@ fun MusicScreen(controller: LoftController) {
                 if (!controller.musicLightArmed && controller.runningDeviceIps.isEmpty()) {
                     Button(
                         onClick = controller::armMusicLights,
-                        enabled = controller.microphoneRunning && !controller.busy &&
+                        enabled = audioRunning && !controller.busy &&
                             controller.selectedCount() > 0 && controller.runningDeviceIps.isEmpty(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Licht auf ${controller.selectedCount()} Lampen aktivieren") }
@@ -162,10 +223,9 @@ fun MusicScreen(controller: LoftController) {
 
         Surface(color = Color(0xFF24283B), shape = RoundedCornerShape(18.dp)) {
             Text(
-                "Weitere Audioquellen bleiben geplant: internes Android-Audio nur mit " +
-                    "Einwilligung und Freigabe der Quell-App; lokaler Player. Bei Google Cast " +
-                    "wird die Musik meist auf dem Empfänger abgespielt – deshalb ist das " +
-                    "Mikrofon hier die verlässliche Einstiegslösung.",
+                "Internes Audio: Android AudioPlaybackCapture mit ausdrücklicher Zustimmung. " +
+                    "Es werden nur zulässige Audioausgaben analysiert. Bei Google Cast auf " +
+                    "einen externen Empfänger steht das Telefon-Mikrofon als Fallback bereit.",
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
                 color = Color(0xFFAAB6CE), fontSize = 12.sp
             )

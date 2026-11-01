@@ -1,6 +1,9 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -17,6 +20,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
+enum class FlowStartState { VERIFIED, UNVERIFIED }
+
 data class YeelightDevice(
     val id: String,
     val ip: String,
@@ -25,7 +30,15 @@ data class YeelightDevice(
     val methods: Set<String> = emptySet(),
     val lanName: String = "",
 ) {
-    val canFlow: Boolean get() = methods.isEmpty() || "start_cf" in methods
+    val canFlow: Boolean get() = if (methods.isEmpty()) {
+        // A TCP-only probe has no SUPPORT evidence. Preserve cautious
+        // diagnostic attempts for unknown devices, never for documented mono.
+        model.lowercase() != "mono"
+    } else {
+        // Our chase frames are RGB (mode 1). start_cf alone could be a
+        // monochrome/temperature flow and is not proof of RGB capability.
+        "start_cf" in methods && "set_rgb" in methods
+    }
 }
 
 object YeelightLan {
@@ -37,6 +50,12 @@ object YeelightLan {
     @Volatile var lastSearchInvalidPackets: Int = 0
         private set
     @Volatile var lastSearchRoundUnique: List<Int> = emptyList()
+        private set
+    @Volatile var lastSearchRoundResponders: List<Set<String>> = emptyList()
+        private set
+    @Volatile var lastSearchRepliesPerIp: Map<String, Int> = emptyMap()
+        private set
+    @Volatile var lastSearchBoundToWifiNetwork: Boolean = false
         private set
     @Volatile var lastSearchSourceAddress: String = "unbekannt"
         private set
@@ -85,7 +104,23 @@ object YeelightLan {
      * Multi-round multicast discovery. Keep listening through quiet periods:
      * previously, a single 400ms timeout prematurely ended every round.
      */
-    fun discover(context: Context): List<YeelightDevice> {
+    private fun wifiNetworkFor(context: Context, sourceIp: String): Network? {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as ConnectivityManager
+        return manager.allNetworks.firstOrNull { network ->
+            val cap = manager.getNetworkCapabilities(network)
+            val link = manager.getLinkProperties(network)
+            cap?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                link?.linkAddresses?.any {
+                    it.address.hostAddress == sourceIp
+                } == true
+        }
+    }
+
+    fun discover(context: Context, rounds: Int = 5, listenMs: Long = 1150L): List<YeelightDevice> {
+        require(rounds in 1..12 && listenMs in 500L..2000L) {
+            "Ungültige Grenzen für die lokale UDP-Diagnose"
+        }
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val lock = wifi.createMulticastLock("yeelight-loft-dj")
         lock.setReferenceCounted(false)
@@ -94,20 +129,28 @@ object YeelightLan {
         var invalid = 0
         var mismatches = 0
         val roundUnique = mutableListOf<Int>()
+        val roundResponders = mutableListOf<Set<String>>()
+        val receivedByIp = mutableMapOf<String, Int>()
         val source = wifiIpv4Address()
             ?: error("Keine lokale WLAN-IPv4-Adresse erkannt; Multicast nicht auf Mobilfunk umleiten")
+        val wifiNetwork = wifiNetworkFor(context, source)
+        lastSearchBoundToWifiNetwork = false
         try {
             lock.acquire()
             // Bind explicitly to the Wi-Fi IP so Android/VPN routing cannot
             // accidentally send M-SEARCH via a different active interface.
             DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+                // Only this socket is bound to Android's Wi-Fi Network.
+                // Never change the whole process routing or touch mobile data.
+                wifiNetwork?.bindSocket(socket)
+                lastSearchBoundToWifiNetwork = wifiNetwork != null
                 lastSearchSourceAddress = socket.localAddress.hostAddress ?: "unbekannt"
                 socket.soTimeout = 220
                 val packet = DatagramPacket(search, search.size, InetAddress.getByName(HOST), PORT)
-                repeat(5) {
+                repeat(rounds) {
                     val round = mutableSetOf<String>()
                     socket.send(packet)
-                    val deadline = System.nanoTime() + 1_150_000_000L
+                    val deadline = System.nanoTime() + listenMs * 1_000_000L
                     while (System.nanoTime() < deadline) {
                         try {
                             val buffer = ByteArray(4096)
@@ -117,6 +160,7 @@ object YeelightLan {
                             val parsed = parseAnnouncement(String(received.data, received.offset, received.length, Charsets.UTF_8))
                             if (parsed == null) invalid++ else {
                                 round.add(parsed.ip)
+                                receivedByIp[parsed.ip] = (receivedByIp[parsed.ip] ?: 0) + 1
                                 if (received.address.hostAddress != parsed.ip) mismatches++
                                 found[parsed.ip] = parsed
                             }
@@ -125,12 +169,15 @@ object YeelightLan {
                         }
                     }
                     roundUnique.add(round.size)
+                    roundResponders.add(round.toSet())
                 }
             }
         } finally {
             lastSearchPackets = packets
             lastSearchInvalidPackets = invalid
             lastSearchRoundUnique = roundUnique.toList()
+            lastSearchRoundResponders = roundResponders.toList()
+            lastSearchRepliesPerIp = receivedByIp.toMap()
             lastSearchSourceMismatches = mismatches
             if (lock.isHeld) lock.release()
         }
@@ -144,7 +191,7 @@ object YeelightLan {
      * unicast search by design: a positive reply is useful evidence, a missing
      * reply is NOT evidence of a fault.
      */
-    fun directedUdpProbe(targets: List<YeelightDevice>): Set<String> {
+    fun directedUdpProbe(context: Context, targets: List<YeelightDevice>): Set<String> {
         val source = wifiIpv4Address() ?: error("Kein WLAN aktiv")
         val allowed = targets.asSequence()
             .filter { isLocalIp(it.ip) }
@@ -152,6 +199,7 @@ object YeelightLan {
             .take(24).toList()
         val answered = mutableSetOf<String>()
         DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+            wifiNetworkFor(context, source)?.bindSocket(socket)
             socket.soTimeout = 100
             allowed.forEach { device ->
                 val address = InetAddress.getByName(device.ip)
@@ -292,6 +340,104 @@ object YeelightLan {
         response.has("id") && response.optInt("id", -1) == id
 
     private class RejectedCommand(message: String) : IllegalStateException(message)
+
+    /**
+     * One TCP connection for a requested power change AND its verification.
+     * Never auto-retry a command when the ACK is missing: the bulb may already
+     * have switched and the ACK alone could have been lost.
+     */
+    fun setPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
+        require(isLocalIp(device.ip))
+        if (device.methods.isNotEmpty() && "set_power" !in device.methods) {
+            return PowerProbe(PowerOutcome.UNSUPPORTED,
+                message = "Gerät meldet set_power nicht als unterstützt")
+        }
+        val started = System.nanoTime()
+        fun ms(): Long = (System.nanoTime() - started) / 1_000_000L
+        var connectMs: Long? = null
+        var ackMs: Long? = null
+        try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(device.ip, device.port), 1800)
+                connectMs = ms()
+                socket.soTimeout = 1800
+                val input = socket.getInputStream().bufferedReader()
+                val output = socket.getOutputStream()
+
+                fun replyTo(id: Int, method: String): JSONObject {
+                    repeat(12) {
+                        val line = input.readLine() ?: error("Keine Antwort auf $method")
+                        val candidate = JSONObject(line)
+                        if (matchesReplyId(candidate, id)) return candidate
+                    }
+                    error("Keine passende Antwort auf $method")
+                }
+
+                fun sendRequest(id: Int, method: String, params: List<Any>) {
+                    val payload = JSONObject().put("id", id).put("method", method)
+                        .put("params", JSONArray(params)).toString() + "\r\n"
+                    output.write(payload.toByteArray(Charsets.UTF_8))
+                    output.flush()
+                }
+
+                val powerId = seq.getAndIncrement()
+                // "sudden" makes power toggling responsive; duration is
+                // ignored by the device for this effect, per Yeelight spec.
+                sendRequest(powerId, "set_power",
+                    listOf(if (on) "on" else "off", "sudden", 0))
+                val answer = replyTo(powerId, "set_power")
+                if (answer.has("error")) {
+                    return PowerProbe(PowerOutcome.REJECTED, connectMs = connectMs,
+                        totalMs = ms(),
+                        message = answer.optJSONObject("error")
+                            ?.optString("message", "Befehl zurückgewiesen")
+                            ?: "Befehl zurückgewiesen")
+                }
+                if (answer.optJSONArray("result")?.optString(0) != "ok") {
+                    return PowerProbe(PowerOutcome.NO_ACK, connectMs = connectMs,
+                        totalMs = ms(), message = "Keine gültige OK-Bestätigung")
+                }
+                ackMs = ms()
+
+                // Some TCP-only firmware does not expose get_prop; the ACK
+                // remains true but does not prove the physical light changed.
+                if (device.methods.isNotEmpty() && "get_prop" !in device.methods) {
+                    return PowerProbe(PowerOutcome.ACK_ONLY, connectMs, ackMs,
+                        totalMs = ms(), message = "Statusabfrage nicht gemeldet")
+                }
+                // A tiny settle delay avoids racing asynchronous power
+                // changes while keeping the total additional traffic at
+                // ONE read on the SAME connection.
+                Thread.sleep(75)
+                val status = runCatching {
+                    val readId = seq.getAndIncrement()
+                    sendRequest(readId, "get_prop", listOf("power"))
+                    val reply = replyTo(readId, "get_prop")
+                    check(!reply.has("error")) { "Statusabfrage abgelehnt" }
+                    when (reply.optJSONArray("result")?.optString(0)) {
+                        "on" -> true
+                        "off" -> false
+                        else -> null
+                    }
+                }
+                val observed = status.getOrNull()
+                val outcome = PowerVerificationPolicy.outcome(true, on, observed)
+                return PowerProbe(outcome, connectMs, ackMs,
+                    if (status.isSuccess) ms() else null,
+                    totalMs = ms(),
+                    message = status.exceptionOrNull()?.message.orEmpty())
+            }
+        } catch (failure: Exception) {
+            val outcome = when {
+                ackMs != null -> PowerOutcome.ACK_ONLY
+                connectMs == null -> PowerOutcome.UNREACHABLE
+                else -> PowerOutcome.NO_ACK
+            }
+            return PowerProbe(outcome, connectMs, ackMs,
+                totalMs = ms(),
+                message = failure.message ?: failure.javaClass.simpleName)
+        }
+    }
 
     /** Each command is CRLF-delimited and must return the matching explicit OK. */
     fun send(device: YeelightDevice, method: String, params: List<Any>) {
@@ -438,7 +584,7 @@ object YeelightLan {
      * color flow even when the bulb was off. This avoids the power-on race.
      * For known older devices without set_scene, use a settled power-on.
      */
-    fun play(device: YeelightDevice, expression: String) {
+    fun play(device: YeelightDevice, expression: String): FlowStartState {
         require(device.canFlow) { "start_cf wird von diesem Gerät nicht gemeldet" }
         fun legacyStart() {
             send(device, "set_power", listOf("on", "smooth", 300))
@@ -459,11 +605,19 @@ object YeelightLan {
             legacyStart()
         }
         Thread.sleep(150)
-        check(readFlowing(device) == true) {
-            "Animation nicht bestätigt (flowing ist nicht 1); " +
-                "Lampe bitte einzeln prüfen und gegebenenfalls stoppen"
+        // Some firmware versions accept a valid start_cf/set_scene but do not
+        // implement 'flowing' in get_prop. A missing property is NOT proof of
+        // failure. Never fabricate a 'running' confirmation either.
+        val flowing = runCatching { readFlowing(device) }.getOrNull()
+        check(flowing != false) {
+            "Gerät bestätigt flowing=0: Animation läuft nicht"
         }
+        return classifyFlowStart(flowing)
     }
+
+    internal fun classifyFlowStart(flowing: Boolean?): FlowStartState =
+        if (flowing == true) FlowStartState.VERIFIED
+        else FlowStartState.UNVERIFIED
 
     fun stop(device: YeelightDevice) {
         try {

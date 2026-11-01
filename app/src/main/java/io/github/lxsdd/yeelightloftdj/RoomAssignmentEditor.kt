@@ -18,8 +18,8 @@ import androidx.compose.ui.unit.sp
 
 /** App-only logical rooms, not a claim of a completed interactive floorplan. */
 @Composable
-fun RoomAssignmentEditor(controller: LoftController) {
-    var expanded by remember { mutableStateOf(false) }
+fun RoomAssignmentEditor(controller: LoftController, initiallyExpanded: Boolean = false) {
+    var expanded by remember { mutableStateOf(initiallyExpanded) }
     var roomName by remember { mutableStateOf("") }
     var activeRoom by remember { mutableStateOf("Nicht zugeordnet") }
     var rename by remember { mutableStateOf("") }
@@ -126,7 +126,7 @@ fun RoomAssignmentEditor(controller: LoftController) {
                                 color = Color(0xFF9BAAC4), fontSize = 10.sp)
                         }
                         IconButton(
-                            enabled = controller.canOrganizeLamps,
+                            enabled = controller.canIdentifyLamp(device),
                             onClick = { controller.identifyLamp(device) }
                         ) {
                             Icon(Icons.Rounded.Lightbulb,
