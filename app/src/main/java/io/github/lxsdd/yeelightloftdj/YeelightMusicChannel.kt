@@ -50,14 +50,15 @@ class YeelightMusicChannel(
             synchronized(lock) { enabledAttempted = true }
             // Listener MUST exist before telling the bulb to connect back.
             enableOnDevice(localWifiIp, listener.localPort)
-            candidate = listener.accept()
-            if (candidate.inetAddress.hostAddress != deviceIp) {
+            val accepted = listener.accept()
+            candidate = accepted
+            if (accepted.inetAddress.hostAddress != deviceIp) {
                 error("Music-Mode-Rückverbindung stammt nicht von der gewählten Lampe")
             }
-            candidate.tcpNoDelay = true
+            accepted.tcpNoDelay = true
             synchronized(lock) {
                 check(!closed) { "Music-Mode wurde zwischenzeitlich beendet" }
-                socket = candidate
+                socket = accepted
                 candidate = null // ownership transferred to this channel
             }
         } catch (failure: Exception) {
