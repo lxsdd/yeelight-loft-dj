@@ -102,6 +102,88 @@ class YeelightTcpSessionsTest {
         }
     }
 
+    @Test fun firmwareQuotaIsQuarantinedEvenWhenCallerIgnoresErrorJson() {
+        ServerSocket(0).use { server ->
+            val worker = thread {
+                server.accept().use { socket ->
+                    val line = socket.getInputStream().bufferedReader().readLine()
+                    val id = Regex("\\"id\\":(\\d+)").find(line)!!.groupValues[1]
+                    socket.getOutputStream().write(
+                        "{\\"id\\":$id,\\"error\\":{\\"message\\":\\"client quota exceeded\\"}}\\r\\n"
+                            .toByteArray()
+                    )
+                    socket.getOutputStream().flush()
+                }
+            }
+            val events = AtomicInteger()
+            val gate = DeviceCommandGate(
+                nowMs = { 10_000L }, minSpacingMs = 0,
+                onQuarantined = { events.incrementAndGet() }
+            )
+            val tcp = YeelightTcpSessions(
+                trace = { },
+                onFirmwareQuotaRejected = { ip, error ->
+                    gate.recordFirmwareRejection(ip, error)
+                },
+                connect = { ip, port -> Socket(ip, port).apply { soTimeout = 1_000 } },
+            )
+            try {
+                val result = gate.run("127.0.0.1") {
+                    tcp.request("127.0.0.1", server.localPort, 51,
+                        "set_rgb", listOf(0x001234, "sudden", 0))
+                }
+                // Simulates a future caller that forgets to inspect "error".
+                assertTrue(result.has("error"))
+                assertEquals(1, events.get())
+                assertTrue(gate.isQuarantined("127.0.0.1"))
+                assertEquals(0, tcp.openCount())
+                assertTrue(runCatching {
+                    gate.run("127.0.0.1") { error("should be unreachable") }
+                }.exceptionOrNull() is DeviceCommandGate.Deferred)
+            } finally {
+                tcp.closeAll()
+                worker.join(2_000)
+                assertFalse(worker.isAlive)
+            }
+        }
+    }
+
+    @Test fun nonQuotaFirmwareErrorDoesNotFabricateALanQuotaLockout() {
+        ServerSocket(0).use { server ->
+            val worker = thread {
+                server.accept().use { socket ->
+                    val line = socket.getInputStream().bufferedReader().readLine()
+                    val id = Regex("\\"id\\":(\\d+)").find(line)!!.groupValues[1]
+                    socket.getOutputStream().write(
+                        "{\\"id\\":$id,\\"error\\":{\\"message\\":\\"unsupported method\\"}}\\r\\n"
+                            .toByteArray()
+                    )
+                    socket.getOutputStream().flush()
+                }
+            }
+            val gate = DeviceCommandGate(nowMs = { 10_000L }, minSpacingMs = 0)
+            val tcp = YeelightTcpSessions(
+                trace = { },
+                onFirmwareQuotaRejected = { ip, error ->
+                    gate.recordFirmwareRejection(ip, error)
+                },
+                connect = { ip, port -> Socket(ip, port).apply { soTimeout = 1_000 } },
+            )
+            try {
+                val reply = gate.run("127.0.0.1") {
+                    tcp.request("127.0.0.1", server.localPort, 52,
+                        "get_prop", listOf("unknown_property"))
+                }
+                assertTrue(reply.has("error"))
+                assertFalse(gate.isQuarantined("127.0.0.1"))
+            } finally {
+                tcp.closeAll()
+                worker.join(2_000)
+                assertFalse(worker.isAlive)
+            }
+        }
+    }
+
     @Test fun explicitErrorIsReturnedAndConnectionIsDiscarded() {
         ServerSocket(0).use { server ->
             val worker=thread {
