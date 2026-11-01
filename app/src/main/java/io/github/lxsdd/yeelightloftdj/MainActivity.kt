@@ -1051,6 +1051,41 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                     DeviceCapabilities.canOffer(device, "set_ct_abx", allowUnverified),
             )
         }
+        if (DeviceCapabilities.evidence(device, "set_hsv") != CapabilityEvidence.UNSUPPORTED) {
+            var hue by remember(device.ip, live?.hue) {
+                mutableFloatStateOf((live?.hue ?: 180).toFloat())
+            }
+            var saturation by remember(device.ip, live?.saturation) {
+                mutableFloatStateOf((live?.saturation ?: 70).toFloat())
+            }
+            val hsvEnabled = controller.canIdentifyLamp(device) &&
+                DeviceCapabilities.canOffer(device, "set_hsv", allowUnverified)
+            Text("HSV-Farbsteuerung", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("Farbton · ${hue.roundToInt()}°", color = muted, fontSize = 12.sp)
+            Slider(
+                value = hue,
+                onValueChange = { hue = it },
+                onValueChangeFinished = {
+                    controller.controlLamp(device,
+                        LampCommands.hsv(hue.roundToInt(), saturation.roundToInt()),
+                        "HSV-Farbton")
+                },
+                valueRange = 0f..359f,
+                enabled = hsvEnabled,
+            )
+            Text("Sättigung · ${saturation.roundToInt()} %", color = muted, fontSize = 12.sp)
+            Slider(
+                value = saturation,
+                onValueChange = { saturation = it },
+                onValueChangeFinished = {
+                    controller.controlLamp(device,
+                        LampCommands.hsv(hue.roundToInt(), saturation.roundToInt()),
+                        "HSV-Sättigung")
+                },
+                valueRange = 0f..100f,
+                enabled = hsvEnabled,
+            )
+        }
         OutlinedButton(
             onClick = { controller.identifyLamp(device) },
             enabled = controller.canIdentifyLamp(device),
