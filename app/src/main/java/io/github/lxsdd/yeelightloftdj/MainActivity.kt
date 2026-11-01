@@ -527,6 +527,7 @@ private fun SceneCard(scene: LoftScene, enabled: Boolean, active: Boolean, onPla
 @Composable
 private fun TargetSelector(controller: LoftController) {
     var showSingles by remember { mutableStateOf(false) }
+    var newGroupName by rememberSaveable { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Ziel · " + controller.targetLabel(controller.target) +
             " (" + controller.selectedCount() + " Lampen)", color = Color.White,
@@ -581,6 +582,66 @@ private fun TargetSelector(controller: LoftController) {
         if (controller.targetDescription(controller.target).isNotEmpty()) {
             Text(controller.targetDescription(controller.target),
                 color = muted, fontSize = 12.sp)
+        }
+        HorizontalDivider(color = Color(0xFF374052))
+        Text("Eigene Gruppen", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Text("Beliebig benannte Gruppen mit den gewünschten Lampen erstellen und bearbeiten.",
+            color = muted, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = newGroupName,
+                onValueChange = { newGroupName = it.take(40) },
+                modifier = Modifier.weight(1f),
+                label = { Text("Neuer Gruppenname") }, singleLine = true)
+            Button(
+                onClick = {
+                    controller.addGroup(newGroupName)
+                    newGroupName = ""
+                },
+                enabled = controller.canOrganizeLamps &&
+                    NamedLampGroups.validName(newGroupName.trim())
+            ) { Text("Anlegen") }
+        }
+        if (controller.target.startsWith("Gruppe:")) {
+            val selected = controller.target.removePrefix("Gruppe:")
+            var renamed by rememberSaveable(selected) { mutableStateOf(selected) }
+            Text("Gruppenmitglieder · " + selected, color = Color.White,
+                fontWeight = FontWeight.SemiBold)
+            controller.orderedDevices().forEach { device ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = device.id in controller.namedGroups[selected].orEmpty(),
+                        onCheckedChange = { controller.setGroupMember(selected, device.id, it) },
+                        enabled = controller.canOrganizeLamps
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(controller.displayName(device), color = Color.White, fontSize = 13.sp)
+                        Text(controller.roomFor(device), color = muted, fontSize = 11.sp)
+                    }
+                    TextButton(onClick = { controller.identifyLamp(device) },
+                        enabled = controller.canIdentifyLamp(device)) {
+                        Text("Erkennen", fontSize = 11.sp)
+                    }
+                }
+            }
+            OutlinedTextField(value = renamed,
+                onValueChange = { renamed = it.take(40) },
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+                label = { Text("Gruppe umbenennen") })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { controller.renameGroup(selected, renamed) },
+                    enabled = controller.canOrganizeLamps &&
+                        NamedLampGroups.validName(renamed.trim()) &&
+                        renamed.trim() != selected,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Speichern") }
+                TextButton(
+                    onClick = { controller.deleteGroup(selected) },
+                    enabled = controller.canOrganizeLamps,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Gruppe löschen") }
+            }
         }
     }
 }
