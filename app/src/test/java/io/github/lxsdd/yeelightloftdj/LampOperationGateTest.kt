@@ -36,6 +36,36 @@ class LampOperationGateTest {
         assertFalse(LampOperationGate.canIdentify(false, null, emptySet(), emptySet(), true))
     }
 
+    @Test fun offlineLampDoesNotFreezeHealthyNeighbors() {
+        val pending = setOf("192.168.1.134")
+        assertFalse(LampOperationGate.canIdentifyLamp(
+            false, "192.168.1.134", pending, emptySet(), false))
+        assertTrue(LampOperationGate.canIdentifyLamp(
+            false, "192.168.1.20", pending, emptySet(), false))
+        assertTrue(LampOperationGate.canEditConfiguration(
+            false, false, false))
+        assertEquals(listOf("192.168.1.20"),
+            LampOperationGate.usableForNewScene(
+                listOf("192.168.1.134", "192.168.1.20"), pending, emptySet()))
+    }
+
+    @Test fun crashJournalWithoutRunningMarkerAlsoProtectsOnlyAffectedBulb() {
+        val journal = setOf("192.168.1.134")
+        assertFalse(LampOperationGate.canIdentifyLamp(
+            false, "192.168.1.134", emptySet(), journal, false))
+        assertTrue(LampOperationGate.canIdentifyLamp(
+            false, "192.168.1.40", emptySet(), journal, false))
+    }
+
+    @Test fun musicSessionAndBusyStillPreventConcurrentIdentification() {
+        assertFalse(LampOperationGate.canIdentifyLamp(
+            false, "192.168.1.40", emptySet(), emptySet(), true))
+        assertFalse(LampOperationGate.canIdentifyLamp(
+            true, "192.168.1.40", emptySet(), emptySet(), false))
+        assertFalse(LampOperationGate.canIdentifyLamp(
+            false, "192.168.1.40", emptySet(), emptySet(), false, true))
+    }
+
     @Test fun confirmedRecoveryUnblocksIdentifying() {
         assertFalse(LampOperationGate.canIdentify(false, null,
             setOf("192.168.1.20"), emptySet(), false))
