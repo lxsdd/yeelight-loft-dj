@@ -1,0 +1,127 @@
+name: Signed Color4 RC5 (approved)
+on:
+  push:
+    branches:
+      - rc/color4-music-0.2.8-rc5
+    paths:
+      - .github/workflows/rc-signed-color4.yml
+
+permissions:
+  contents: read
+
+jobs:
+  source-and-tests:
+    if: ${{ github.repository == 'lxsdd/yeelight-loft-dj' && github.ref == 'refs/heads/rc/color4-music-0.2.8-rc5' && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact approved source ancestry and RC-only changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=79b2ccbb946132f81959e7d43c02befda48e3053
+          git merge-base --is-ancestor "$base" HEAD
+          git diff --name-only "$base" HEAD | sort > /tmp/actual-rc-paths
+          printf '%s\n' '.github/workflows/rc-signed-color4.yml' 'app/build.gradle.kts' | sort > /tmp/expected-rc-paths
+          diff -u /tmp/expected-rc-paths /tmp/actual-rc-paths
+          git show "$base:app/build.gradle.kts" |
+            sed -e 's/versionCode = 20/versionCode = 23/' -e 's/versionName = "0.2.8-rc2"/versionName = "0.2.8-rc5"/' > /tmp/approved-rc-build.gradle.kts
+          cmp /tmp/approved-rc-build.gradle.kts app/build.gradle.kts
+          git diff --check "$base" HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "Approved code base: $base; only isolated RC workflow and version bump."
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: All JVM regression tests and unsigned preflight build (no signing secrets)
+        run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+
+  sign-and-publish-rc:
+    needs: source-and-tests
+    if: ${{ github.repository == 'lxsdd/yeelight-loft-dj' && github.ref == 'refs/heads/rc/color4-music-0.2.8-rc5' && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate source SHA before loading secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=79b2ccbb946132f81959e7d43c02befda48e3053
+          git merge-base --is-ancestor "$base" HEAD
+          git diff --name-only "$base" HEAD | sort > /tmp/actual-rc-paths
+          printf '%s\n' '.github/workflows/rc-signed-color4.yml' 'app/build.gradle.kts' | sort > /tmp/expected-rc-paths
+          diff -u /tmp/expected-rc-paths /tmp/actual-rc-paths
+          git show "$base:app/build.gradle.kts" |
+            sed -e 's/versionCode = 20/versionCode = 23/' -e 's/versionName = "0.2.8-rc2"/versionName = "0.2.8-rc5"/' > /tmp/approved-rc-build.gradle.kts
+          cmp /tmp/approved-rc-build.gradle.kts app/build.gradle.kts
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+      - name: Load existing stable signing certificate on trusted RC push only
+        env:
+          STORE_B64: ${{ secrets.YEELIGHT_SIGNING_STORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.YEELIGHT_SIGNING_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$STORE_B64"
+          test -n "$STORE_PASSWORD"
+          echo "::add-mask::$STORE_PASSWORD"
+          printf '%s' "$STORE_B64" | base64 --decode > "$RUNNER_TEMP/loft-dj.p12"
+          chmod 600 "$RUNNER_TEMP/loft-dj.p12"
+          keytool -list -storetype PKCS12 -keystore "$RUNNER_TEMP/loft-dj.p12" -alias loft-dj-app -storepass "$STORE_PASSWORD" > /dev/null
+          echo "YEELIGHT_SIGNING_STORE=$RUNNER_TEMP/loft-dj.p12" >> "$GITHUB_ENV"
+          echo "YEELIGHT_SIGNING_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+      - name: Test and compile signed RC from verified commit
+        run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+      - name: Validate exact permanent signing certificate and persist SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+          signer="$(find "$sdk_dir/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$signer"
+          "$signer" verify --verbose "$apk"
+          observed="$("$signer" verify --print-certs "$apk" | bash .github/scripts/extract-apk-cert-sha256.sh)"
+          expected=dc5fce6c385279a97e35f74d0b659a95ff960cc7d6be912cba3016bcfbb7dbca
+          test "$observed" = "$expected" || { echo "::error::Incorrect certificate, no publish"; exit 1; }
+          cp "$apk" Yeelight-Loft-DJ-v0.2.8-rc5-build23-signed.apk
+          sha256sum Yeelight-Loft-DJ-v0.2.8-rc5-build23-signed.apk | tee apk.sha256
+      - name: Publish isolated pre-release, never overwrite stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=v0.2.8-rc5
+          asset=Yeelight-Loft-DJ-v0.2.8-rc5-build23-signed.apk
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::RC tag already published; refuse overwrite"
+            exit 1
+          fi
+          gh release create "$tag" "$asset" apk.sha256 \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Yeelight Loft DJ 0.2.8 RC5 (Build 23) – Color4-Sicherheitsabnahme" \
+            --notes "Regulär mit dem bestehenden stabilen App-Zertifikat signierter, SHA-genau aus genehmigtem Draft-PR #38 abgeleiteter Color4-Testkandidat. RC4 zeigte auf einer Color4 sichtbare Musikreaktion mit wiederhergestellter Ausgangslage, Yeelight Classic weiter steuerbar. Internes Capture für BubbleUPnP und Deezer erfolgreich; die neuen RC5-Akzente und der 64-ms-Signalweg sind noch nicht am Gerät bestätigt. Kein Stresstest auf gesperrten Lampen. main und v0.2.7 bleiben unverändert."
+          gh release view "$tag" --json isPrerelease,tagName,assets --jq '{prerelease:.isPrerelease,tag:.tagName,assets:[.assets[].name]}'
