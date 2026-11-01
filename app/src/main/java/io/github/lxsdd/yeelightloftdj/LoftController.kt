@@ -843,14 +843,16 @@ class LoftController(context: Context) {
         val blockedIps = previous.filter(YeelightLan::isLanQuarantined)
             .map { it.ip }.toSet()
         val (multicast, directed) = withContext(Dispatchers.IO) {
-            val udp = YeelightLan.discover(app)
-            val targets = DiscoveryTrafficPolicy.directedUdpTargets(
-                previous, udp, blockedIps
+            val discovery = DiscoveryTrafficPolicy.normalSearch(
+                known = previous,
+                quarantinedIps = blockedIps,
+                multicast = { YeelightLan.discover(app) },
+                directed = { targets ->
+                    runCatching { YeelightLan.directedUdpDiscover(app, targets) }
+                        .getOrDefault(emptyList())
+                },
             )
-            val unicast = runCatching {
-                YeelightLan.directedUdpDiscover(app, targets)
-            }.getOrDefault(emptyList())
-            udp to unicast
+            discovery.multicast to discovery.directed
         }
         directedUdpDiagnostics = ""
         lastMulticastIps = multicast.map { it.ip }.toSet()
