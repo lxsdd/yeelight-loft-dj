@@ -1,6 +1,9 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import org.json.JSONArray
 import org.json.JSONObject
@@ -52,6 +55,8 @@ object YeelightLan {
         private set
     @Volatile var lastSearchRepliesPerIp: Map<String, Int> = emptyMap()
         private set
+    @Volatile var lastSearchBoundToWifiNetwork: Boolean = false
+        private set
     @Volatile var lastSearchSourceAddress: String = "unbekannt"
         private set
     @Volatile var lastSearchSourceMismatches: Int = 0
@@ -99,6 +104,19 @@ object YeelightLan {
      * Multi-round multicast discovery. Keep listening through quiet periods:
      * previously, a single 400ms timeout prematurely ended every round.
      */
+    private fun wifiNetworkFor(context: Context, sourceIp: String): Network? {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as ConnectivityManager
+        return manager.allNetworks.firstOrNull { network ->
+            val cap = manager.getNetworkCapabilities(network)
+            val link = manager.getLinkProperties(network)
+            cap?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                link?.linkAddresses?.any {
+                    it.address.hostAddress == sourceIp
+                } == true
+        }
+    }
+
     fun discover(context: Context, rounds: Int = 5, listenMs: Long = 1150L): List<YeelightDevice> {
         require(rounds in 1..12 && listenMs in 500L..2000L) {
             "Ungültige Grenzen für die lokale UDP-Diagnose"
@@ -115,11 +133,17 @@ object YeelightLan {
         val receivedByIp = mutableMapOf<String, Int>()
         val source = wifiIpv4Address()
             ?: error("Keine lokale WLAN-IPv4-Adresse erkannt; Multicast nicht auf Mobilfunk umleiten")
+        val wifiNetwork = wifiNetworkFor(context, source)
+        lastSearchBoundToWifiNetwork = false
         try {
             lock.acquire()
             // Bind explicitly to the Wi-Fi IP so Android/VPN routing cannot
             // accidentally send M-SEARCH via a different active interface.
             DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+                // Only this socket is bound to Android's Wi-Fi Network.
+                // Never change the whole process routing or touch mobile data.
+                wifiNetwork?.bindSocket(socket)
+                lastSearchBoundToWifiNetwork = wifiNetwork != null
                 lastSearchSourceAddress = socket.localAddress.hostAddress ?: "unbekannt"
                 socket.soTimeout = 220
                 val packet = DatagramPacket(search, search.size, InetAddress.getByName(HOST), PORT)
@@ -167,7 +191,7 @@ object YeelightLan {
      * unicast search by design: a positive reply is useful evidence, a missing
      * reply is NOT evidence of a fault.
      */
-    fun directedUdpProbe(targets: List<YeelightDevice>): Set<String> {
+    fun directedUdpProbe(context: Context, targets: List<YeelightDevice>): Set<String> {
         val source = wifiIpv4Address() ?: error("Kein WLAN aktiv")
         val allowed = targets.asSequence()
             .filter { isLocalIp(it.ip) }
@@ -175,6 +199,7 @@ object YeelightLan {
             .take(24).toList()
         val answered = mutableSetOf<String>()
         DatagramSocket(InetSocketAddress(InetAddress.getByName(source), 0)).use { socket ->
+            wifiNetworkFor(context, source)?.bindSocket(socket)
             socket.soTimeout = 100
             allowed.forEach { device ->
                 val address = InetAddress.getByName(device.ip)
