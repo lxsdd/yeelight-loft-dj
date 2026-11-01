@@ -18,6 +18,9 @@ data class MusicFrame(
     val beat: Boolean,
     val estimatedBpm: Int?,
     val timeMs: Long,
+    // A measured spectral-band rise, distinct from a detected bass beat.
+    // It is for on-screen diagnostics; it does not produce any lamp command.
+    val accent: MusicAccent? = null,
 ) {
     init { require(bands.size == 6) }
 }
@@ -33,6 +36,7 @@ class MusicAnalyzer(private val sampleRate: Int = 16000, val fftSize: Int = 2048
     }
 
     private val history = ArrayDeque<Long>()
+    private val accents = MusicAccentDetector()
     private var baselineBass = 0.025f
     private var lastBass = 0f
     private var lastBeatAt = Long.MIN_VALUE / 2
@@ -86,7 +90,8 @@ class MusicAnalyzer(private val sampleRate: Int = 16000, val fftSize: Int = 2048
         baselineBass = baselineBass * 0.90f + bass * 0.10f
         lastBass = bass
         lastFrameAt = timeMs
-        return MusicFrame(rms, peak, levels, bass, beat, bpm(), timeMs)
+        val measured = MusicFrame(rms, peak, levels, bass, beat, bpm(), timeMs)
+        return measured.copy(accent = accents.observe(measured))
     }
 
     private fun bpm(): Int? {

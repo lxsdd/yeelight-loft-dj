@@ -15,7 +15,7 @@ object InternalAudioBridge {
 
     private var sink: ((MusicFrame) -> Unit)? = null
     private var ended: (() -> Unit)? = null
-    private var silentFrames = 0
+    private val signalWatch = PlaybackSignalWatch()
 
     fun attach(receiver: (MusicFrame) -> Unit, onEnded: () -> Unit) {
         sink = receiver
@@ -32,20 +32,20 @@ object InternalAudioBridge {
     fun started() {
         running = true
         frame = null
-        silentFrames = 0
+        signalWatch.reset()
         status = "Internes Audio freigegeben · auf abspielende App warten"
     }
 
     fun received(reading: MusicFrame) {
         if (!running) return
         frame = reading
-        if (reading.rms < 0.004f) {
-            silentFrames++
-            if (silentFrames >= 40) status =
-                "Kein erfassbarer Ton: App blockiert Capture, Audio läuft nur am Cast-Empfänger oder Stille"
-        } else {
-            silentFrames = 0
-            status = "Interne Wiedergabe analysiert · Mikrofon nicht verwendet"
+        status = when (signalWatch.observe(reading.rms, reading.timeMs)) {
+            PlaybackSignalState.AUDIBLE ->
+                "Internes Audiosignal erkannt · reines digitales PCM"
+            PlaybackSignalState.QUIET ->
+                "Capture gestartet · auf abspielbare Audioquelle warten"
+            PlaybackSignalState.NO_SIGNAL ->
+                "Kein Audiosignal: Stille, Cast-Empfänger oder Aufnahme durch Quell-App gesperrt"
         }
         sink?.invoke(reading)
     }
@@ -54,7 +54,7 @@ object InternalAudioBridge {
         val active = running
         running = false
         frame = null
-        silentFrames = 0
+        signalWatch.reset()
         status = message
         if (active) ended?.invoke()
     }
