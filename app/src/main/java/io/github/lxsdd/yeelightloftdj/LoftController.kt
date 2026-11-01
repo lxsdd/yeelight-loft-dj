@@ -704,6 +704,9 @@ class LoftController(context: Context) {
                 " · Absender/Location-Abweichungen: " +
                 YeelightLan.lastSearchSourceMismatches
             mergeFound(replies, "12-Runden-Multicast-Gegenprobe")
+            // A UDP-only experiment must not make previously TCP-confirmed
+            // bulbs appear offline in the device list.
+            lastSeenIps = lastSeenIps + lastDirectIps
             searchDiagnostics
         }
 
