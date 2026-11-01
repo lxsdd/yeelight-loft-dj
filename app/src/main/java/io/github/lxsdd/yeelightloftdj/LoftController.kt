@@ -1047,6 +1047,13 @@ class LoftController(context: Context) {
     fun selectedCount() = selected().size
     fun previewCount(choice: String): Int = chooseDevices(choice).size
 
+    fun previewScannerEligibleCount(choice: String): Int {
+        val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        return chooseDevices(choice).distinctBy { it.ip }.count {
+            it.ip !in pending && KnightRiderPlan.scannerCompatible(it)
+        }
+    }
+
 
     /**
      * Stop every tracked lamp, then restore the previously captured static state.
