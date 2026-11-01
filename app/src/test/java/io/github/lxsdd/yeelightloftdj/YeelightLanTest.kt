@@ -3,6 +3,9 @@ package io.github.lxsdd.yeelightloftdj
 import org.junit.Assert.*
 import org.junit.Test
 import org.json.JSONObject
+import java.net.ServerSocket
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 class YeelightLanTest {
     private val response = """
@@ -144,6 +147,126 @@ class YeelightLanTest {
         assertFalse(YeelightLan.matchesReplyId(notification, 42))
         assertFalse(YeelightLan.matchesReplyId(staleReply, 42))
         assertTrue(YeelightLan.matchesReplyId(expectedReply, 42))
+    }
+
+    @Test fun directTcpProbeUsesOneSocketAndHonorsUnsolicitedProps() {
+        ServerSocket(0).use { server ->
+            val accepted = AtomicInteger(0)
+            val worker = thread {
+                server.accept().use { socket ->
+                    accepted.incrementAndGet()
+                    val request = JSONObject(socket.getInputStream().bufferedReader().readLine())
+                    val id = request.getInt("id")
+                    socket.getOutputStream().write((
+                        "{\"method\":\"props\",\"params\":{\"power\":\"on\"}}\\r\\n" +
+                        "{\"id\":$id,\"result\":[\"on\",\"Couchtisch\"]}\\r\\n"
+                    ).toByteArray())
+                    socket.getOutputStream().flush()
+                }
+            }
+            try {
+                val gate = DeviceCommandGate({ 10_000L }, maxCommandsPerMinute = 4)
+                val found = YeelightLan.probeEndpoint("127.0.0.1", server.localPort, gate)
+                assertNotNull(found)
+                assertEquals("Couchtisch", found!!.lanName)
+                assertEquals(1, accepted.get())
+                assertEquals(1, gate.consumed("127.0.0.1"))
+            } finally {
+                worker.join(2000)
+                assertFalse(worker.isAlive)
+            }
+        }
+    }
+
+    @Test fun directTcpProbeDoesNotRetryAClosedOrAmbiguousSocket() {
+        ServerSocket(0).use { server ->
+            val accepted = AtomicInteger(0)
+            val worker = thread {
+                server.accept().use { socket ->
+                    accepted.incrementAndGet()
+                    socket.getInputStream().bufferedReader().readLine()
+                    // The lamp could have handled the request but lost its ACK.
+                    // No second socket or automatic retry is permitted.
+                }
+            }
+            try {
+                val gate = DeviceCommandGate({ 20_000L }, maxCommandsPerMinute = 4)
+                assertNull(YeelightLan.probeEndpoint("127.0.0.1", server.localPort, gate))
+                assertEquals(1, accepted.get())
+                assertEquals(1, gate.consumed("127.0.0.1"))
+            } finally {
+                worker.join(2000)
+                assertFalse(worker.isAlive)
+            }
+        }
+    }
+
+    @Test fun directTcpProbeRetriesOnlyAnExplicitNonQuotaFirmwareRejection() {
+        ServerSocket(0).use { server ->
+            val accepted = AtomicInteger(0)
+            val worker = thread {
+                repeat(2) { attempt ->
+                    server.accept().use { socket ->
+                        accepted.incrementAndGet()
+                        val request = JSONObject(socket.getInputStream().bufferedReader().readLine())
+                        val id = request.getInt("id")
+                        val params = request.getJSONArray("params")
+                        if (attempt == 0) {
+                            assertEquals(2, params.length())
+                            socket.getOutputStream().write(
+                                "{\"id\":$id,\"error\":{\"message\":\"unsupported name property\"}}\\r\\n"
+                                    .toByteArray()
+                            )
+                        } else {
+                            assertEquals(1, params.length())
+                            socket.getOutputStream().write(
+                                "{\"id\":$id,\"result\":[\"off\"]}\\r\\n".toByteArray()
+                            )
+                        }
+                        socket.getOutputStream().flush()
+                    }
+                }
+            }
+            try {
+                val gate = DeviceCommandGate({ 30_000L }, maxCommandsPerMinute = 4)
+                assertNotNull(YeelightLan.probeEndpoint("127.0.0.1", server.localPort, gate))
+                assertEquals(2, accepted.get())
+                assertEquals(2, gate.consumed("127.0.0.1"))
+            } finally {
+                worker.join(2000)
+                assertFalse(worker.isAlive)
+            }
+        }
+    }
+
+    @Test fun quotaRejectedProbeNeverRetriesAndBlocksFurtherProbeCommands() {
+        ServerSocket(0).use { server ->
+            val accepted = AtomicInteger(0)
+            val worker = thread {
+                server.accept().use { socket ->
+                    accepted.incrementAndGet()
+                    val request = JSONObject(socket.getInputStream().bufferedReader().readLine())
+                    val id = request.getInt("id")
+                    socket.getOutputStream().write(
+                        "{\"id\":$id,\"error\":{\"message\":\"client quota exceeded\"}}\\r\\n"
+                            .toByteArray()
+                    )
+                    socket.getOutputStream().flush()
+                }
+            }
+            try {
+                val gate = DeviceCommandGate({ 40_000L }, maxCommandsPerMinute = 4)
+                assertNull(YeelightLan.probeEndpoint("127.0.0.1", server.localPort, gate))
+                assertNull(YeelightLan.probeEndpoint("127.0.0.1", server.localPort, gate))
+                assertEquals(1, accepted.get())
+                assertEquals(1, gate.consumed("127.0.0.1"))
+                assertTrue(runCatching { gate.run("127.0.0.1") {} }.exceptionOrNull()
+                    is DeviceCommandGate.Deferred)
+            } finally {
+                worker.join(2000)
+                assertFalse(worker.isAlive)
+            }
+        }
     }
 
 }
