@@ -72,10 +72,9 @@ class YeelightTcpSessionsTest {
             val closed = java.util.concurrent.atomic.AtomicBoolean(false)
             val worker = thread {
                 server.accept().use { socket ->
-                    val line = socket.getInputStream().bufferedReader().readLine()
-                    val id = Regex("\\\"id\\\":(\\\\d+)").find(line)!!.groupValues[1]
+                    socket.getInputStream().bufferedReader().readLine()
                     socket.getOutputStream().write(
-                        "{\\\"id\\\":$id,\\\"result\\\":[\\\"ok\\\"]}\\r\\n".toByteArray())
+                        "{\"id\":21,\"result\":[\"ok\"]}\r\n".toByteArray())
                     socket.getOutputStream().flush()
                     socket.soTimeout = 2500
                     closed.set(socket.getInputStream().read() == -1)
@@ -87,7 +86,6 @@ class YeelightTcpSessionsTest {
             try {
                 tcp.request("127.0.0.1",server.localPort,21,"set_rgb",listOf(0xFF0000))
                 assertEquals(1,tcp.openCount())
-                // Simulate idle/foreground switch; no second command required.
                 tcp.closeIdle(0)
                 assertEquals(0,tcp.openCount())
                 worker.join(2700)
