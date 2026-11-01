@@ -1175,7 +1175,11 @@ class LoftController(context: Context) {
                                 PowerOutcome.VERIFIED) {
                                 "Scanner-Lampe konnte nicht sicher ausgeschaltet werden"
                             }
-                        } else if (!musicDeviceSession) {
+                        } else if (musicDeviceSession) {
+                            // Close the firmware's reverse music TCP stream
+                            // BEFORE normal LAN commands and status restoration.
+                            YeelightLan.stopMusicMode(device)
+                        } else {
                             YeelightLan.stop(device)
                         }
                         recoveryJournal[device.ip]?.let { snapshot ->
@@ -1624,22 +1628,45 @@ class LoftController(context: Context) {
                         .exceptionOrNull()?.let { device.ip }
                 } }.awaitAll().filterNotNull()
             }
-            musicLightStatus = chosen.size.toString() +
-                " Lampen gewählt · max. 1 Farbwechsel je 1,5 s / Lampe"
+            if (failed.isNotEmpty()) {
+                musicLightArmed = false
+                val restored = haltRunning(false)
+                return@task "Musiklicht abgebrochen: " + failed.size +
+                    " Lampen nicht einschaltbar · " + restored
+            }
+            // Only lamps whose SSDP SUPPORT list explicitly confirms
+            // set_music use the reverse connection; other models retain the
+            // deliberately quota-limited normal LAN path.
+            val streamFailures = withContext(Dispatchers.IO) {
+                chosen.filter(YeelightLan::supportsMusicMode).map { device -> async {
+                    runCatching { YeelightLan.startMusicMode(device) }
+                        .exceptionOrNull()?.let { device.ip to (it.message ?: "Music-Mode-Fehler") }
+                } }.awaitAll().filterNotNull()
+            }
+            if (streamFailures.isNotEmpty()) {
+                musicLightArmed = false
+                val restored = haltRunning(false)
+                return@task "Music-Mode-Rückkanal konnte nicht aufgebaut werden · " +
+                    "keine Farbimpulse gesendet · " + restored
+            }
+            val streamingCount = chosen.count(YeelightLan::musicModeActive)
+            musicLightStatus = "$streamingCount Musik-Rückkanäle · " +
+                (chosen.size - streamingCount) + " reguläre LAN-Lampen"
             if (!microphoneRunning && !InternalAudioBridge.running) {
                 val stopResult = haltRunning(false)
                 "Audioanalyse beendet; Beleuchtung wiederhergestellt · " + stopResult
-            } else if (failed.isEmpty()) "Musiklicht aktiviert · vorheriger Zustand gesichert"
-            else "Musiklicht aktiviert · " + failed.size + " Lampen nicht einschaltbar; Stoppen zum Zurücksetzen"
+            } else "Musiklicht aktiviert · vorheriger Zustand gesichert"
         }
     }
 
     private fun onMusicBeat(frame: MusicFrame) {
         if (!musicLightArmed || busy || musicSending || runningDeviceIps.isEmpty()) return
         val now = android.os.SystemClock.elapsedRealtime()
-        if (!MusicLightPolicy.maySend(frame, lastMusicCommandAt, now)) return
         val chosen = orderedDevices().filter { it.ip in runningDeviceIps }
         if (chosen.isEmpty()) return
+        val allStreaming = chosen.all(YeelightLan::musicModeActive)
+        val interval = if (allStreaming) 350L else MusicLightPolicy.minCommandIntervalMs
+        if (!MusicLightPolicy.maySend(frame, lastMusicCommandAt, now, interval)) return
         musicSending = true
         lastMusicCommandAt = now
         musicColorBeat++
@@ -1651,28 +1678,36 @@ class LoftController(context: Context) {
                     // others of their own safe beat budget. Preserve the
                     // ORIGINAL spatial index when skipping a quota-low lamp.
                     val permitted = chosen.withIndex().filter {
-                        YeelightLan.canSendMusicBeat(it.value)
+                        if (YeelightLan.supportsMusicMode(it.value)) {
+                            YeelightLan.musicModeActive(it.value)
+                        } else {
+                            YeelightLan.canSendMusicBeat(it.value)
+                        }
                     }
                     val failures = permitted.map { (index, device) -> async {
                         runCatching {
-                            YeelightLan.manualControl(
-                                device,
-                                LampCommand("set_rgb", listOf(
-                                    MusicLightPolicy.color(frame, index, number), "smooth", 350
-                                ))
-                            )
+                            val color = MusicLightPolicy.color(frame, index, number)
+                            if (YeelightLan.supportsMusicMode(device)) {
+                                // Music mode has no ACK and no property push.
+                                // Never misreport a write as verified light output.
+                                check(YeelightLan.sendMusicRgb(device, color))
+                            } else {
+                                YeelightLan.manualControl(
+                                    device, LampCommand("set_rgb", listOf(color, "smooth", 350))
+                                )
+                            }
                         }.exceptionOrNull()?.let { device.ip }
                     } }.awaitAll().filterNotNull()
                     Triple(permitted.size, chosen.size - permitted.size, failures)
                 }
                 musicLightStatus = when {
                     attempted == 0 ->
-                        "Musikimpulse pausiert · Befehlsreserve für Stopp/Wiederherstellung geschützt"
+                        "Musikimpulse pausiert · fehlender Rückkanal oder LAN-Stoppreserve"
                     problems.isEmpty() && paused == 0 ->
-                        "$attempted Lampen · echter Bassimpuls · regulärer LAN-Modus"
+                        "$attempted Lampen · Musik-Farbbefehle gesendet (nicht optisch bestätigt)"
                     else ->
-                        "${attempted - problems.size}/${chosen.size} Lampen reagierten · " +
-                            "$paused pausiert (Stoppreserve) · ${problems.size} Fehler"
+                        "${attempted - problems.size}/${chosen.size} Lampen: Befehl gesendet · " +
+                            "$paused pausiert · ${problems.size} Übertragungsfehler"
                 }
             } finally {
                 musicSending = false
