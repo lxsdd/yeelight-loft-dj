@@ -178,6 +178,38 @@ class YeelightMusicChannelTest {
         assertEquals("exactly one deliberate set_music(0)", 1, disabled.get())
     }
 
+    @Test fun explicitFirmwareRejectionNeverSendsSpeculativeStop() {
+        val disables = AtomicInteger()
+        val channel = YeelightMusicChannel(
+            "127.0.0.1",
+            enableOnDevice = { _, _ ->
+                throw YeelightLan.RejectedCommand(
+                    "set_music(1) abgelehnt (Fehlercode -5001): invalid params")
+            },
+            disableOnDevice = { disables.incrementAndGet() },
+        )
+        val result = runCatching { channel.start("127.0.0.1") }
+        assertTrue(result.isFailure)
+        assertTrue(channel.enableDefinitelyNotAccepted)
+        assertFalse(channel.alreadyDisabledSuccessfully)
+        assertEquals(0, disables.get())
+        channel.close()
+        assertEquals("Rejected start must never issue set_music(0)", 0, disables.get())
+    }
+
+    @Test fun localQuotaDeferralNeverSendsSpeculativeStop() {
+        val disables = AtomicInteger()
+        val channel = YeelightMusicChannel(
+            "127.0.0.1",
+            enableOnDevice = { _, _ -> throw DeviceCommandGate.Deferred("budget") },
+            disableOnDevice = { disables.incrementAndGet() },
+        )
+        assertTrue(runCatching { channel.start("127.0.0.1") }.isFailure)
+        assertTrue(channel.enableDefinitelyNotAccepted)
+        channel.close()
+        assertEquals(0, disables.get())
+    }
+
     @Test fun failedEnableReleasesListenerAndAttemptsOneDisableOnly() {
         val disableCalls = AtomicInteger()
         val channel = YeelightMusicChannel(
