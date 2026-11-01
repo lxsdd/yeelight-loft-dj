@@ -43,6 +43,7 @@ private val bandLabels = listOf("Bass", "Kick", "Tiefmitte", "Mitten", "Präsenz
 fun MusicScreen(controller: LoftController) {
     val context = LocalContext.current
     var showColor4AcceptanceConfirm by remember { mutableStateOf(false) }
+    var dualDialogSelectionKey by remember { mutableStateOf<String?>(null) }
     val permission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -288,9 +289,10 @@ fun MusicScreen(controller: LoftController) {
                             unboundedRefusal == null,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Licht auf ${controller.selectedCount()} Lampen aktivieren") }
-                    if (unboundedRefusal != null) {
+                    if (unboundedRefusal != null &&
+                        controller.color4DualAcceptanceRefusal() != null) {
                         Text(unboundedRefusal,
-                            color = Color(0xFFFFD38A), fontSize = 11.sp)
+                            color = Color(0xFF98A6C0), fontSize = 11.sp)
                     }
                 } else {
                     OutlinedButton(
@@ -344,11 +346,15 @@ fun MusicScreen(controller: LoftController) {
                     }
                 }
                 val dualReadiness = controller.color4DualAcceptanceRefusal()
-                Text(
-                    dualReadiness ?: "Gemeinsamer Music-Mode nur nach separater Hardwarefreigabe.",
-                    color = Color(0xFFFFD38A), fontSize = 11.sp
-                )
-                // No dual-start action is exposed in this review-only build.
+                OutlinedButton(
+                    onClick = { dualDialogSelectionKey = controller.color4PairSelectionKey() },
+                    enabled = audioRunning && !controller.busy &&
+                        !controller.musicLightArmed &&
+                        controller.runningDeviceIps.isEmpty() && dualReadiness == null,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Couchtisch + Flur · 10 Sekunden testen") }
+                if (dualReadiness != null)
+                    Text(dualReadiness, color = Color(0xFF98A6C0), fontSize = 11.sp)
                 if (controller.lastColor4TestReport.isNotBlank()) {
                     HorizontalDivider(color = Color(0xFF323A50))
                     Text(
@@ -362,10 +368,38 @@ fun MusicScreen(controller: LoftController) {
                         color = Color(0xFF67E1C8), fontSize = 12.sp
                     )
                 }
-                Text("Vor Aktivierung werden alle ursprünglichen Lampenzustände lokal gesichert. " +
-                    "Wenn diese nicht lesbar sind, wird kein Licht verändert.",
+                Text("Zustand sichern · automatisch stoppen · vorheriges Licht wiederherstellen.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
             }
+        }
+
+        if (dualDialogSelectionKey != null) {
+            AlertDialog(
+                onDismissRequest = { dualDialogSelectionKey = null },
+                title = { Text("Zwei-Lampen-Lichttest") },
+                text = { Text(
+                    "Couchtisch + Flur · 10 Sekunden · maximal 40 Farbtelegramme " +
+                        "zusammen. Automatischer Stopp und Wiederherstellung."
+                ) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val approvedKey = dualDialogSelectionKey
+                        dualDialogSelectionKey = null
+                        // Never execute a different target than the pair
+                        // explicitly shown in the user's confirmation.
+                        if (approvedKey != null &&
+                            approvedKey == controller.color4PairSelectionKey() &&
+                            controller.color4DualAcceptanceRefusal() == null)
+                            controller.armColor4DualAcceptance()
+                        else controller.report("Auswahl geändert: bitte erneut bestätigen.")
+                    }) { Text("10-Sekunden-Test starten") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { dualDialogSelectionKey = null }) {
+                        Text("Abbrechen")
+                    }
+                }
+            )
         }
 
         if (showColor4AcceptanceConfirm) {
