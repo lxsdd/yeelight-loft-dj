@@ -856,17 +856,17 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController) 
 
 @Composable
 private fun ChasePanel(controller: LoftController) {
-    var style by remember { mutableStateOf(ChaseStyle.RAINBOW_TAIL) }
+    var style by rememberSaveable { mutableStateOf(ChaseStyle.RAINBOW_TAIL) }
     // The top-level target selector controls ALL scene types, including chases.
     val choice = controller.target
-    var direction by remember { mutableStateOf(ChaseDirection.FORWARD) }
-    var bounce by remember { mutableStateOf(false) }
-    var palette by remember { mutableStateOf("#FF3ABF, #FFB12C, #5A4BFF, #25D9E6, #FFE474") }
-    var ms by remember { mutableFloatStateOf(450f) }
-    var tail by remember { mutableFloatStateOf(4f) }
-    var intensity by remember { mutableFloatStateOf(75f) }
-    var name by remember { mutableStateOf("Meine Sternschnuppe") }
-    var previewStep by remember { mutableFloatStateOf(0f) }
+    var direction by rememberSaveable { mutableStateOf(ChaseDirection.FORWARD) }
+    var bounce by rememberSaveable { mutableStateOf(false) }
+    var palette by rememberSaveable { mutableStateOf("#FF3ABF, #FFB12C, #5A4BFF, #25D9E6, #FFE474") }
+    var ms by rememberSaveable { mutableFloatStateOf(450f) }
+    var tail by rememberSaveable { mutableFloatStateOf(4f) }
+    var intensity by rememberSaveable { mutableFloatStateOf(75f) }
+    var name by rememberSaveable { mutableStateOf("Meine Sternschnuppe") }
+    var previewStep by rememberSaveable { mutableFloatStateOf(0f) }
     val parsedPalette = remember(palette) { runCatching { ChaseCompiler.decodePalette(palette) } }
     val config = parsedPalette.getOrNull()?.let { colors ->
         ChaseConfig(style, colors, ms.roundToInt(), tail.roundToInt(),
@@ -874,7 +874,36 @@ private fun ChasePanel(controller: LoftController) {
     }
     Surface(color = panel, shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Effekt", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text("LIVE-STEUERUNG", color = lavender, fontWeight = FontWeight.Bold,
+                fontSize = 12.sp)
+            Text("Lichtweg: " + controller.targetLabel(choice) + " · " +
+                controller.previewCount(choice) + " Lampen",
+                color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { if (config != null) controller.playChase(config, choice) },
+                    enabled = !controller.busy && config != null &&
+                        controller.previewCount(choice) in 1..24,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("Starten")
+                }
+                OutlinedButton(
+                    onClick = controller::stop,
+                    enabled = controller.canRetryRecovery &&
+                        (controller.recoveryPending || controller.selectedCount() > 0),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Rounded.Stop, contentDescription = null)
+                    Spacer(Modifier.width(5.dp))
+                    Text("Stoppen")
+                }
+            }
+            Text(controller.status, color = muted, fontSize = 12.sp)
+            HorizontalDivider(color = Color(0xFF49475F))
+            Text("Effekt einstellen", color = Color.White, fontWeight = FontWeight.SemiBold)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 listOf(ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
                     ChaseStyle.METEOR to "Sternschnuppe", ChaseStyle.COLOR_WAVE to "Farbwelle")
@@ -888,13 +917,6 @@ private fun ChasePanel(controller: LoftController) {
             Text("Ziel und Gruppen im Auswahlbereich oben ändern. " +
                 "Die Laufrichtung folgt der Sortierung unter Geräte.",
                 color = muted, fontSize = 11.sp)
-            if (controller.recoveryPending) {
-                OutlinedButton(
-                    onClick = controller::stop,
-                    enabled = controller.canRetryRecovery,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Lichtlauf stoppen & Lampen wiederherstellen") }
-            }
             Text("Farbpalette · RGB-Hex, durch Komma getrennt", color = Color.White, fontSize = 12.sp)
             OutlinedTextField(
                 value = palette,
@@ -956,11 +978,6 @@ private fun ChasePanel(controller: LoftController) {
                 Checkbox(checked = bounce, onCheckedChange = { bounce = it })
                 Text("Pingpong · an den Enden umkehren", color = Color.White, fontSize = 12.sp)
             }
-            Button(
-                onClick = { if (config != null) controller.playChase(config, choice) },
-                enabled = !controller.busy && config != null && controller.previewCount(choice) > 0,
-                modifier = Modifier.fillMaxWidth()
-            ) { Icon(Icons.Rounded.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Lichtlauf starten") }
             Text("Beim Start siehst du die Ergebnisse für jede Lampe im Lampenbericht. " +
                 "Ungeeignete oder offline befindliche Lampen verhindern nicht mehr den Start anderer Lampen.",
                 color = muted, fontSize = 11.sp)
