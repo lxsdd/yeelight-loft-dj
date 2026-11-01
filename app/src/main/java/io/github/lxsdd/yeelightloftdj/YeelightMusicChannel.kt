@@ -72,6 +72,17 @@ class YeelightMusicChannel(
         }
     }
 
+    /**
+     * Close ONLY the reverse data socket to interrupt a blocked writer.
+     * Retain enabledAttempted so a subsequent close() performs precisely
+     * one quota-accounted set_music(0); no command is sent here.
+     */
+    fun interruptBlockedOutput() {
+        synchronized(lock) {
+            runCatching { socket?.close() }
+        }
+    }
+
     val isActive: Boolean
         get() = synchronized(lock) {
             !closed && socket?.isConnected == true && socket?.isClosed == false
