@@ -1077,15 +1077,21 @@ private fun DeviceCard(device: YeelightDevice, controller: LoftController,
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Namen speichern") }
                 Text("Raumzuordnung", color = Color.White, fontWeight = FontWeight.Medium)
-                Row(Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    controller.roomNames.forEach { room ->
-                        FilterChip(
-                            selected = controller.roomFor(device) == room,
-                            onClick = { controller.assign(device, room) },
-                            label = { Text(room) },
-                            enabled = controller.canOrganizeLamps
-                        )
+                var roomMenu by remember(device.id) { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { roomMenu = true },
+                        enabled = controller.canOrganizeLamps,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(controller.roomFor(device), modifier = Modifier.weight(1f))
+                        Text("⌄")
+                    }
+                    DropdownMenu(expanded = roomMenu, onDismissRequest = { roomMenu = false }) {
+                        controller.roomNames.forEach { room ->
+                            DropdownMenuItem(text = { Text(room) }, onClick = {
+                                controller.assign(device, room)
+                                roomMenu = false
+                            })
+                        }
                     }
                 }
                 DeviceCapabilityPanel(device)
