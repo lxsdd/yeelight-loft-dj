@@ -33,3 +33,25 @@ Die öffentlich gepinnte Hersteller-Referenz bleibt [Yeelight Chroma Connector C
 - Kein neuer Code darf reale UDP-/TCP-Pakete erzeugen. Kein automatischer Wechsel zu `set_music` oder klassischem TCP. Keine Hardware- oder Routeraktion.
 - 100 ms, 250 ms, 15 s und 45 Versuche sind **synthetische** Schutzgrenzen, keine gemessene Color4-Hardwareleistung.
 - Ein öffentlicher grüner CI-Lauf bestätigt nur die statische und synthetische Software-Qualifikation. Echte Chroma-v1/v2-Kompatibilität der vorhandenen Color4-Lampen ist nicht nachgewiesen.
+
+## Neue, private Original-Firmware-Beobachtung: v2-Marker tatsächlich kompiliert
+
+Die lokale, **exakt SHA-256-geprüfte** Color4-Originaldatei `2.1.7_0039` (1.502.532 Bytes; SHA-256 `67f075ca909ae9f5c08ff580a4847683d1899e8ba251a7cd75d275b9848f22aa`) wurde **ohne** Netzwerk-/Gerätezugriff rein lesend nach allowlist-beschränkten Chroma-Methodenmarkern durchsucht. Das neue Tool `tools/color4_chroma_stock_markers.py` verlangt zusätzlich den bereits qualifizierten sieben-Segment-/LAN-Fehlertabellennachweis. Das echte Image bleibt privat; CI verwendet ausschließlich synthetische Fixtures.
+
+| Marker im Originalimage | Rohtexttreffer | eigenständiger NUL-String | Suffix eines NUL-Strings | eingebettet / nicht eigenständig |
+|---|---:|---:|---:|---:|
+| `udp_sess_new` | 2 | 1 | 0 | 1 |
+| `udp_chroma_sess_new` | 1 | 1 | 0 | 0 |
+| `udp_sess_token` | 1 | 0 | 0 | 1 |
+| `udp_sess_keep_alive` | 1 | 0 | 1 | 0 |
+| `set_scene` | 1 | 0 | 1 | 0 |
+| `chroma` | 1 | 0 | 0 | 1 |
+| `udp_new`, `udp_token`, `udp_keep_alive` | jeweils 0 | 0 | 0 | 0 |
+| `set_music` | 3 | 0 | 2 | 1 |
+| `client quota exceeded` | 1 | 1 | 0 | 0 |
+
+**Einordnung:** Das ist neue, bytegenaue Evidenz, dass die Stockfirmware **v2-Chroma-/UDP-Sitzungsbegriffe und Token-Antwort-Text** enthält. Die Wörter `chroma` und `udp_sess_token` sind dabei **keine** eigenständigen NUL-Strings, sondern Teil längerer, kompilierten Texte; die Abgrenzung verhindert falsche Trefferinterpretation. Die v1-Methodenstrings wurden im Image nicht gefunden. Aus statischen Zeichenfolgen lässt sich weder der tatsächlich ausführbare Handler, die aktuelle SSDP-`SUPPORT`-Antwort, eine erfolgreiche UDP-Sitzung noch eine zulässige Framerate ableiten. **Kein automatisches Capability-Gate wird dadurch geöffnet.** Ein OEM-v2-Codepfad könnte modell-/feature-/zustandsabhängig deaktiviert sein.
+
+Die öffentliche Auswertung enthält ausschließlich vorab festgelegte Markernamen und Trefferzahlen. Keine Originalbytes, dynamischen Tokenwerte, JSON-Tokenformatvorlagen, echten Lampenadressen oder privaten Dumps werden veröffentlicht. Neun zusätzliche synthetische Python-Regressionsfälle sichern Exact-/Suffix-/Embedded-Klassifizierung, falsche Hashes, Größenbegrenzung und redigierte Ausgabe ab.
+
+**Offene Kernfrage:** Die vorhandene Firmware enthält ebenfalls den bestätigten LAN-Fehler `client quota exceeded`, aber weiterhin keinen verifizierten Quota-Refill-Kontrollfluss. Das Vorhandensein von v2-Chroma-Markern ist keine Quota-Umgehung und ersetzt nicht die separate Xtensa-Forschung in PR #48.

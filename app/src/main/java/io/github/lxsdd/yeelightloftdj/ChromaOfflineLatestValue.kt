@@ -77,7 +77,11 @@ class ChromaOfflineLatestValue(
      * This is an in-memory state check, not an actual network reservation.
      */
     fun preflight(key: String, nowMs: Long): ChromaOfflinePollReadiness {
-        val lane = lanes[key] ?: return ChromaOfflinePollReadiness.TERMINAL
+        val lane = lanes[key] ?: return if (fleet.canStageColor(key, nowMs)) {
+            ChromaOfflinePollReadiness.NO_CHANGE
+        } else {
+            ChromaOfflinePollReadiness.TERMINAL
+        }
         if (!advance(key, lane, nowMs) || !fleet.canStageColor(key, nowMs)) {
             lane.pending = null
             return ChromaOfflinePollReadiness.TERMINAL
