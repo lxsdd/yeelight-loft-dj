@@ -10,9 +10,14 @@ class DeviceCommandGateTest {
         val waits = mutableListOf<Long>()
         val gate = DeviceCommandGate(nowMs = { now }, maxCommandsPerMinute = 3,
             sleepMs = { duration -> waits.add(duration); now += duration })
-        gate.run("Wellness", 2) { }
-        gate.run("Wellness") { }
-        assertEquals(listOf(1_500L), waits)
+        val actualSendTimes = mutableListOf<Long>()
+        // Two physical packets (set_power and get_prop) require distinct
+        // paced admissions; one batched reservation cannot enforce this.
+        gate.run("Wellness") { actualSendTimes.add(now) }
+        gate.run("Wellness") { actualSendTimes.add(now) }
+        gate.run("Wellness") { actualSendTimes.add(now) }
+        assertEquals(listOf(1_500L, 1_500L), waits)
+        assertEquals(listOf(10_000L, 11_500L, 13_000L), actualSendTimes)
         assertEquals(3, gate.consumed("Wellness"))
         assertTrue(runCatching { gate.run("Wellness") { } }.exceptionOrNull()
             is DeviceCommandGate.Deferred)
