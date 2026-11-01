@@ -86,3 +86,48 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: error
+
+  # A signed Actions artifact expires after 14 days and the ChatGPT Library
+  # link is not a reliable APK distribution channel. Publish a durable,
+  # versioned asset only from a green, trusted main-branch build.
+  publish-signed-github-release:
+    needs: verify-and-build
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: yeelight-loft-dj-stable-signed
+          path: signed-apk
+      - name: Publish immutable version-tagged APK asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)"[[:space:]]*$/\1/p' app/build.gradle.kts)"
+          build_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+)[[:space:]]*$/\1/p' app/build.gradle.kts)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Unexpected versionName"; exit 1; }
+          [[ "$build_code" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Unexpected versionCode"; exit 1; }
+          shopt -s nullglob
+          apks=(signed-apk/*.apk)
+          [[ ${#apks[@]} -eq 1 ]] || { echo "::error::Expected exactly one signed APK"; exit 1; }
+          asset="Yeelight-Loft-DJ-v${version}-build${build_code}-signed.apk"
+          cp "${apks[0]}" "$asset"
+          test -s "$asset"
+          sha256sum "$asset"
+          tag="v${version}"
+          # Never silently replace a public binary or move a published tag.
+          if gh release view "$tag" --json tagName >/dev/null 2>&1; then
+            echo "GitHub Release $tag already exists: immutable asset retained."
+            exit 0
+          fi
+          gh release create "$tag" "$asset" \
+            --target "$GITHUB_SHA" \
+            --title "Yeelight Loft DJ ${version} (Build ${build_code})" \
+            --notes "Regulär signierte Android-APK aus dem erfolgreich getesteten und per Zertifikat verifizierten main-Build. APK-Name: ${asset}. Installierbares In-Place-Update bei übereinstimmender Signatur. Hardwaretest der Lampen bleibt gesondert erforderlich."
+          echo "Dauerhafter Download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${asset}"
