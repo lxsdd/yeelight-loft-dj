@@ -50,7 +50,7 @@ Keine geplante Funktion ist allein wegen dieses Dokuments implementiert.
 | CORE-02 | Alias, Räume, frei benannte Gruppen, Favoriten/Mehrfachauswahl und Sortierung per Drag & Drop | Teilweise | End-to-End für alle Lampen; Raumgraph/Favoriten noch offen |
 | CORE-03 | Einzel- und Gruppen Ein/Aus, Brightness, RGB, HSV, Weißtemperatur, Status-Readback | Vorhanden | echte Color4-Fähigkeiten, Fehler- und Timing-Messung |
 | CORE-04 | Protokollaudit aller `support`-Methoden einschließlich `bg_*`, Cron, Relative, Segment, `set_music` | Katalog PR #24 | gerätespezifische Befehle und UI weiter implementieren |
-| SAFE-01 | Quota- und Recovery-Fehler lokal begrenzen | Teilweise v0.2.3, PR #23/#24 | Dauerhafte Ursache `client quota exceeded` inkl. Messwerte untersuchen |
+| SAFE-01 | Quota- und Recovery-Fehler lokal begrenzen | Teilweise v0.2.3, PR #23–#25; zentraler per-Lampe-Befehlskoordinator mit max. 110 Befehlen/Minute und 60-s-Firmware-Cooldown in PR #25 | Externe Clients/Yeelight-Firmware können weiterhin `client quota exceeded` verursachen; reale Messwerte und Langzeittest nötig |
 | SAFE-02 | Nichtschaltende Lampen `flowing` + Power + Zustand lesend prüfen, bestätigte Fälle ohne Nutzer-Neustart freigeben | PR #25 in Entwicklung | Firmware ohne `flowing` darf nicht falsch freigegeben werden |
 | SAFE-03 | Persistente Wiederherstellung, pro Lampe statt globaler Sperre, optional bewusstes Verwerfen | PR #23/#24 | Force-stop/Crash/Offline/Quota-Abnahme |
 | FX-01 | Native Farbflows mit Schweif, Phasen, Geschwindigkeit, Richtung | Vorhanden | 1-%-Nachleuchten bleibt; niemals echtes AUS behaupten |
@@ -115,3 +115,30 @@ Keine geplante Funktion ist allein wegen dieses Dokuments implementiert.
 - PR #25: diese gesicherte Roadmap, Zustand prüfen und vereinfachte
   Benutzerführung (baut auf #24). **Nicht** ohne freigegebene
   Reihenfolge auf main mergen.
+
+
+## Ergänzender Stabilitätsblock (PR #25, v0.2.6)
+
+- **Befehlskoordinator:** Alle aktiven Lampen-TCP-Operationen aus
+  `send`, `setPowerVerified`, `readFlowing`, `readStatus` und
+  `readRecoveryObservation` laufen über je eine serielle
+  gerätegebundene Queue und ein konservatives 60-Sekunden-Budget
+  (110 gezählte Kommandos pro Lampe). Unbestätigte Schreibbefehle
+  werden nicht blind wiederholt. Explizite Firmware-Rejektion
+  `client quota exceeded` sperrt diese Lampe 60 Sekunden;
+  andere Lampen laufen unabhängig weiter. Damit lässt sich das Limit
+  durch **unsere eigenen gleichzeitigen Befehle** deutlich besser
+  vermeiden; fremde Apps/Clients und Firmwarelimits bleiben außerhalb
+  unserer Kontrolle.
+- **AUS-Bestätigung:** Die Leseprüfung trennt den echten Wert
+  `power=off` von ungültigen Farb-/Helligkeitsregistern.
+  Die Firmware kann bei AUS `bright=0` liefern, wodurch bisher
+  der komplette Snapshot als unbekannt galt. Scanner-Markierung
+  und ursprünglich ausgeschaltete Lampe dürfen nach bestätigtem
+  AUS freigegeben werden; für vorher eingeschaltete Lampen bleibt
+  die volle Farb- und Helligkeitsprüfung zwingend.
+- **Status/UX:** Geräte-Raumwahl ebenfalls vertikal; Szenen-Info
+  nennt klar, dass nativer 1%-Helligkeits-Farbfluss sichtbar bleibt.
+- **Regression:** Mehrthread-Quota-/Budgettest, 60-Sekunden-Reset,
+  genau eine Lampe gesperrt, power=off + bright=0 und unbekannter
+  Lampenzustand. CI-only belegt keine reale Hardware-Reaktion.
