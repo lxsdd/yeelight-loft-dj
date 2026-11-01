@@ -1429,6 +1429,7 @@ private fun ChasePanel(controller: LoftController,
     initialStyle: ChaseStyle = ChaseStyle.RAINBOW_TAIL
 ) {
     var style by rememberSaveable { mutableStateOf(initialStyle) }
+    var styleMenu by remember { mutableStateOf(false) }
     // The top-level target selector controls ALL scene types, including chases.
     val choice = controller.target
     val scannerEligible = controller.previewScannerEligibleCount(choice)
@@ -1494,22 +1495,33 @@ private fun ChasePanel(controller: LoftController,
             }
             HorizontalDivider(color = Color(0xFF49475F))
             Text("Effekt einstellen", color = Color.White, fontWeight = FontWeight.SemiBold)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf(
-                    ChaseStyle.KNIGHT_RIDER to "Knight Rider",
-                    ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
-                    ChaseStyle.METEOR to "Sternschnuppe",
-                    ChaseStyle.COLOR_WAVE to "Farbwelle"
-                ).forEach { (value, label) ->
-                    FilterChip(selected = style == value, onClick = {
-                        style = value
-                        if (value == ChaseStyle.KNIGHT_RIDER) {
-                            bounce = true
-                            palette = "#FF0000"
-                            tail = 1f
-                            name = "Knight Rider Scanner"
-                        }
-                    }, label = { Text(label) })
+            val availableStyles = listOf(
+                ChaseStyle.KNIGHT_RIDER to "Knight Rider",
+                ChaseStyle.RAINBOW_TAIL to "Regenbogenschweif",
+                ChaseStyle.METEOR to "Sternschnuppe",
+                ChaseStyle.COLOR_WAVE to "Farbwelle"
+            )
+            Box {
+                OutlinedButton(onClick = { styleMenu = true },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(availableStyles.first { it.first == style }.second,
+                        modifier = Modifier.weight(1f))
+                    Text("⌄")
+                }
+                DropdownMenu(expanded = styleMenu,
+                    onDismissRequest = { styleMenu = false }) {
+                    availableStyles.forEach { (value, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = {
+                            styleMenu = false
+                            style = value
+                            if (value == ChaseStyle.KNIGHT_RIDER) {
+                                bounce = true
+                                palette = "#FF0000"
+                                tail = 1f
+                                name = "Knight Rider Scanner"
+                            }
+                        })
+                    }
                 }
             }
             Text("Lichtweg-Ziel: " + controller.targetLabel(choice) +
@@ -1536,17 +1548,21 @@ private fun ChasePanel(controller: LoftController,
                     "Nicht ausgewählte Lampen werden nicht verändert.",
                     color = muted, fontSize = 12.sp)
                 Text("Schnellfarbe", color = Color.White, fontSize = 12.sp)
-                Row(Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("#FF0000" to "Rot", "#00FF00" to "Grün",
-                        "#0000FF" to "Blau", "#FFB000" to "Amber",
-                        "#FFFFFF" to "Weiß", "#FF00FF" to "Magenta")
-                        .forEach { (hex, label) ->
-                            FilterChip(selected = palette == hex,
-                                onClick = { palette = hex },
-                                label = { Text(label) })
+                listOf("#FF0000" to "Rot", "#00FF00" to "Grün",
+                    "#0000FF" to "Blau", "#FFB000" to "Amber",
+                    "#FFFFFF" to "Weiß", "#FF00FF" to "Magenta")
+                    .chunked(3).forEach { row ->
+                        Row(Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            row.forEach { (hex, label) ->
+                                FilterChip(selected = palette == hex,
+                                    onClick = { palette = hex },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text(label, maxLines = 1,
+                                        fontSize = 11.sp) })
+                            }
                         }
-                }
+                    }
             }
             Text(if (style == ChaseStyle.KNIGHT_RIDER)
                 "Farbe oder wechselnde Farben · #RRGGBB"
@@ -1563,9 +1579,10 @@ private fun ChasePanel(controller: LoftController,
                 Text(parsedPalette.exceptionOrNull()?.message ?: "Ungültige Farben",
                     color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             } else {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     parsedPalette.getOrNull().orEmpty().forEach { rgb ->
-                        Box(Modifier.size(26.dp).clip(RoundedCornerShape(9.dp))
+                        Box(Modifier.weight(1f).height(22.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF000000L or rgb.toLong())))
                     }
                 }
@@ -1578,15 +1595,17 @@ private fun ChasePanel(controller: LoftController,
                 val step = previewStep.roundToInt().coerceIn(0, count - 1)
                 Text("Effektvorschau · Schritt ${step + 1} von $count",
                     color = Color.White, fontSize = 12.sp)
-                Row(Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     repeat(lampCount) { index ->
                         val frame = ChaseCompiler.frames(config, index, lampCount)[step]
-                        val tinted = Color(0xFF000000L or frame.rgb.toLong())
-                        Box(
-                            Modifier.size(23.dp).clip(RoundedCornerShape(50))
-                                .background(tinted.copy(alpha = 0.2f + 0.8f * frame.brightness / 100f))
-                        )
+                        val dark = style == ChaseStyle.KNIGHT_RIDER &&
+                            frame.rgb == 0 && frame.brightness == 1
+                        val tint = if (dark) Color(0xFF0B0E16)
+                            else Color(0xFF000000L or frame.rgb.toLong())
+                                .copy(alpha = 0.2f + 0.8f * frame.brightness / 100f)
+                        Box(Modifier.weight(1f).height(24.dp)
+                            .clip(RoundedCornerShape(6.dp)).background(tint))
                     }
                 }
                 Slider(
