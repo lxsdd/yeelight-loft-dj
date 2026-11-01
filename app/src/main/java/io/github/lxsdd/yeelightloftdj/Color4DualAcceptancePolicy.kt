@@ -1,12 +1,11 @@
 package io.github.lxsdd.yeelightloftdj
 
 /**
- * Two-bulb transactional acceptance. Physically inactive until a separately
- * approved signed test release deliberately enables LIVE_TEST_APPROVED.
- * No app setting, UI gesture or IPC can modify this compile-time gate.
+ * Authorized opt-in RC7 two-bulb acceptance only, Couchtisch + Flur.
+ * Does not authorize unlimited multi-lamp operation or untested bulbs.
  */
 internal object Color4DualAcceptancePolicy {
-    const val LIVE_TEST_APPROVED = false
+    const val LIVE_TEST_APPROVED = true
     const val DURATION_MS = 10_000L
     const val MAX_TOTAL_RGB_WRITES = 40
     const val MIN_FRAME_INTERVAL_MS = 500L
@@ -16,11 +15,16 @@ internal object Color4DualAcceptancePolicy {
         blockedIps: Set<String>,
         recoveryPending: Boolean,
         signedTestApproved: Boolean = LIVE_TEST_APPROVED,
+        selectedNames: Set<String> = emptySet(),
     ): String? {
         val reason = Color4PairReadinessPolicy.refusal(selected, blockedIps, recoveryPending)
         if (reason != null) return reason
-        if (!signedTestApproved) return "Gemeinsamer Zwei-Lampen-Test gesperrt: " +
-            "separate Hardware- und signierte Testfreigabe erforderlich."
+        if (!signedTestApproved) return "Zwei-Lampen-Test nur im freigegebenen RC7."
+        // Human-readable names add a local authorization boundary. The
+        // distinct-IP, SUPPORTED color4, quarantine and recovery checks above
+        // remain mandatory. Do not authorize Wellness or untested Esstisch.
+        if (selectedNames != setOf("Couchtisch", "Flur"))
+            return "Dual-Test nur für Couchtisch + Flur freigegeben."
         return null
     }
 

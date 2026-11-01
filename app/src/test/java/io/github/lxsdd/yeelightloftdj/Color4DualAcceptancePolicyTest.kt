@@ -10,11 +10,17 @@ class Color4DualAcceptancePolicyTest {
     private val two = listOf(lamp("192.168.178.21"),lamp("192.168.178.22"))
 
     @Test fun signedAuthorizationIsUnavailableInThisSourceRevision() {
-        assertFalse(Color4DualAcceptancePolicy.LIVE_TEST_APPROVED)
-        assertTrue(Color4DualAcceptancePolicy.refusal(two,emptySet(),false)!!
-            .contains("gesperrt"))
+        assertTrue(Color4DualAcceptancePolicy.LIVE_TEST_APPROVED)
+        assertNotNull(Color4DualAcceptancePolicy.refusal(two,emptySet(),false,
+            signedTestApproved=false,selectedNames=setOf("Couchtisch","Flur")))
         assertNull(Color4DualAcceptancePolicy.refusal(two,emptySet(),false,
-            signedTestApproved=true))
+            selectedNames=setOf("Couchtisch","Flur")))
+        assertNotNull(Color4DualAcceptancePolicy.refusal(two,emptySet(),false,
+            selectedNames=setOf("Couchtisch","Wellness")))
+        assertNotNull(Color4DualAcceptancePolicy.refusal(two,emptySet(),false,
+            selectedNames=setOf("Esstisch 1","Esstisch 2")))
+        assertNotNull(Color4DualAcceptancePolicy.refusal(two,emptySet(),false,
+            selectedNames=emptySet()))
     }
     @Test fun rejectsAllInvalidSelectionsAndQuarantinedPair() {
         assertNotNull(Color4DualAcceptancePolicy.refusal(emptyList(),emptySet(),false,true))

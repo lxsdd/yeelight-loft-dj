@@ -1734,8 +1734,7 @@ class LoftController(context: Context) {
             model == "color4" || model.endsWith(".color4") ||
                 model.isEmpty() || model == "unknown" ||
                 model == "yeelight" || model == "yeelight (lan)"
-        }) return "Color4 und unklare Geräte nur im abgesicherten Einzeltest. " +
-            "Für Mehrlampenbetrieb erst gemeinsame Eignung und Restore prüfen."
+        }) return "Color4 nur im begrenzten Testmodus (automatischer Stopp)."
         return null
     }
 
@@ -1775,12 +1774,12 @@ class LoftController(context: Context) {
     fun color4DualAcceptanceRefusal(): String? {
         val chosen = selected().distinctBy { it.ip }
         val blocked = chosen.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet()
-        return Color4DualAcceptancePolicy.refusal(chosen, blocked, recoveryPending)
+        return Color4DualAcceptancePolicy.refusal(chosen, blocked, recoveryPending,
+            selectedNames = chosen.map(::displayName).toSet())
     }
 
     /**
-     * Present for offline review, uncallable in this build: hard-coded
-     * release authorization is false and checked again INSIDE the task.
+     * Limited RC7 dual acceptance; rechecks all gates inside the task.
      */
     fun armColor4DualAcceptance() {
         color4DualAcceptanceRefusal()?.let { status = it; return }
@@ -1830,7 +1829,8 @@ class LoftController(context: Context) {
                 val blockedNow = chosen.filter(YeelightLan::isLanQuarantined)
                     .map { it.ip }.toSet()
                 val refusal = if (dualTest) Color4DualAcceptancePolicy.refusal(
-                    chosen,blockedNow,recoveryPending
+                    chosen,blockedNow,recoveryPending,
+                    selectedNames = chosen.map(::displayName).toSet()
                 ) else Color4MusicAcceptancePolicy.refusal(
                     chosen,blockedNow,recoveryPending
                 )
