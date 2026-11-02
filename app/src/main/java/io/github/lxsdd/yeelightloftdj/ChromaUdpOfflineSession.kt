@@ -80,6 +80,11 @@ class ChromaUdpOfflineSession(
     private var lastKeepaliveMs = -1L
     private var missedKeepalives = 0
     private var token: String? = null
+    // Color frames do not require ACKs in the pinned OEM sample, but a
+    // correlated *error* can still arrive. Retain at most one bounded set of
+    // request IDs; never mistake a random/old reply for a quota rejection.
+    // This is host fail-closed policy, not a proven Color4 firmware behavior.
+    private val outstandingColorIds = linkedSetOf<Int>()
 
     val tokenHeld: Boolean get() = state == ChromaPreviewState.ACTIVE && token != null
     /** Exact cached SUPPORT method; an advertisement never proves real transport. */
@@ -131,13 +136,22 @@ class ChromaUdpOfflineSession(
         val replyId = if (rawId is Int) rawId else -1
         val expectedId = if (state == ChromaPreviewState.AWAITING_TOKEN)
             handshakeId else pendingKeepaliveId
-        if (replyId <= 0 || replyId != expectedId) {
+        val correlatedColor = state == ChromaPreviewState.ACTIVE &&
+            replyId in outstandingColorIds
+        if (replyId <= 0 || (replyId != expectedId && !correlatedColor)) {
             return ChromaPreviewEvent.IGNORED_UNEXPECTED_REPLY
         }
+        // A bare JSON error may be the only indication that the device
+        // rejected a color frame. Do not depend on method/params or parse a
+        // guessed OEM quota code. A sender/port/ID-correlated error is terminal.
         if (parsed.has("error")) {
             close()
             return ChromaPreviewEvent.CLOSED_ON_DEVICE_ERROR
         }
+        // OEM set_scene is fire-and-forget. An optional color success reply
+        // cannot mint/refresh a token, reset keepalive misses, or permit replay.
+        // Keep the ID until terminal closure to catch delayed correlated errors.
+        if (correlatedColor) return ChromaPreviewEvent.IGNORED_UNEXPECTED_REPLY
         if (!parsed.has("method") || !parsed.has("params") ||
             parsed.opt("params") !is JSONObject) {
             return ChromaPreviewEvent.IGNORED_INVALID_REPLY
@@ -192,9 +206,19 @@ class ChromaUdpOfflineSession(
         if (!advance(nowMs) || state != ChromaPreviewState.ACTIVE) return null
         if (rgb !in 0..0xFFFFFF || brightness !in 1..100) return null
         if (!simulatedSceneAdvertised) return null
+        // Standalone use of this simulator must also remain bounded even
+        // without ACKs or a ChromaUdpOfflineFleet wrapper. No old IDs are
+        // silently evicted: that could hide a delayed firmware error.
+        if (outstandingColorIds.size >= MAX_TRACKED_COLOR_IDS) {
+            close()
+            return null
+        }
         val params = JSONArray().put("color").put(rgb).put(brightness)
             .put(0).put("sudden")
-        return frame(nextId++, "set_scene", params, token)
+        val id = nextId++
+        val preview = frame(id, "set_scene", params, token)
+        outstandingColorIds.add(id)
+        return preview
     }
 
     /** Caller-monotonic virtual time, no scheduler/background behavior. */
@@ -224,6 +248,7 @@ class ChromaUdpOfflineSession(
         token = null
         pendingKeepaliveId = null
         handshakeId = null
+        outstandingColorIds.clear()
     }
 
     private fun frame(
@@ -240,5 +265,6 @@ class ChromaUdpOfflineSession(
         private const val KEEPALIVE_MS = 10_000L
         private const val SESSION_SILENCE_MS = 40_000L
         private const val MAX_MISSES = 4
+        private const val MAX_TRACKED_COLOR_IDS = 45
     }
 }
