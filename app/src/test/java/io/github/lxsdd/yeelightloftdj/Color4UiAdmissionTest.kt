@@ -6,45 +6,53 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
 
 class Color4UiAdmissionTest {
+    private val tickets = ConcurrentHashMap<String, Long>()
+    private fun take(a: Color4UiAdmission, id: String, kind: Color4UiAdmission.Kind, now: Long, supported: Boolean): Color4UiAdmission.Request? {
+        val request = a.takeOnUiEvent(id, kind, now, supported)
+        if (request != null) tickets[id] = request.ticket
+        return request
+    }
+
     @Test fun requiresExplicitSupportedUiEvent() {
         val a = Color4UiAdmission()
         assertFalse(a.offer("lamp", Color4UiAdmission.Kind.RGB, 1, false))
-        assertNull(a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 0, true))
+        assertNull(take(a, "lamp", Color4UiAdmission.Kind.RGB, 0, true))
         assertFalse(a.offer("lamp", Color4UiAdmission.Kind.BRIGHTNESS, 0, true))
         assertTrue(a.offer("lamp", Color4UiAdmission.Kind.RGB, 0x123456, true))
-        assertNull(a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 0, false))
+        assertNull(take(a, "lamp", Color4UiAdmission.Kind.RGB, 0, false))
         assertTrue(a.isQuarantined("lamp"))
         a.clearQuarantineByUser("lamp")
-        assertNull(a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 0, true))
+        assertNull(take(a, "lamp", Color4UiAdmission.Kind.RGB, 0, true))
         assertTrue(a.offer("lamp", Color4UiAdmission.Kind.RGB, 0x123456, true))
-        assertEquals(0x123456, a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 0, true)?.value)
-        assertNull(a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 1500, true))
+        assertEquals(0x123456, take(a, "lamp", Color4UiAdmission.Kind.RGB, 0, true)?.value)
+        assertNull(take(a, "lamp", Color4UiAdmission.Kind.RGB, 1500, true))
     }
 
     @Test fun latestRgbAndBrightnessStayIndependent() {
         val a = Color4UiAdmission()
         repeat(5000) { a.offer("one", Color4UiAdmission.Kind.RGB, it, true) }
         a.offer("one", Color4UiAdmission.Kind.BRIGHTNESS, 42, true)
-        assertEquals(4999, a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true)?.value)
-        a.complete("one", true, false)
-        assertEquals(42, a.takeOnUiEvent("one", Color4UiAdmission.Kind.BRIGHTNESS, 1500, true)?.value)
+        assertEquals(4999, take(a, "one", Color4UiAdmission.Kind.RGB, 0, true)?.value)
+        a.complete("one", tickets.getValue("one"), true, false)
+        assertEquals(42, take(a, "one", Color4UiAdmission.Kind.BRIGHTNESS, 1500, true)?.value)
     }
 
     @Test fun noAutomaticRetryAfterTimeoutOrQuota() {
         val a = Color4UiAdmission()
         a.offer("one", Color4UiAdmission.Kind.RGB, 1, true)
-        assertNotNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true))
+        assertNotNull(take(a, "one", Color4UiAdmission.Kind.RGB, 0, true))
         a.offer("one", Color4UiAdmission.Kind.RGB, 2, true)
-        a.complete("one", false, true)
+        a.complete("one", tickets.getValue("one"), false, true)
         assertTrue(a.isQuarantined("one"))
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 600000, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 600000, true))
         assertFalse(a.offer("one", Color4UiAdmission.Kind.RGB, 3, true))
         a.clearQuarantineByUser("one")
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 600001, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 600001, true))
         assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 4, true))
-        assertEquals(4, a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 600002, true)?.value)
+        assertEquals(4, take(a, "one", Color4UiAdmission.Kind.RGB, 600002, true)?.value)
     }
 
     @Test fun perLampWindowAndSpacingNeverExceedConservativeBudget() {
@@ -52,15 +60,15 @@ class Color4UiAdmissionTest {
         var accepted = 0
         for (t in 0L..59000L step 1500L) {
             a.offer("one", Color4UiAdmission.Kind.RGB, 7, true)
-            if (a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, t, true) != null) {
+            if (take(a, "one", Color4UiAdmission.Kind.RGB, t, true) != null) {
                 accepted++
-                a.complete("one", true, false)
+                a.complete("one", tickets.getValue("one"), true, false)
             }
         }
         assertEquals(24, accepted)
         a.offer("one", Color4UiAdmission.Kind.RGB, 8, true)
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 59999, true))
-        assertNotNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 60000, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 59999, true))
+        assertNotNull(take(a, "one", Color4UiAdmission.Kind.RGB, 60000, true))
     }
 
     @Test fun fourteenLampFleetIsIndependent() {
@@ -68,9 +76,9 @@ class Color4UiAdmissionTest {
         for (i in 0 until 14) {
             val id = "lamp-$i"
             repeat(1000) { a.offer(id, Color4UiAdmission.Kind.RGB, it, true) }
-            assertEquals(999, a.takeOnUiEvent(id, Color4UiAdmission.Kind.RGB, 0, true)?.value)
+            assertEquals(999, take(a, id, Color4UiAdmission.Kind.RGB, 0, true)?.value)
         }
-        a.complete("lamp-0", false, true)
+        a.complete("lamp-0", tickets.getValue("lamp-0"), false, true)
         assertTrue(a.isQuarantined("lamp-0"))
         for (i in 1 until 14) assertFalse(a.isQuarantined("lamp-$i"))
     }
@@ -85,7 +93,7 @@ class Color4UiAdmissionTest {
                 pool.submit {
                     start.await()
                     a.offer("one", Color4UiAdmission.Kind.RGB, i, true)
-                    if (a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true) != null) acquired.incrementAndGet()
+                    if (take(a, "one", Color4UiAdmission.Kind.RGB, 0, true) != null) acquired.incrementAndGet()
                 }
             }
             start.countDown()
@@ -101,14 +109,14 @@ class Color4UiAdmissionTest {
         assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 0x123456, true))
         assertFalse(a.offer("one", Color4UiAdmission.Kind.BRIGHTNESS, 12, false))
         assertTrue(a.isQuarantined("one"))
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 0, true))
         a.clearQuarantineByUser("one")
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 0, true))
         assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 0x654321, true))
-        assertEquals(0x654321, a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true)?.value)
-        a.complete("one", true, false)
+        assertEquals(0x654321, take(a, "one", Color4UiAdmission.Kind.RGB, 0, true)?.value)
+        a.complete("one", tickets.getValue("one"), true, false)
         assertTrue(a.offer("one", Color4UiAdmission.Kind.BRIGHTNESS, 25, true))
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.BRIGHTNESS, 1500, false))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.BRIGHTNESS, 1500, false))
         assertTrue(a.isQuarantined("one"))
     }
 
@@ -116,17 +124,69 @@ class Color4UiAdmissionTest {
         val a = Color4UiAdmission()
         for (id in listOf("one", "two")) {
             assertTrue(a.offer(id, Color4UiAdmission.Kind.RGB, 1, true))
-            assertNotNull(a.takeOnUiEvent(id, Color4UiAdmission.Kind.RGB, 10000, true))
+            assertNotNull(take(a, id, Color4UiAdmission.Kind.RGB, 10000, true))
             a.complete(id, true, false)
         }
         assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 2, true))
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 9999, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 9999, true))
         assertTrue(a.isQuarantined("one"))
         assertFalse(a.isQuarantined("two"))
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 20000, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 20000, true))
         a.clearQuarantineByUser("one")
-        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 20000, true))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 20000, true))
         assertTrue(a.offer("two", Color4UiAdmission.Kind.RGB, 3, true))
-        assertEquals(3, a.takeOnUiEvent("two", Color4UiAdmission.Kind.RGB, 11500, true)?.value)
+        assertEquals(3, take(a, "two", Color4UiAdmission.Kind.RGB, 11500, true)?.value)
+    }
+
+    @Test fun staleFailureCannotQuarantineNewerInflightRequest() {
+        val a = Color4UiAdmission()
+        a.offer("one", Color4UiAdmission.Kind.RGB, 1, true)
+        val first = take(a, "one", Color4UiAdmission.Kind.RGB, 0, true)!!
+        assertTrue(a.complete("one", first.ticket, true, false))
+        a.offer("one", Color4UiAdmission.Kind.RGB, 2, true)
+        val second = take(a, "one", Color4UiAdmission.Kind.RGB, 1500, true)!!
+        assertFalse(a.complete("one", first.ticket, false, true))
+        assertFalse(a.isQuarantined("one"))
+        assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 3000, true))
+        assertTrue(a.complete("one", second.ticket, true, false))
+    }
+
+    @Test fun duplicateCompletionCannotCloseLaterGeneration() {
+        val a = Color4UiAdmission()
+        a.offer("one", Color4UiAdmission.Kind.RGB, 1, true)
+        val first = take(a, "one", Color4UiAdmission.Kind.RGB, 0, true)!!
+        assertTrue(a.complete("one", first.ticket, true, false))
+        assertFalse(a.complete("one", first.ticket, true, false))
+        a.offer("one", Color4UiAdmission.Kind.RGB, 2, true)
+        val second = take(a, "one", Color4UiAdmission.Kind.RGB, 1500, true)!!
+        assertFalse(a.complete("one", first.ticket, true, false))
+        assertTrue(a.complete("one", second.ticket, true, false))
+    }
+
+    @Test fun wrongLampAndUnknownTicketDoNotChangeState() {
+        val a = Color4UiAdmission()
+        for (id in listOf("one", "two")) a.offer(id, Color4UiAdmission.Kind.RGB, 1, true)
+        val one = take(a, "one", Color4UiAdmission.Kind.RGB, 0, true)!!
+        val two = take(a, "two", Color4UiAdmission.Kind.RGB, 0, true)!!
+        assertFalse(a.complete("two", one.ticket, false, true))
+        assertFalse(a.complete("one", -1L, false, true))
+        assertFalse(a.isQuarantined("one"))
+        assertFalse(a.isQuarantined("two"))
+        assertTrue(a.complete("one", one.ticket, true, false))
+        assertTrue(a.complete("two", two.ticket, true, false))
+    }
+
+    @Test fun lateFailureAfterExplicitQuarantineRecoveryIsIgnored() {
+        val a = Color4UiAdmission()
+        a.offer("one", Color4UiAdmission.Kind.RGB, 1, true)
+        val old = take(a, "one", Color4UiAdmission.Kind.RGB, 0, true)!!
+        assertTrue(a.complete("one", old.ticket, false, true))
+        assertTrue(a.isQuarantined("one"))
+        a.clearQuarantineByUser("one")
+        a.offer("one", Color4UiAdmission.Kind.RGB, 2, true)
+        val fresh = take(a, "one", Color4UiAdmission.Kind.RGB, 1500, true)!!
+        assertFalse(a.complete("one", old.ticket, false, true))
+        assertFalse(a.isQuarantined("one"))
+        assertTrue(a.complete("one", fresh.ticket, true, false))
     }
 }
