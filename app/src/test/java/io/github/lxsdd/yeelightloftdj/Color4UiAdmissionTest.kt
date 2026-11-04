@@ -15,6 +15,10 @@ class Color4UiAdmissionTest {
         assertFalse(a.offer("lamp", Color4UiAdmission.Kind.BRIGHTNESS, 0, true))
         assertTrue(a.offer("lamp", Color4UiAdmission.Kind.RGB, 0x123456, true))
         assertNull(a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 0, false))
+        assertTrue(a.isQuarantined("lamp"))
+        a.clearQuarantineByUser("lamp")
+        assertNull(a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 0, true))
+        assertTrue(a.offer("lamp", Color4UiAdmission.Kind.RGB, 0x123456, true))
         assertEquals(0x123456, a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 0, true)?.value)
         assertNull(a.takeOnUiEvent("lamp", Color4UiAdmission.Kind.RGB, 1500, true))
     }
