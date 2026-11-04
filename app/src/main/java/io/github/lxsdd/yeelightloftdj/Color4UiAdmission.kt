@@ -31,7 +31,15 @@ class Color4UiAdmission(
     /** Unsupported devices fail closed; never accumulate a replay backlog. */
     @Synchronized
     fun offer(deviceId: String, kind: Kind, value: Int, supported: Boolean): Boolean {
-        if (deviceId.isBlank() || !supported) return false
+        if (deviceId.isBlank()) return false
+        if (!supported) {
+            lamps[deviceId]?.let {
+                it.pendingRgb = null
+                it.pendingBrightness = null
+                it.quarantined = true
+            }
+            return false
+        }
         if (kind == Kind.RGB && value !in 0..0xFFFFFF) return false
         if (kind == Kind.BRIGHTNESS && value !in 1..100) return false
         val lamp = lamps.getOrPut(deviceId) { Lamp() }
@@ -51,9 +59,23 @@ class Color4UiAdmission(
      */
     @Synchronized
     fun takeOnUiEvent(deviceId: String, kind: Kind, nowMs: Long, supported: Boolean): Request? {
-        if (!supported || nowMs < 0) return null
+        if (nowMs < 0) return null
+        if (!supported) {
+            lamps[deviceId]?.let {
+                it.pendingRgb = null
+                it.pendingBrightness = null
+                it.quarantined = true
+            }
+            return null
+        }
         val lamp = lamps[deviceId] ?: return null
         if (lamp.quarantined || lamp.inflight) return null
+        if (lamp.lastSent != null && nowMs < lamp.lastSent!!) {
+            lamp.quarantined = true
+            lamp.pendingRgb = null
+            lamp.pendingBrightness = null
+            return null
+        }
         val value = when (kind) {
             Kind.RGB -> lamp.pendingRgb
             Kind.BRIGHTNESS -> lamp.pendingBrightness
