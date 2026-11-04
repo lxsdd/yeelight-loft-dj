@@ -91,4 +91,38 @@ class Color4UiAdmissionTest {
             pool.shutdownNow()
         }
     }
+
+    @Test fun capabilityLossDropsPendingValuesAndRequiresExplicitRecovery() {
+        val a = Color4UiAdmission()
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 0x123456, true))
+        assertFalse(a.offer("one", Color4UiAdmission.Kind.BRIGHTNESS, 12, false))
+        assertTrue(a.isQuarantined("one"))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true))
+        a.clearQuarantineByUser("one")
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true))
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 0x654321, true))
+        assertEquals(0x654321, a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0, true)?.value)
+        a.complete("one", true, false)
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.BRIGHTNESS, 25, true))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.BRIGHTNESS, 1500, false))
+        assertTrue(a.isQuarantined("one"))
+    }
+
+    @Test fun backwardClockJumpQuarantinesOnlyAffectedLampAndNeverReplays() {
+        val a = Color4UiAdmission()
+        for (id in listOf("one", "two")) {
+            assertTrue(a.offer(id, Color4UiAdmission.Kind.RGB, 1, true))
+            assertNotNull(a.takeOnUiEvent(id, Color4UiAdmission.Kind.RGB, 10000, true))
+            a.complete(id, true, false)
+        }
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 2, true))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 9999, true))
+        assertTrue(a.isQuarantined("one"))
+        assertFalse(a.isQuarantined("two"))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 20000, true))
+        a.clearQuarantineByUser("one")
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 20000, true))
+        assertTrue(a.offer("two", Color4UiAdmission.Kind.RGB, 3, true))
+        assertEquals(3, a.takeOnUiEvent("two", Color4UiAdmission.Kind.RGB, 11500, true)?.value)
+    }
 }
