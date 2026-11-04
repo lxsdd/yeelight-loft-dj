@@ -13,16 +13,17 @@ class Color4UiAdmission(
     private val windowMs: Long = 60_000L,
 ) {
     enum class Kind { RGB, BRIGHTNESS }
-    data class Request(val kind: Kind, val value: Int)
+    data class Request(val kind: Kind, val value: Int, val ticket: Long)
     private class Lamp {
         val sent = ArrayDeque<Long>()
         var lastSent: Long? = null
-        var inflight = false
+        var inflightTicket: Long? = null
         var quarantined = false
         var pendingRgb: Int? = null
         var pendingBrightness: Int? = null
     }
     private val lamps = mutableMapOf<String, Lamp>()
+    private var nextTicket = 1L
 
     init {
         require(maxPerMinute in 1..24 && spacingMs >= 1_500 && windowMs >= 60_000)
@@ -69,7 +70,7 @@ class Color4UiAdmission(
             return null
         }
         val lamp = lamps[deviceId] ?: return null
-        if (lamp.quarantined || lamp.inflight) return null
+        if (lamp.quarantined || lamp.inflightTicket != null) return null
         if (lamp.lastSent != null && nowMs < lamp.lastSent!!) {
             lamp.quarantined = true
             lamp.pendingRgb = null
@@ -87,32 +88,41 @@ class Color4UiAdmission(
         if (last != null && (nowMs < last || nowMs - last < spacingMs)) return null
         lamp.sent.addLast(nowMs)
         lamp.lastSent = nowMs
-        lamp.inflight = true
+        // A wrapped ticket must never alias a previous request generation.
+        if (nextTicket == Long.MAX_VALUE) {
+            lamp.quarantined = true
+            lamp.pendingRgb = null
+            lamp.pendingBrightness = null
+            return null
+        }
+        val ticket = nextTicket++
+        lamp.inflightTicket = ticket
         when (kind) {
             Kind.RGB -> lamp.pendingRgb = null
             Kind.BRIGHTNESS -> lamp.pendingBrightness = null
         }
-        return Request(kind, value)
+        return Request(kind, value, ticket)
     }
 
     /** Timeout/error consumes the budget. No implicit replay or dispatch. */
     @Synchronized
-    fun complete(deviceId: String, success: Boolean, uncertainOrQuota: Boolean) {
-        val lamp = lamps[deviceId] ?: return
-        if (!lamp.inflight) return
-        lamp.inflight = false
+    fun complete(deviceId: String, ticket: Long, success: Boolean, uncertainOrQuota: Boolean): Boolean {
+        val lamp = lamps[deviceId] ?: return false
+        if (lamp.inflightTicket != ticket || ticket <= 0L) return false
+        lamp.inflightTicket = null
         if (!success || uncertainOrQuota) {
             lamp.quarantined = true
             lamp.pendingRgb = null
             lamp.pendingBrightness = null
         }
+        return true
     }
 
     /** Explicit operator action, never automatic cooldown recovery. */
     @Synchronized
     fun clearQuarantineByUser(deviceId: String) {
         lamps[deviceId]?.let {
-            if (!it.inflight) {
+            if (it.inflightTicket == null) {
                 it.quarantined = false
                 it.pendingRgb = null
                 it.pendingBrightness = null
