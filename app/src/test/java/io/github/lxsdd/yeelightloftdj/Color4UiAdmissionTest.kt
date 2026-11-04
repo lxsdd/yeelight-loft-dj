@@ -189,4 +189,37 @@ class Color4UiAdmissionTest {
         assertFalse(a.isQuarantined("one"))
         assertTrue(a.complete("one", fresh.ticket, true, false))
     }
+    @Test fun ticketExhaustionFailsClosedWithoutReusingRequestGeneration() {
+        val a = Color4UiAdmission()
+        val field = Color4UiAdmission::class.java.getDeclaredField("nextTicket")
+        field.isAccessible = true
+        field.setLong(a, Long.MAX_VALUE - 1L)
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 1, true))
+        val last = a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0L, true)!!
+        assertEquals(Long.MAX_VALUE - 1L, last.ticket)
+        assertTrue(a.complete("one", last.ticket, true, false))
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 2, true))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 1500L, true))
+        assertTrue(a.isQuarantined("one"))
+        a.clearQuarantineByUser("one")
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 3, true))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 3000L, true))
+        assertTrue(a.isQuarantined("one"))
+        assertFalse(a.complete("one", last.ticket, false, true))
+    }
+
+    @Test fun ticketExhaustionIsIsolatedFromOtherAlreadyInflightLamp() {
+        val a = Color4UiAdmission()
+        assertTrue(a.offer("other", Color4UiAdmission.Kind.RGB, 9, true))
+        val other = a.takeOnUiEvent("other", Color4UiAdmission.Kind.RGB, 0L, true)!!
+        val field = Color4UiAdmission::class.java.getDeclaredField("nextTicket")
+        field.isAccessible = true
+        field.setLong(a, Long.MAX_VALUE)
+        assertTrue(a.offer("exhausted", Color4UiAdmission.Kind.RGB, 5, true))
+        assertNull(a.takeOnUiEvent("exhausted", Color4UiAdmission.Kind.RGB, 0L, true))
+        assertTrue(a.isQuarantined("exhausted"))
+        assertFalse(a.isQuarantined("other"))
+        assertTrue(a.complete("other", other.ticket, true, false))
+    }
+
 }
