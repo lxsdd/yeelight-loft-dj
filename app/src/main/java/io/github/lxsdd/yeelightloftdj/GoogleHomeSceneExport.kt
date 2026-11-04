@@ -90,6 +90,44 @@ object GoogleHomeSceneExport {
         ))
     }
 
+    /**
+     * Two independently triggered, single-bulb reference colors in ONE Google Home
+     * script. Merely generating this YAML does not operate any lights.
+     * Both variants keep brightness and target device identical so the user
+     * can compare perceived color without inventing an LED calibration curve.
+     */
+    fun rgbComparison(
+        name: String,
+        referenceVoice: String,
+        candidateVoice: String,
+        reference: HomeLamp,
+        alternativeHex: String,
+    ): HomeExport {
+        val baseline = checkedLamps(listOf(reference)).single()
+        require(baseline.on && baseline.color is HomeColor.Rgb) {
+            "A/B-Vergleich nur für eine eingeschaltete RGB-Lampe"
+        }
+        val candidate = GoogleHomeColorTuning.applyOverrides(
+            listOf(baseline), mapOf(baseline.deviceAndRoom to alternativeHex)
+        ).single()
+        require(candidate.color != baseline.color) {
+            "Vergleichsfarbe B muss sich von der erfassten Referenz A unterscheiden"
+        }
+        val referenceActions = mutableListOf<String>()
+        appendState(referenceActions, listOf(baseline))
+        val candidateActions = mutableListOf<String>()
+        appendState(candidateActions, listOf(candidate))
+        return buildAutomations(name, listOf(
+            AutomationEntry(referenceVoice, referenceActions, "Referenz A"),
+            AutomationEntry(candidateVoice, candidateActions, "Alternative B"),
+        ), listOf(
+            "Zwei getrennte Sprachstarter A/B – niemals automatisch im Wechsel ausgeführt.",
+            "Nur eine Lampe, identische Helligkeit; keine automatische Farbmessung oder LED-Kalibrierung.",
+            "Der zuletzt ausgeführte Farbzustand bleibt bestehen; kein automatisches Zurücksetzen.",
+            "Google-Home-Gerätebindung und reale Lichtfarbe vor einem Abgleich manuell prüfen."
+        ))
+    }
+
     private fun checkedLamps(lamps: List<HomeLamp>): List<HomeLamp> {
         require(lamps.size in 1..MAX_LAMPS) { "1 bis $MAX_LAMPS Lampen pro Export" }
         lamps.forEach { lamp ->
@@ -153,29 +191,60 @@ object GoogleHomeSceneExport {
         return "    - type: time.delay\n      for: ${ms / 1_000L}sec"
     }
 
-    private fun build(name: String, phrase: String, actions: List<String>, warnings: List<String>): HomeExport {
-        require(name.length in 1..64 && safeText(name) && !containsIpv4(name)) { "Ungültiger Szenenname" }
-        require(phrase.length in 3..80 && safeText(phrase) && !containsIpv4(phrase)) { "Ungültiger Sprachbefehl" }
-        // Google's OkGoogle starter wants the utterance without the wake word.
-        // This does not try to predict or guarantee Assistant recognition.
-        require(!Regex("""^(?:hey|ok|okay)\s+google(?:\b|$)""", RegexOption.IGNORE_CASE).containsMatchIn(phrase.trim())) {
-            "Sprachstarter ohne 'Hey Google' oder 'Ok Google' eingeben"
+    private data class AutomationEntry(
+        val phrase: String, val actions: List<String>, val label: String? = null
+    )
+
+    private fun build(
+        name: String, phrase: String, actions: List<String>, warnings: List<String>
+    ): HomeExport = buildAutomations(name, listOf(AutomationEntry(phrase, actions)), warnings)
+
+    private fun buildAutomations(
+        name: String, entries: List<AutomationEntry>, warnings: List<String>
+    ): HomeExport {
+        require(name.length in 1..64 && safeText(name) && !containsIpv4(name)) {
+            "Ungültiger Szenenname"
         }
-        require(actions.size in 1..MAX_ACTIONS) { "Zu viele Google-Home-Aktionen" }
+        require(entries.size in 1..2 && entries.all { it.actions.isNotEmpty() }) {
+            "Nur eine oder zwei eigenständig auslösbare Automatisierungen"
+        }
+        val phrases = entries.map { it.phrase.trim() }
+        phrases.forEach { phrase ->
+            require(phrase.length in 3..80 && safeText(phrase) && !containsIpv4(phrase)) {
+                "Ungültiger Sprachbefehl"
+            }
+            // Google's OkGoogle starter expects only the utterance without the wake word.
+            require(!Regex("""^(?:hey|ok|okay)\s+google(?:\b|$)""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(phrase)) {
+                "Sprachstarter ohne 'Hey Google' oder 'Ok Google' eingeben"
+            }
+        }
+        require(phrases.map { it.lowercase(java.util.Locale.ROOT) }.distinct().size == phrases.size) {
+            "A und B benötigen zwei eindeutig unterschiedliche Sprachstarter"
+        }
+        val count = entries.sumOf { it.actions.size }
+        require(count in 1..MAX_ACTIONS) { "Zu viele Google-Home-Aktionen" }
         val yaml = buildString {
             append("metadata:\n")
             append("  name: ${quoted(name)}\n")
             append("  description: \"Aus Yeelight Loft DJ exportierte Lichteinstellung\"\n")
             append("automations:\n")
-            append("  - starters:\n")
-            append("    - type: assistant.event.OkGoogle\n")
-            append("      eventData: query\n")
-            append("      is: ${quoted(phrase)}\n")
-            append("    actions:\n")
-            actions.forEach { append(it); append('\n') }
+            entries.forEachIndexed { index, entry ->
+                if (entry.label != null) {
+                    append("  - name: ${quoted(entry.label)}\n")
+                    append("    starters:\n")
+                } else {
+                    append("  - starters:\n")
+                }
+                append("    - type: assistant.event.OkGoogle\n")
+                append("      eventData: query\n")
+                append("      is: ${quoted(phrases[index])}\n")
+                append("    actions:\n")
+                entry.actions.forEach { append(it); append('\n') }
+            }
         }
         require(yaml.toByteArray(Charsets.UTF_8).size <= 48 * 1024) { "Export ist zu groß" }
-        return HomeExport(yaml, warnings, actions.size)
+        return HomeExport(yaml, warnings, count)
     }
 
     private fun containsIpv4(text: String): Boolean = Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}").containsMatchIn(text)

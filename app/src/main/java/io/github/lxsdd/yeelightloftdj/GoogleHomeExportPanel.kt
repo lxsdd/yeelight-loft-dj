@@ -34,6 +34,12 @@ fun GoogleHomeExportPanel(controller: LoftController) {
     }
     // One-shot, scene-specific RGB edits; never apply as a global bulb calibration.
     val rgbEdits = remember { mutableStateMapOf<String, String>() }
+    var voiceA by remember {
+        mutableStateOf(preferences.getString("compare.voice.a", "Loft Farbe A").orEmpty())
+    }
+    var voiceB by remember {
+        mutableStateOf(preferences.getString("compare.voice.b", "Loft Farbe B").orEmpty())
+    }
     var consent by remember { mutableStateOf(false) }
     var sceneId by remember { mutableStateOf(SceneLibrary.scenes.firstOrNull()?.id.orEmpty()) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -249,6 +255,70 @@ fun GoogleHomeExportPanel(controller: LoftController) {
                 }
             },
         ) { Text("Google-Home-Skript erzeugen") }
+        if (mode == 0 && selected.size == 1 && controller.googleHomeCapturedIds == ids &&
+            !controller.busy && !controller.recoveryPending
+        ) {
+            val only = selected.single()
+            val captured = controller.googleHomeCaptured[only.ip]
+            if (captured?.isOn == true && captured.colorMode in setOf(1, 3)) {
+                HorizontalDivider()
+                Text("Farbvergleich A/B · nur diese Lampe",
+                    style = MaterialTheme.typography.titleMedium)
+                Text("Zwei getrennte Sprachbefehle in einem Google-Home-Skript: " +
+                    "A = frisch erfasste Farbe; B = deine manuelle RGB-Alternative. " +
+                    "Gleiche Helligkeit, keine automatische Ausführung und keine Wiederherstellung.",
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(
+                    value = voiceA,
+                    onValueChange = {
+                        voiceA = it
+                        preferences.edit().putString("compare.voice.a", it).apply()
+                        result = null
+                    },
+                    label = { Text("Sprachstarter A · Referenz") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = voiceB,
+                    onValueChange = {
+                        voiceB = it
+                        preferences.edit().putString("compare.voice.b", it).apply()
+                        result = null
+                    },
+                    label = { Text("Sprachstarter B · Alternative") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(
+                    enabled = !rgbEdits[only.id].isNullOrBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        runCatching {
+                            val ref = (refs[only.id] ?:
+                                preferences.getString("ref." + only.id, "").orEmpty()).trim()
+                            val current = controller.googleHomeCaptured[only.ip]
+                                ?: error("Erfasster Farbzustand fehlt")
+                            require(controller.googleHomeCapturedIds == setOf(only.id)) {
+                                "Bitte die einzelne Lampe neu erfassen"
+                            }
+                            val lamps = GoogleHomeSnapshotAdapter.fromFreshSnapshots(
+                                mapOf(only.ip to ref), mapOf(only.ip to current)
+                            )
+                            GoogleHomeSceneExport.rgbComparison(
+                                title.trim() + " Farbvergleich", voiceA.trim(), voiceB.trim(),
+                                lamps.single(), rgbEdits[only.id].orEmpty()
+                            )
+                        }.onSuccess {
+                            result = it
+                            notice = "A/B-Skript erzeugt; beide Befehle müssen in Google Home " +
+                                "validiert und einzeln getestet werden. Kein automatischer Farbwechsel."
+                        }.onFailure {
+                            result = null
+                            notice = "Farbvergleich nicht möglich: " + it.message.orEmpty()
+                        }
+                    },
+                ) { Text("A/B-Farbvergleich exportieren") }
+            }
+        }
         if (notice.isNotBlank()) Text(notice, style = MaterialTheme.typography.bodySmall)
         result?.let { export ->
             HorizontalDivider()

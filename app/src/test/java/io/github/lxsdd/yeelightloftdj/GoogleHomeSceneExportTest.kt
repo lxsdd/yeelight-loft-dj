@@ -191,4 +191,78 @@ class GoogleHomeSceneExportTest {
         assertTrue(yaml.contains("Tisch\\\\Special"))
     }
 
+    @Test fun comparisonGeneratesTwoIndependentVoiceStartersForOneRgbLamp() {
+        val original = rgb(rgb = 0xFFB36B, brightness = 45)
+        val result = GoogleHomeSceneExport.rgbComparison(
+            "Farbvergleich", "Loft Farbe A", "Loft Farbe B", original, "#FF7700"
+        )
+        assertEquals(2, Regex("type: assistant.event.OkGoogle").findAll(result.yaml).count())
+        assertEquals(2, Regex("type: device.command.ColorAbsolute").findAll(result.yaml).count())
+        assertEquals(2, Regex("type: device.command.BrightnessAbsolute").findAll(result.yaml).count())
+        assertEquals(2, Regex("for: 2sec").findAll(result.yaml).count())
+        assertEquals(6, result.actionCount)
+        assertTrue(result.yaml.contains("spectrumRGB: \"FFB36B\""))
+        assertTrue(result.yaml.contains("spectrumRGB: \"FF7700\""))
+        assertTrue(result.yaml.contains("is: \"Loft Farbe A\""))
+        assertTrue(result.yaml.contains("is: \"Loft Farbe B\""))
+        assertEquals(2, Regex("devices: \"Couchtisch - Wohnzimmer\"").findAll(result.yaml).count())
+        assertEquals(HomeColor.Rgb(0xFFB36B), original.color)
+        assertFalse(result.yaml.contains("192.168."))
+        assertFalse(result.yaml.contains("repeat:"))
+    }
+
+    @Test fun comparisonRejectsIdenticalColorsAndMissingCorrectedHex() {
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbComparison("A/B", "Loft A", "Loft B", rgb(), "FF7700")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbComparison("A/B", "Loft A", "Loft B", rgb(), "0x00FF00")
+        }
+    }
+
+    @Test fun comparisonRejectsDuplicateAndUnsafeVoicePhrases() {
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbComparison(
+                "Farbtest", "Loft Licht", "loft licht", rgb(), "#0000FF"
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbComparison(
+                "Farbtest", "Hey Google Loft", "Loft Test", rgb(), "#0000FF"
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbComparison(
+                "Farbtest", "Loft Test", "Loft Test\nactions: []", rgb(), "#0000FF"
+            )
+        }
+    }
+
+    @Test fun comparisonRejectsOffAndKelvinInsteadOfChangingModes() {
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbComparison(
+                "Farbtest", "Loft A", "Loft B", HomeLamp("Flur - Flur", false), "#FF0000"
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbComparison(
+                "Farbtest", "Loft A", "Loft B",
+                HomeLamp("Flur - Flur", true, 45, HomeColor.Temperature(2700)), "#FF0000"
+            )
+        }
+    }
+
+    @Test fun comparisonKeepsBothBrightnessValuesIdenticalAndIsNotAPowerRestore() {
+        val export = GoogleHomeSceneExport.rgbComparison(
+            "Farbtest", "Loft Test A", "Loft Test B",
+            rgb(brightness = 23, rgb = 0x000005), "0000AF"
+        )
+        assertEquals(2, Regex("brightness: 23").findAll(export.yaml).count())
+        assertFalse(export.yaml.contains("brightness: 100"))
+        assertTrue(export.yaml.contains("spectrumRGB: \"000005\""))
+        assertTrue(export.yaml.contains("spectrumRGB: \"0000AF\""))
+        assertFalse(export.yaml.contains("on: false"))
+        assertTrue(export.warnings.any { it.contains("Zurücksetzen") })
+    }
+
 }
