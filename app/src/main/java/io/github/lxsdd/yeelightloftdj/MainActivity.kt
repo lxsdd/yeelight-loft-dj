@@ -193,6 +193,7 @@ private fun LoftApp(controller: LoftController) {
                                 "chase" -> "Lichtlauf-Studio"
                                 "scanner" -> "Knight-Rider-Scanner"
                                 "transfer" -> "Szenenbibliothek"
+                                "google-home" -> "Google Home Export"
                                 "target" -> "Lampen auswählen"
                                 "groups" -> "Gruppen verwalten"
                                 "rooms" -> "Räume verwalten"
@@ -250,6 +251,9 @@ private fun LoftApp(controller: LoftController) {
                     "transfer" -> item(key = "scene-import-export") {
                         SceneExchangePanel(controller)
                     }
+                    "google-home" -> item(key = "google-home-export") {
+                        GoogleHomeExportPanel(controller)
+                    }
                     else -> {
                         val id = detailRoute?.removePrefix("device:")
                         val device = controller.devices.firstOrNull { it.id == id }
@@ -292,6 +296,12 @@ private fun LoftApp(controller: LoftController) {
                             onScanner = { detailRoute = "scanner" },
                             onTransfer = { detailRoute = "transfer" },
                         )
+                    }
+                    item(key = "google-home-entry") {
+                        FilledTonalButton(
+                            onClick = { detailRoute = "google-home" },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Google Home · Szenen übertragen") }
                     }
                     item(key = "scene-lamp-report") { SceneLampReport(controller) }
                     if (!controller.recoveryPending) item { StopButton(controller) }
