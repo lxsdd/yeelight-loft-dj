@@ -1,6 +1,6 @@
 # Yeelight Loft DJ: Google-Home-Szenenexport – Android-Integrationspaket v2
 
-Stand: 2026-11-04. Dieses Bundle ist eine **lokal getestete, aber nicht in GitHub integrierte Entwicklungsfassung**. Kein signiertes APK, kein Android-Gradle-Build und kein Google-Home- oder Lampentest. Aktueller GitHub-Trackingpunkt: https://github.com/lxsdd/yeelight-loft-dj/issues/55
+Stand: 2026-11-04. **Quellcode integriert in den isolierten Draft-PR #56** (Basis: Produkt-PR #50), Tracking: https://github.com/lxsdd/yeelight-loft-dj/issues/55 . Erste quellgenaue öffentliche Android-CI auf Commit `ccfa01450653e1a8491b2b244133006b68ace2bb`: `testDebugUnitTest` und `assembleDebug` **PASS** in https://github.com/lxsdd/yeelight-loft-dj/actions/runs/41892179897 . Weiterhin **keine** signierte APK, keine Freigabe für Live-Lampentests, kein Google-Home-Editor-Test und kein Merge/Release.
 
 ## Umgesetzt
 
@@ -8,7 +8,7 @@ Stand: 2026-11-04. Dieses Bundle ist eine **lokal getestete, aber nicht in GitHu
 - **Google-Home-Zuordnung:** Pro Lampe den im Google-Home-Editor angezeigten Namen und Raum ausdrücklich eintragen. Die Zuordnungen bleiben in den Android-App-Einstellungen; im Skript stehen weder IP-Adressen noch Yeelight-IDs.
 - **Google-Home-Skript:** Farbton (`ColorHex` als sechsstelliger Hex-String), Kelvin, Helligkeit, Ein/Aus und Sprachstart sind als eigene Google-Home-Aktionen im YAML enthalten, ohne `ActivateScene`-Befehl bzw. Yeelight-Szenen-Referenz. Für gleiche Helligkeiten wird eine gemeinsame Aktion ausgegeben.
 - **Verlaufsvorschau:** Ein vorhandener **Loft-DJ**-Farbverlauf wird mit ausdrücklicher Zustimmung als endliche, verlangsamte Google-Home-Sequenz exportiert: höchstens 8 Keyframes, mindestens 10 Sekunden bis zum nächsten Wechsel; keine Live-Musik-, Raumphasen-, Lauflicht- oder Wiederholungsfunktion.
-- **Android-UI-Entwurf als Quellcode:** Eigenständige Material-3-Seite mit Auswahl, Zuordnungen, zwei Modi, Warnungen, YAML-Vorschau, Zwischenablage, Dateiexport und Link zum Google-Home-Script-Editor. Ein kleiner `MainActivity.kt`-Patch fügt den Einstieg in „Szenen“ hinzu.
+- **Android-UI, im Draft-PR kompiliert:** Eigenständige Material-3-Seite mit Auswahl, Zuordnungen, zwei Modi, Warnungen, YAML-Vorschau, Zwischenablage, Dateiexport und Link zum Google-Home-Script-Editor. Ein kleiner `MainActivity.kt`-Patch fügt den Einstieg in „Szenen“ hinzu.
 
 ## Grenzen und Sicherheit
 
@@ -19,14 +19,14 @@ Stand: 2026-11-04. Dieses Bundle ist eine **lokal getestete, aber nicht in GitHu
 - Gespeicherte Snapshots sind Momentaufnahmen. Spätere Änderungen durch Google Home oder Yeelight aktualisieren das exportierte YAML nicht. Vor der Übertragung erneut erfassen, falls nötig.
 - **Kein Google-Konto-Schreibzugriff:** YAML muss auf https://home.google.com/automations manuell eingefügt, mit exakt passenden Gerätebezeichnungen validiert und gespeichert werden.
 
-## Dateien und Integration (erst nach gültigem exklusivem Claim)
+## Implementierung, Branching und Abnahme
 
-1. Zielquellstand bei Prüfung: `main` Commit `cfe94070c3c060ebdf4f1995a29b9f6ce786cba3`; `LoftController.kt` Blob `395cdacf36b5bd5a05e9ee9b3175a87f3ecc023f`; `MainActivity.kt` Blob `6b91cf06530d6dd2584c303a6792860272e9ea71`.
-2. **Nicht einfach in `main` oder laufende PRs schreiben.** Vor Integration private Ownership-Registry, Claims, parallele PRs, Branch-SHA und zulässige Schreibberechtigung prüfen, einen isolierten Feature-Branch rechtmäßig registrieren und Claim/Readback sichern.
-3. Neue Dateien im Paket von `app/src/main/java/io/github/lxsdd/yeelightloftdj/` und zugehörige Unit-Tests übernehmen.
-4. Auf dem rechtmäßig autorisierten und SHA-passenden Quellstand nach `git apply --check LoftController.GoogleHome.diff MainActivity.GoogleHome.diff` die beiden Patches anwenden. **Nicht blind** auf andere Branches anwenden.
-5. Mit `./gradlew testDebugUnitTest assembleDebug` und der erforderlichen Android-CI testen; insbesondere Compose/SAF-Verkabelung und sicherheitsrelevante Controller-Interaktionen verifizieren. Der gelieferte Code wurde noch nicht im Android-Projekt kompiliert.
-6. Danach im Google-Home-Script-Editor ein Testskript mit **Geräteliste aus dem tatsächlichen Google Home** syntaktisch validieren. Live-Hardware-Kommandos erst mit ausdrücklicher Freigabe und dokumentiertem Color4-Gate.
+- Produktzweig: [Draft-PR #56](https://github.com/lxsdd/yeelight-loft-dj/pull/56) auf `feature/google-home-scene-export-20261104`, **gestapelt auf** `fix/color4-sequential-preflight-close-sockets-20261102` (PR #50). Keine Änderung an fremden Color4-/Chroma-/UX-Quellzweigen, keine Änderung an `main`.
+- Die exklusive CHAT-Ownership wurde vor dem ersten Produkt-Source-Commit über die private GitHub-Registry mit atomarem CAS und unabhängigem Readback registriert und erworben. Quellstand und Claim nach dem ersten grünen Build generationssicher synchronisiert.
+- Android-CI: 26 zusätzliche reine Kotlin-/JUnit-Tests in der tatsächlichen App-Quellstruktur; `testDebugUnitTest assembleDebug` im öffentlichen PR-Lauf **erfolgreich**. Dies ist keine Freigabe für reale Color4/Yeelight/Google-Home-Geräte.
+- Status der PR nach weiteren Dokumentationsänderungen stets mit dem **neuesten** tatsächlichen PR-HEAD und passender CI prüfen; alte grüne Läufe sind keine Aussage über spätere SHA.
+- Für echten Einsatz müssen im [Google-Home-Script-Editor](https://home.google.com/automations) Geräte-Einträge per Autovervollständigung auf die tatsächlich verfügbaren Lampen geprüft und das generierte Skript dort manuell validiert, gespeichert und probeweise ausgeführt werden. Es gibt keinen direkten Google-Account-Writer.
+- Keine Merges, Releases, Signierung oder Geräte-/Router-/Firmwaretests ohne die hierfür erforderliche ausdrückliche Freigabe.
 
 ## Offline-Qualifikation
 
