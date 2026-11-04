@@ -125,7 +125,7 @@ class Color4UiAdmissionTest {
         for (id in listOf("one", "two")) {
             assertTrue(a.offer(id, Color4UiAdmission.Kind.RGB, 1, true))
             assertNotNull(take(a, id, Color4UiAdmission.Kind.RGB, 10000, true))
-            a.complete(id, true, false)
+            a.complete(id, tickets.getValue(id), true, false)
         }
         assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 2, true))
         assertNull(take(a, "one", Color4UiAdmission.Kind.RGB, 9999, true))
