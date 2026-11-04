@@ -9,6 +9,7 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: read
+  actions: read
 jobs:
   verify-and-build:
     runs-on: ubuntu-latest
@@ -23,10 +24,30 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.13'
-      # Pull-request builds are untrusted and never receive signing credentials.
-      # Only main and explicit workflow_dispatch builds produce installable APKs.
+      # Manually dispatched RC8 alone may access the legacy signing identity.
+      # Pull-request CI never receives signing secrets or publishes APKs.
+      - name: Validate user-dispatched RC8 and previous exact-source PR CI
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_ACTOR" == "lxsdd" ]] || { echo '::error::Only the repository owner can manually authorize RC8 signing'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || { echo '::error::Unexpected checkout SHA'; exit 1; }
+          grep -Eq '^[[:space:]]*versionCode = 26$' app/build.gradle.kts || exit 1
+          grep -Eq '^[[:space:]]*versionName = "0\.2\.8-rc8"$' app/build.gradle.kts || exit 1
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/58")"
+          [[ "$(jq -r '.head.sha' <<< "$pr")" == "$GITHUB_SHA" ]] || { echo '::error::RC8 PR head moved'; exit 1; }
+          [[ "$(jq -r '.head.ref' <<< "$pr")" == 'integration/rc8-safety-google-home-20261105' ]] || exit 1
+          [[ "$(jq -r '.base.ref' <<< "$pr")" == 'chat/color4-safety-single-session-failsafe-20261104' ]] || exit 1
+          [[ "$(jq -r '.state' <<< "$pr")" == 'open' && "$(jq -r '.draft' <<< "$pr")" == 'true' ]] || exit 1
+          runs="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs" -f event=pull_request -f head_sha="$GITHUB_SHA" -f per_page=100)"
+          green="$(jq --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success" and .event == "pull_request" and .name == "Android CI")] | length' <<< "$runs")"
+          [[ "$green" =~ ^[0-9]+$ && "$green" -ge 1 ]] || { echo '::error::RC8 exact-source PR Android CI not successful'; exit 1; }
+          echo "RC8 manual signing permitted for audited source $GITHUB_SHA"
       - name: Configure stable signing (trusted builds only)
-        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        if: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') }}
         env:
           STORE_B64: ${{ secrets.YEELIGHT_SIGNING_STORE_B64 }}
           STORE_PASSWORD: ${{ secrets.YEELIGHT_SIGNING_PASSWORD }}
@@ -56,7 +77,7 @@ jobs:
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - name: Verify permanent APK signing certificate
-        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        if: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -80,7 +101,7 @@ jobs:
             exit 1
           fi
       - uses: actions/upload-artifact@v4
-        if: ${{ success() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        if: ${{ success() && ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd')) }}
         with:
           name: yeelight-loft-dj-stable-signed
           path: app/build/outputs/apk/debug/*.apk
@@ -89,10 +110,10 @@ jobs:
 
   # A signed Actions artifact expires after 14 days and the ChatGPT Library
   # link is not a reliable APK distribution channel. Publish a durable,
-  # versioned asset only from a green, trusted main-branch build.
+  # versioned asset only from green trusted main OR owner-dispatched reviewed RC8.
   publish-signed-github-release:
     needs: verify-and-build
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    if: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -111,23 +132,30 @@ jobs:
           set -euo pipefail
           version="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)"[[:space:]]*$/\1/p' app/build.gradle.kts)"
           build_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+)[[:space:]]*$/\1/p' app/build.gradle.kts)"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Unexpected versionName"; exit 1; }
-          [[ "$build_code" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Unexpected versionCode"; exit 1; }
+          release_mode=()
+          if [[ "$GITHUB_REF" == "refs/heads/integration/rc8-safety-google-home-20261105" ]]; then
+            [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_ACTOR" == "lxsdd" ]] || exit 1
+            [[ "$version" == "0.2.8-rc8" && "$build_code" == "26" ]] || { echo "::error::Wrong RC8 version"; exit 1; }
+            release_mode=(--prerelease)
+          else
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Unexpected stable version"; exit 1; }
+            [[ "$build_code" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Unexpected versionCode"; exit 1; }
+          fi
           shopt -s nullglob
           apks=(signed-apk/*.apk)
           [[ ${#apks[@]} -eq 1 ]] || { echo "::error::Expected exactly one signed APK"; exit 1; }
           asset="Yeelight-Loft-DJ-v${version}-build${build_code}-signed.apk"
           cp "${apks[0]}" "$asset"
           test -s "$asset"
-          sha256sum "$asset"
+          sha256sum "$asset" | tee apk.sha256
           tag="v${version}"
           # Never silently replace a public binary or move a published tag.
           if gh release view "$tag" --json tagName >/dev/null 2>&1; then
             echo "GitHub Release $tag already exists: immutable asset retained."
             exit 0
           fi
-          gh release create "$tag" "$asset" \
+          gh release create "$tag" "$asset" apk.sha256 "${release_mode[@]}" \
             --target "$GITHUB_SHA" \
             --title "Yeelight Loft DJ ${version} (Build ${build_code})" \
-            --notes "Regulär signierte Android-APK aus dem erfolgreich getesteten und per Zertifikat verifizierten main-Build. APK-Name: ${asset}. Installierbares In-Place-Update bei übereinstimmender Signatur. Hardwaretest der Lampen bleibt gesondert erforderlich."
+            --notes "Prüfbar signierte Android-APK aus CI: ${GITHUB_SHA}. APK-Name: ${asset}. Installation nur bei passender bisheriger App-Signatur; Color4-Live-Musiktests bleiben deaktiviert. Keine Hardware-Abnahme durch CI."
           echo "Dauerhafter Download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${asset}"
