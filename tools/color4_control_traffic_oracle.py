@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Offline Color4 high-frequency-control scheduling oracle (NO device I/O).
 
-It compares UI slider events against a conservative classic LAN envelope:
+It compares UI slider events against a conservative classic LAN envelope.
+Commands are proposed ONLY at observed UI-event timestamps; a pending tail
+never creates an implicit future timer, write or command queue:
 24 attempted requests/rolling 60s and at least 1.5s between writes, matching
 the separately developed *proposed* app policy in draft PR #31. These are
 client-side safety assumptions, NOT reverse engineered firmware capacities.
@@ -88,10 +90,12 @@ def plan_classic_slider(
         if state!="READY":
             break
         # Bounded work: at most one pending event for each UI control.
-        while pending and next_send<=event.at_ms and state=="READY":
+        # Only an actual observed UI event can trigger at most ONE eligible
+        # request. Never invent writes inside a quiet gap or replay a backlog.
+        if pending and next_send<=event.at_ms and state=="READY":
             pick=min(pending.values(),key=lambda e:e.at_ms)
             pending.pop(pick.kind)
-            emit(pick,max(next_send,pick.at_ms))
+            emit(pick,event.at_ms)
         if state!="READY":
             break
         if not sends and not pending:
@@ -101,12 +105,10 @@ def plan_classic_slider(
                 coalesced_updates+=1
             pending[event.kind]=event
         most_recent[event.kind]=event.value
-    # A UI plan can suggest a delayed final frame, but this is NOT a queued
-    # background task or permission to issue a future network request.
-    while pending and state=="READY":
-        pick=min(pending.values(),key=lambda e:e.at_ms)
-        pending.pop(pick.kind)
-        emit(pick,max(next_send,pick.at_ms))
+    # Pending updates are diagnostic only: without a new explicit input or
+    # separately approved timer there is NO future send. Discard the tail;
+    # the next independent call must not inherit stale RGB/brightness.
+    unsent_tail=sorted(pending)
     last_sent={e.kind:e.value for _,e in sends}
     return {
         "mode":"CLASSIC_LAN_SYNTHETIC",
@@ -114,6 +116,8 @@ def plan_classic_slider(
         "attempted_classic_commands":len(sends),
         "coalesced_updates":coalesced_updates,
         "dropped_when_local_budget_exhausted":dropped_by_local_budget,
+        "unsent_tail_control_kinds":unsent_tail,
+        "no_implicit_background_dispatch":True,
         "state":state,
         "outcomes":outcomes,
         "max_planned_command_delay_ms":max(

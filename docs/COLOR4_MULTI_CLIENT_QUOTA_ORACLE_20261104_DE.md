@@ -53,3 +53,24 @@ Das separate klassische Steuerlast-Oracle weist nun booleansche,
 nichtganzzahlige und ausserhalb 64-bit liegende
 Zeit-/Farbeingaben sowie nichtbooleansche SUPPORT-Gates ab.
 Kein Quota-Bypass, Release, Firmware-Patch, Live-Chroma- oder LAN-Test.
+
+
+## Folgekorrektur: nur explizite UI-Ereignisse erzeugen Steuerungsversuche
+
+Das klassische Steuerlast-Oracle hatte bislang nach dem letzten UI-Ereignis noch
+die offenen Farb-/Helligkeitswerte bei einem *zukuenftigen* Zeitpunkt als
+gesendete synthetische Befehle gezaehlt. Bei groesseren Zeitluecken wurden
+historische Sendezeitpunkte erfunden, obwohl es dort keinen simulierten
+Dispatch-/Timer-Aufruf gab. Das widersprach den geforderten Eigenschaften
+kein unsichtbarer Timer, kein Retry und keine nachlaufende Farbsteuerung.
+
+Jetzt wird hoechstens **ein** versuchter klassischer LAN-Befehl pro
+ausdruecklich vorhandenem UI-Ereignis mit dessen **tatsaechlichem Zeitstempel**
+vorgeschlagen. Der Rest am Ende ist keine Sendequeue:
+unsent_tail_control_kinds meldet nur die Typen ungesendeter Werte;
+last_value_forwarded_by_kind ist in diesem Fall false.
+Die Daten werden nicht automatisch nach einem Idle-Intervall ausgesendet.
+Vier neue Regressionen pruefen Stille nach dem letzten Input, grosse
+Zeitluecken, gemeinsam anstehende RGB-/Helligkeitswerte und
+no-implicit-background-dispatch. Dies ist weiterhin nur eine
+synthetische Produktanforderung, noch keine Android-Hardwareabnahme.

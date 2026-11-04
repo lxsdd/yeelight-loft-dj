@@ -13,7 +13,9 @@ class Color4TrafficOracleTests(unittest.TestCase):
     def test_120_rgb_slider_updates_do_not_become_120_classic_commands(self):
         p=demonstration()["classic"]
         self.assertLessEqual(p["attempted_classic_commands"],3)
-        self.assertTrue(p["last_value_forwarded_by_kind"]["rgb"])
+        self.assertFalse(p["last_value_forwarded_by_kind"]["rgb"])
+        self.assertEqual(p["unsent_tail_control_kinds"],["rgb"])
+        self.assertTrue(p["no_implicit_background_dispatch"])
         self.assertLess(p["attempted_classic_commands"],p["input_events"])
         self.assertFalse(p["physical_lamp_ack_verified"])
 
@@ -33,7 +35,8 @@ class Color4TrafficOracleTests(unittest.TestCase):
 
     def test_brightness_and_rgb_are_not_each_others_latest_wins(self):
         e=[Event(0,"rgb",0),Event(5,"bright",30),Event(10,"rgb",15),
-           Event(20,"bright",45)]
+           Event(20,"bright",45),Event(1500,"rgb",15),
+           Event(3000,"bright",45)]
         p=plan_classic_slider(e)
         self.assertTrue(p["last_value_forwarded_by_kind"]["rgb"])
         self.assertTrue(p["last_value_forwarded_by_kind"]["bright"])
@@ -123,6 +126,45 @@ class Color4TrafficOracleTests(unittest.TestCase):
         for bad in (0, 1, None, "true"):
             with self.assertRaises(ValueError):
                 plan_music_frames([Event(0, "rgb", 1)], confirmed_support=bad)
+
+
+    def test_no_post_input_commands_or_fabricated_idle_gap_attempts(self):
+        events=[Event(0,"rgb",100),Event(1,"bright",44)]
+        p=plan_classic_slider(events)
+        self.assertEqual(p["attempt_timestamps_ms"],[0])
+        self.assertEqual(p["attempted_classic_commands"],1)
+        self.assertEqual(p["unsent_tail_control_kinds"],["bright"])
+        self.assertFalse(p["last_value_forwarded_by_kind"]["bright"])
+        self.assertEqual(p["max_planned_command_delay_ms"],0)
+        self.assertTrue(p["no_implicit_background_dispatch"])
+
+    def test_large_input_time_jump_never_uses_synthetic_past_send_timestamp(self):
+        events=[Event(0,"rgb",100),Event(1,"bright",55),
+                Event(30_000,"rgb",200)]
+        p=plan_classic_slider(events)
+        self.assertEqual(p["attempt_timestamps_ms"],[0,30_000])
+        self.assertEqual(p["attempted_classic_commands"],2)
+        self.assertEqual(p["unsent_tail_control_kinds"],["rgb"])
+        self.assertTrue(p["last_value_forwarded_by_kind"]["bright"])
+        self.assertFalse(p["last_value_forwarded_by_kind"]["rgb"])
+
+    def test_no_multi_request_burst_even_with_multiple_pending_kinds(self):
+        events=[Event(0,"rgb",1),Event(1,"bright",25),
+                Event(2,"rgb",2),Event(60_000,"bright",26)]
+        p=plan_classic_slider(events)
+        self.assertEqual(p["attempt_timestamps_ms"],[0,60_000])
+        self.assertEqual(p["attempted_classic_commands"],2)
+        self.assertEqual(p["unsent_tail_control_kinds"],["bright","rgb"])
+        self.assertTrue(p["no_implicit_background_dispatch"])
+
+    def test_final_value_requires_a_new_observed_ui_event(self):
+        pending=plan_classic_slider([Event(0,"rgb",10),Event(10,"rgb",20)])
+        self.assertEqual(pending["attempt_timestamps_ms"],[0])
+        self.assertFalse(pending["last_value_forwarded_by_kind"]["rgb"])
+        with_next=plan_classic_slider([Event(0,"rgb",10),Event(10,"rgb",20),
+                                       Event(1500,"rgb",20)])
+        self.assertEqual(with_next["attempt_timestamps_ms"],[0,1500])
+        self.assertTrue(with_next["last_value_forwarded_by_kind"]["rgb"])
 
 
 if __name__=="__main__":
