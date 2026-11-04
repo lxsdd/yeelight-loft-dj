@@ -190,6 +190,12 @@ class LoftController(context: Context) {
     var lampSnapshots by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
         private set
 
+    // Separate, atomic, explicitly requested capture; never a cached UI/recovery state.
+    var googleHomeCaptured by mutableStateOf<Map<String, LampSnapshot>>(emptyMap())
+        private set
+    var googleHomeCapturedIds by mutableStateOf<Set<String>>(emptySet())
+        private set
+
 
 
     private fun loadRooms(): List<String> =
@@ -1121,6 +1127,42 @@ class LoftController(context: Context) {
     }
 
     fun snapshotFor(device: YeelightDevice): LampSnapshot? = lampSnapshots[device.ip]
+
+    /**
+     * One user-initiated get_prop per selected lamp via the existing serial LAN
+     * safety gate. No partial results, retries, probes, lighting writes or scans.
+     */
+    fun captureGoogleHomeSnapshot(selected: List<YeelightDevice>) {
+        googleHomeCaptured = emptyMap()
+        googleHomeCapturedIds = emptySet()
+        if (busy || recoveryPending || musicSending || musicStopPending) {
+            status = "Erfassung während Lichtshow, Wiederherstellung oder anderer Aktion gesperrt"
+            return
+        }
+        val eligible = try {
+            GoogleHomeCapturePlan.validate(
+                selected, devices,
+                LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys),
+            )
+        } catch (ex: IllegalArgumentException) {
+            status = "Erfassung abgebrochen: " + ex.message.orEmpty()
+            return
+        }
+        task("Lese ${eligible.size} ausgewählte Lampen einmalig, nur lesend …") {
+            val freshlyRead = linkedMapOf<String, LampSnapshot>()
+            for ((index, device) in eligible.withIndex()) {
+                if (index > 0) delay(1_500L) // extra global pacing; per-device LAN gate remains authoritative
+                val current = withContext(Dispatchers.IO) { YeelightLan.readStatus(device) }
+                require(SceneRecovery.supported(current)) {
+                    "Unvollständiger Farbstatus: " + displayName(device)
+                }
+                freshlyRead[device.ip] = current
+            }
+            googleHomeCaptured = freshlyRead.toMap()
+            googleHomeCapturedIds = eligible.map { it.id }.toSet()
+            "${eligible.size} Lampen erfolgreich erfasst – noch keine Google-Home-Aktion ausgeführt"
+        }
+    }
 
     fun refreshLamp(device: YeelightDevice) = task("Lese Status von " + displayName(device) + " …") {
         val current = withContext(Dispatchers.IO) { YeelightLan.readStatus(device) }
