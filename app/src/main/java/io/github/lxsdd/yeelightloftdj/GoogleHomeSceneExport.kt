@@ -158,7 +158,7 @@ object GoogleHomeSceneExport {
         require(phrase.length in 3..80 && safeText(phrase) && !containsIpv4(phrase)) { "Ungültiger Sprachbefehl" }
         // Google's OkGoogle starter wants the utterance without the wake word.
         // This does not try to predict or guarantee Assistant recognition.
-        require(!Regex("^(?:hey|ok|okay)\\\\s+google(?:\\\\b|$)", RegexOption.IGNORE_CASE).containsMatchIn(phrase.trim())) {
+        require(!Regex("""^(?:hey|ok|okay)\s+google(?:\b|$)""", RegexOption.IGNORE_CASE).containsMatchIn(phrase.trim())) {
             "Sprachstarter ohne 'Hey Google' oder 'Ok Google' eingeben"
         }
         require(actions.size in 1..MAX_ACTIONS) { "Zu viele Google-Home-Aktionen" }
