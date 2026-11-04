@@ -10,6 +10,7 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 jobs:
   verify-and-build:
     runs-on: ubuntu-latest
