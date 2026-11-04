@@ -5,7 +5,7 @@ import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from color4_control_traffic_oracle import (
     Event,plan_classic_slider,plan_music_frames,demonstration,
-    CLASSIC_BUDGET,CLASSIC_SPACING_MS,WINDOW_MS
+    CLASSIC_BUDGET,CLASSIC_SPACING_MS,WINDOW_MS,MAX_CLOCK_MS
 )
 
 
@@ -104,6 +104,25 @@ class Color4TrafficOracleTests(unittest.TestCase):
             plan_classic_slider([Event(i,"rgb",i) for i in range(20001)])
         with self.assertRaises(ValueError):
             plan_music_frames([Event(0,"rgb",-1)],confirmed_support=True)
+
+
+    def test_invalid_types_cannot_become_realistic_traffic_or_support(self):
+        for bad in (True, False, -1, MAX_CLOCK_MS + 1, "3", 2.5):
+            with self.assertRaises(ValueError):
+                plan_classic_slider([Event(bad, "rgb", 1)])
+        for bad in (True, False, 0.1, "14", -2):
+            with self.assertRaises(ValueError):
+                plan_classic_slider([Event(0, "bright", bad)])
+        for bad in (True, 2.5, "25", -1):
+            with self.assertRaises(ValueError):
+                plan_classic_slider([Event(0, "rgb", 0)],
+                                    ambiguous_timeout_at_ms=bad)
+            with self.assertRaises(ValueError):
+                plan_classic_slider([Event(0, "rgb", 0)],
+                                    firmware_quota_rejection_at_ms=bad)
+        for bad in (0, 1, None, "true"):
+            with self.assertRaises(ValueError):
+                plan_music_frames([Event(0, "rgb", 1)], confirmed_support=bad)
 
 
 if __name__=="__main__":

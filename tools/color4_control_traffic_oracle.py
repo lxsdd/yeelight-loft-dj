@@ -15,6 +15,8 @@ from dataclasses import dataclass
 import argparse
 import json
 
+MAX_CLOCK_MS=(1 << 63)-1
+
 CLASSIC_BUDGET=24
 WINDOW_MS=60_000
 CLASSIC_SPACING_MS=1_500
@@ -35,9 +37,10 @@ def validate(events:list[Event]):
         raise ValueError("invalid sequence length")
     last=-1
     for e in events:
-        if not isinstance(e,Event) or not isinstance(e.at_ms,int) or e.at_ms<last or e.at_ms<0:
+        if (not isinstance(e,Event) or type(e.at_ms) is not int or
+                not 0<=e.at_ms<=MAX_CLOCK_MS or e.at_ms<last):
             raise ValueError("events must be monotonic")
-        if e.kind not in TYPES or not isinstance(e.value,int) or (
+        if e.kind not in TYPES or type(e.value) is not int or (
                 e.kind=="rgb" and not 0<=e.value<=0xffffff) or (
                 e.kind=="bright" and not 1<=e.value<=100):
             raise ValueError("unsupported or invalid command")
@@ -49,10 +52,9 @@ def plan_classic_slider(
         firmware_quota_rejection_at_ms:int|None=None,
         ambiguous_timeout_at_ms:int|None=None):
     validate(events)
-    if firmware_quota_rejection_at_ms is not None and firmware_quota_rejection_at_ms<0:
-        raise ValueError("invalid rejection timestamp")
-    if ambiguous_timeout_at_ms is not None and ambiguous_timeout_at_ms<0:
-        raise ValueError("invalid timeout timestamp")
+    for stamp in (firmware_quota_rejection_at_ms, ambiguous_timeout_at_ms):
+        if stamp is not None and (type(stamp) is not int or not 0<=stamp<=MAX_CLOCK_MS):
+            raise ValueError("invalid injected event timestamp")
     pending:dict[str,Event]={}
     attempted:deque[int]=deque()
     sends=[]
@@ -126,6 +128,8 @@ def plan_classic_slider(
 
 def plan_music_frames(events:list[Event], *, confirmed_support:bool):
     validate(events)
+    if type(confirmed_support) is not bool:
+        raise ValueError("explicit boolean SUPPORT evidence required")
     if not confirmed_support:
         return {
             "mode":"REFUSED_UNVERIFIED_MUSIC",

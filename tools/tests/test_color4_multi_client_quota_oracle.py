@@ -171,5 +171,75 @@ class Color4MultiClientQuotaOracleTest(unittest.TestCase):
         self.assertNotIn("token", repr(result))
 
 
+    def test_three_lan_outages_with_working_cloud_and_no_force_stop_recovery(self):
+        lamps = [Color4MultiClientQuotaOracle() for _ in range(5)]
+        for lamp in lamps:
+            self.assertEqual(lamp.open("loft", "local", 0), "MODELED_OPEN")
+            self.assertEqual(lamp.open("classic", "external", 0), "MODELED_OPEN")
+        for lamp in lamps[:3]:
+            lamp.inject_lan_service_stall(100)
+        for i, lamp in enumerate(lamps):
+            self.assertEqual(lamp.modeled_cloud_path(101),
+                             "MODELED_CLOUD_ROUTE_INDEPENDENT_OF_LAN")
+            expected = ("INJECTED_LAN_SERVICE_UNAVAILABLE" if i < 3
+                        else "MODELED_ACCEPTED_NOT_REAL_ACK")
+            self.assertEqual(lamp.command("classic", "set_power", 102).status, expected)
+            self.assertEqual(lamp.simulate_app_force_stop(103), 1)
+            self.assertEqual(lamp.command("classic", "get_prop", 104).status, expected)
+        # Reboot ONE affected lamp at a time, leave the other controls as-is.
+        for i, lamp in enumerate(lamps[:3]):
+            lamp.simulate_power_cycle(105 + i)
+            self.assertFalse(lamp.snapshot(110)["injected_lan_service_stalled"])
+            self.assertEqual(lamp.open("classic", "external", 110), "MODELED_OPEN")
+            self.assertEqual(lamp.command("classic", "get_prop", 110).status,
+                             "MODELED_ACCEPTED_NOT_REAL_ACK")
+        self.assertEqual(sum(lamp.snapshot(111)["injected_lan_service_stalled"]
+                             for lamp in lamps), 0)
+
+    def test_reboot_cannot_erase_host_quarantine_or_fake_a_verified_recovery(self):
+        lamp = Color4MultiClientQuotaOracle()
+        lamp.open("loft", "local", 0)
+        lamp.open("classic", "external", 0)
+        self.assertEqual(lamp.command("loft", "get_prop", 0,
+                         synthetic_reply="quota").status, "INJECTED_QUOTA_REJECTION")
+        lamp.simulate_power_cycle(100)
+        self.assertEqual(lamp.open("loft-next", "local", 200), "MODELED_OPEN")
+        self.assertEqual(lamp.command("loft-next", "set_rgb", 200).status,
+                         "LOCAL_FAIL_CLOSED")
+        self.assertTrue(lamp.snapshot(200)["host_terminal"])
+        self.assertEqual(lamp.open("classic", "external", 200), "MODELED_OPEN")
+        self.assertEqual(lamp.command("classic", "set_power", 200).status,
+                         "MODELED_ACCEPTED_NOT_REAL_ACK")
+
+    def test_ambiguous_lan_stall_never_masquerades_as_quota_receipt(self):
+        lamp = Color4MultiClientQuotaOracle()
+        lamp.open("classic", "external", 0)
+        lamp.inject_lan_service_stall(0)
+        denied = lamp.command("classic", "get_prop", 0)
+        self.assertEqual(denied.status, "INJECTED_LAN_SERVICE_UNAVAILABLE")
+        self.assertEqual(denied.model_global_attempts, 0)
+        self.assertFalse(denied.host_terminal)
+        self.assertTrue(lamp.snapshot(0)["injected_lan_service_stalled"])
+        self.assertEqual(lamp.modeled_cloud_path(0),
+                         "MODELED_CLOUD_ROUTE_INDEPENDENT_OF_LAN")
+
+    def test_per_device_stall_isolation_and_strict_virtual_time_validation(self):
+        lamps = [Color4MultiClientQuotaOracle() for _ in range(14)]
+        for i, lamp in enumerate(lamps):
+            if i in (2, 4, 9):
+                lamp.inject_lan_service_stall(1)
+        lamps[4].simulate_power_cycle(2)
+        self.assertTrue(lamps[2].snapshot(2)["injected_lan_service_stalled"])
+        self.assertFalse(lamps[4].snapshot(2)["injected_lan_service_stalled"])
+        self.assertTrue(lamps[9].snapshot(2)["injected_lan_service_stalled"])
+        for method in (lamps[0].inject_lan_service_stall,
+                       lamps[0].simulate_app_force_stop,
+                       lamps[0].simulate_power_cycle,
+                       lamps[0].modeled_cloud_path):
+            for bad in (-1, True, "bad", 1.5):
+                with self.assertRaises(ValueError):
+                    method(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -25,3 +25,31 @@ Die Statuswerte `MODELED_*` sind Annahmen des Gegenmodells und **keine** realen 
 ## Entscheidung fuer die naechste Forschungsphase
 
 Erst eine privat zugreifbare, SHA-256-verifizierte Originalfirmware kann den OEM-Fehlervektor an konkrete Xtensa-Callsites und die Refill-Zustandsmaschine anbinden. Alternativ wuerde ein spaeter einzeln genehmigter, minimaler LAN-Beobachtungsversuch die konkurrierenden Ursachen anhand zeitlicher Reaktion und authentischer Fehler-IDs eingrenzen. Bis dahin bleiben der Quota-Root-Cause und die echte Hardwareperformance offen. Der produktive PR #31 und alle Musik-/UX-Zweige sind unveraendert.
+
+
+## Nachtrag: Dreifach-LAN-Lockout als getrenntes Offline-Gegenmodell
+
+Ein injizierter geraeteinterner LAN-Dienst-Ausfall wird mit
+inject_lan_service_stall() simuliert und **nicht** aus niedrigem oder hohem
+Befehlszaehler behauptet. modeled_cloud_path() bleibt davon unabhaengig:
+Cloud/Google-Home/Voice-Erfolg war beim echten Vorfall schon bekannt, waehrend
+Yeelight Classic die drei Esstischlampen nicht steuern konnte.
+simulate_app_force_stop() entfernt nur modellierte lokale App-Sitzungen und
+heilt keinen eingeschlossenen Firmwarezustand.
+simulate_power_cycle() loescht nur volatile modellierte Geraetezustaende;
+eine bereits bestehende App-Quarantaene darf dadurch nicht automatisch
+verschwinden. Eine gueltige gerätespezifische Recovery-Antwort bleibt Pflicht.
+
+Die neuen fuenf-Lampen-/14-Lampen-Regressionen stellen drei simulierte
+LAN-Ausfaelle, zwei gesunde Kontrolllampen, weiterhin unabhaengigen
+Cloud-Zugriff, erfolglosen App-Stopp und die drei einzelnen
+Power-Cycle-Wiederherstellungen nebeneinander. Es werden weder
+Netzwerkpakete gesendet noch echte Lampen angesprochen.
+**Diese Simulation identifiziert keine reale OEM-Quota-Root-Cause:**
+Die gesehenen 8502/1707/8502 Betriebsstunden belegen insbesondere
+keinen gemeinsamen Firmware-Timerfehler.
+
+Das separate klassische Steuerlast-Oracle weist nun booleansche,
+nichtganzzahlige und ausserhalb 64-bit liegende
+Zeit-/Farbeingaben sowie nichtbooleansche SUPPORT-Gates ab.
+Kein Quota-Bypass, Release, Firmware-Patch, Live-Chroma- oder LAN-Test.
