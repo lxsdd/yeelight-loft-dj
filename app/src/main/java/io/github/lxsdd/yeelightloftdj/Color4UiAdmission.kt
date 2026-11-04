@@ -86,9 +86,8 @@ class Color4UiAdmission(
         if (lamp.sent.size >= maxPerMinute) return null
         val last = lamp.lastSent
         if (last != null && (nowMs < last || nowMs - last < spacingMs)) return null
-        lamp.sent.addLast(nowMs)
-        lamp.lastSent = nowMs
-        // A wrapped ticket must never alias a previous request generation.
+        // Ticket exhaustion must fail closed BEFORE consuming a send-budget slot.
+        // A wrapped generation could otherwise alias a stale completion.
         if (nextTicket == Long.MAX_VALUE) {
             lamp.quarantined = true
             lamp.pendingRgb = null
@@ -96,6 +95,8 @@ class Color4UiAdmission(
             return null
         }
         val ticket = nextTicket++
+        lamp.sent.addLast(nowMs)
+        lamp.lastSent = nowMs
         lamp.inflightTicket = ticket
         when (kind) {
             Kind.RGB -> lamp.pendingRgb = null
