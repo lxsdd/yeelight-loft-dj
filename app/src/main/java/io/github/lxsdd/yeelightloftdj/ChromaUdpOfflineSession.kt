@@ -79,6 +79,8 @@ class ChromaUdpOfflineSession(
     private var lastObservedMs = -1L
     private var lastKeepaliveMs = -1L
     private var missedKeepalives = 0
+    // Keep the OEM token byte-for-byte: changing hex case changes the wire text.
+    // A valid-looking 32-hex token is not necessarily a case-insensitive key.
     private var token: String? = null
     // Color frames do not require ACKs in the pinned OEM sample, but a
     // correlated *error* can still arrive. Retain at most one bounded set of
@@ -162,7 +164,7 @@ class ChromaUdpOfflineSession(
         if (candidate !is String || !HEX_TOKEN.matches(candidate))
             return ChromaPreviewEvent.IGNORED_INVALID_REPLY
         return if (state == ChromaPreviewState.AWAITING_TOKEN) {
-            token = candidate.lowercase()
+            token = candidate // preserve the exact opaque 32-hex OEM token bytes
             handshakeId = null
             pendingKeepaliveId = null
             missedKeepalives = 0
@@ -171,7 +173,7 @@ class ChromaUdpOfflineSession(
             state = ChromaPreviewState.ACTIVE
             ChromaPreviewEvent.ACCEPTED_TOKEN
         } else {
-            if (!candidate.equals(token, ignoreCase = true))
+            if (candidate != token)
                 return ChromaPreviewEvent.IGNORED_INVALID_REPLY
             pendingKeepaliveId = null
             missedKeepalives = 0
