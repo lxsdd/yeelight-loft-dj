@@ -42,3 +42,10 @@ Stand: 2026-11-04. **Quellcode integriert in den isolierten Draft-PR #56** (Basi
 - https://developers.home.google.com/automations/schema/reference/entity/sht_device/brightness_absolute_command
 - https://developers.home.google.com/automations/schema/reference/entity/sht_device/on_off_command
 - https://developers.home.google.com/automations/example-scripts
+
+## Praxistest und Folgekorrekturen (04.11.2026)
+- Nutzerbestätigter Google-Home-Editor-Test: **keine Validierungsfehler oder Warnungen**. Drei individuell zuordenbare Geräte haben beim einmaligen Cloud-Test tatsächlich auf Farbe/Helligkeit reagiert. Dies beweist **nicht**, dass Google-Home-Farbkreis und physische LED-Farbe visuell übereinstimmen.
+- Benutzer wählt bei Voice-Startern eine **kurze, eindeutige Formulierung**, ohne `Hey Google`. Die App speichert Namen und Sprachstarter lokal für den nächsten Editorbesuch. Google Assistant kann Sprache unterschiedlich interpretieren; ein erfolgreicher Script-Editor-Check garantiert kein erkanntes Sprachereignis.
+- Bei ausdrücklich angeforderter, frisch erfasster **RGB-Momentaufnahme** kann der Benutzer pro ausgewählter Lampe genau für diesen Szenenexport einen alternativen sechsstelligen RGB-Hexwert eingeben. Ohne Eingabe bleibt der Ursprung exakt erhalten. Keine pauschale Farblut/firmwareseitige Korrektur, keine lokale Lichtänderung, kein globales Profil. Vor erneuter Erfassung wird der Szenen-Override verworfen.
+- Farbabweichungen müssen **optisch pro Gerät bei mehreren Zielwerten** geprüft werden. Ein Pixel im Google-Home-Farbkreis oder ein Yeelight-`get_prop`-Status ist kein physisches Farbmetrik-Messgerät. Automatische LEDs-Kalibrierung und Cloud-/Firmware-Ursachenzuweisung bleiben unbelegt.
+- Die sechs mehrfach verwendeten Lampenbezeichnungen in der Google-Home-Wohnung werden **nicht** automatisch umbenannt oder willkürlich nummeriert. Mehrdeutige Zielgeräte müssen im Export weiterhin eindeutig aufgelöst sein; der vorhandene sichere Export verweigert doppelte Referenzen.

@@ -156,6 +156,11 @@ object GoogleHomeSceneExport {
     private fun build(name: String, phrase: String, actions: List<String>, warnings: List<String>): HomeExport {
         require(name.length in 1..64 && safeText(name) && !containsIpv4(name)) { "Ungültiger Szenenname" }
         require(phrase.length in 3..80 && safeText(phrase) && !containsIpv4(phrase)) { "Ungültiger Sprachbefehl" }
+        // Google's OkGoogle starter wants the utterance without the wake word.
+        // This does not try to predict or guarantee Assistant recognition.
+        require(!Regex("^(?:hey|ok|okay)\\\\s+google(?:\\\\b|$)", RegexOption.IGNORE_CASE).containsMatchIn(phrase.trim())) {
+            "Sprachstarter ohne 'Hey Google' oder 'Ok Google' eingeben"
+        }
         require(actions.size in 1..MAX_ACTIONS) { "Zu viele Google-Home-Aktionen" }
         val yaml = buildString {
             append("metadata:\n")

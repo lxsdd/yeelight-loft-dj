@@ -25,8 +25,15 @@ fun GoogleHomeExportPanel(controller: LoftController) {
     val selection = remember { mutableStateMapOf<String, Boolean>() }
     val refs = remember { mutableStateMapOf<String, String>() }
     var mode by remember { mutableIntStateOf(0) }
-    var title by remember { mutableStateOf("Loft Abendlicht") }
-    var phrase by remember { mutableStateOf("Loft Abendlicht starten") }
+    // Store only the author's chosen script wording locally. No Google account access.
+    var title by remember {
+        mutableStateOf(preferences.getString("scene.title", "Loft Abendlicht").orEmpty())
+    }
+    var phrase by remember {
+        mutableStateOf(preferences.getString("scene.phrase", "Loft Abendlicht starten").orEmpty())
+    }
+    // One-shot, scene-specific RGB edits; never apply as a global bulb calibration.
+    val rgbEdits = remember { mutableStateMapOf<String, String>() }
     var consent by remember { mutableStateOf(false) }
     var sceneId by remember { mutableStateOf(SceneLibrary.scenes.firstOrNull()?.id.orEmpty()) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -62,13 +69,27 @@ fun GoogleHomeExportPanel(controller: LoftController) {
                 label = { Text("Verlaufsvorschau") })
         }
         OutlinedTextField(
-            value = title, onValueChange = { title = it; result = null },
+            value = title, onValueChange = {
+                title = it
+                preferences.edit().putString("scene.title", it).apply()
+                result = null
+            },
             label = { Text("Szenenname") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
-            value = phrase, onValueChange = { phrase = it; result = null },
+            value = phrase, onValueChange = {
+                phrase = it
+                preferences.edit().putString("scene.phrase", it).apply()
+                result = null
+            },
             label = { Text("Sprachbefehl zum Starten") }, singleLine = true,
             modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "Nur die gesprochene Formulierung eintragen, ohne „Hey Google“. " +
+                "Kurz und eindeutig wählen; der Skript-Validator testet keine Spracherkennung. " +
+                "Schon anderweitig belegte Sprachbefehle können kollidieren.",
+            style = MaterialTheme.typography.bodySmall,
         )
         Text("Zielgeräte in Google Home zuordnen", style = MaterialTheme.typography.titleMedium)
         Text("Bitte exakt den Gerätenamen und Raum aus Google Home eintragen (Gerätename - Raum). " +
@@ -105,6 +126,34 @@ fun GoogleHomeExportPanel(controller: LoftController) {
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        // The bulb may render a requested Google Home RGB visually differently.
+                        // Only explicitly chosen one-scene overrides are offered, never guessed.
+                        val captured = controller.googleHomeCaptured[device.ip]
+                        if (mode == 0 && controller.googleHomeCapturedIds == ids &&
+                            captured?.isOn == true && captured.colorMode in setOf(1, 3)
+                        ) {
+                            val originalHex = captured.rgb?.let {
+                                it.toString(16).uppercase(java.util.Locale.ROOT).padStart(6, '0')
+                            }
+                            Text(
+                                if (originalHex != null) "Gelesener RGB-Zielwert: #$originalHex"
+                                else "Gelesene HSV-Farbe – RGB-Export wird näherungsweise umgerechnet",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            OutlinedTextField(
+                                value = rgbEdits[device.id].orEmpty(),
+                                onValueChange = { next ->
+                                    rgbEdits[device.id] = next
+                                    result = null
+                                },
+                                label = { Text("RGB nur für diese Szene korrigieren (optional)") },
+                                placeholder = { Text("#FF7700") },
+                                supportingText = { Text("Sechs Hex-Zeichen; leer lässt die erfasste Farbe unverändert. " +
+                                    "Der echte Farbton muss optisch an der Lampe geprüft werden.") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }
@@ -117,6 +166,7 @@ fun GoogleHomeExportPanel(controller: LoftController) {
                 enabled = selected.isNotEmpty() && !controller.busy && !controller.recoveryPending,
                 onClick = {
                     result = null
+                    rgbEdits.clear() // never silently reuse a correction for a new capture
                     notice = "Erfassung angefordert; bei einer Fehlantwort wird die gesamte Aufnahme verworfen."
                     controller.captureGoogleHomeSnapshot(selected)
                 },
@@ -170,7 +220,18 @@ fun GoogleHomeExportPanel(controller: LoftController) {
                             "Bitte die gewählten Lampen neu erfassen"
                         }
                         val lamps = GoogleHomeSnapshotAdapter.fromFreshSnapshots(mapped, captured)
-                        GoogleHomeSceneExport.staticScene(title.trim(), phrase.trim(), lamps)
+                        val manualOverrides = selected.mapNotNull { device ->
+                            rgbEdits[device.id]?.trim()?.takeIf { it.isNotEmpty() }?.let { hex ->
+                                mapped.getValue(device.ip) to hex
+                            }
+                        }.toMap()
+                        val adjusted = GoogleHomeColorTuning.applyOverrides(lamps, manualOverrides)
+                        val exported = GoogleHomeSceneExport.staticScene(title.trim(), phrase.trim(), adjusted)
+                        if (manualOverrides.isEmpty()) exported else exported.copy(
+                            warnings = exported.warnings + "Manuelle RGB-Zielwerte sind " +
+                                "ausschließlich für diese Szene gesetzt. Die Farbwiedergabe der " +
+                                "Yeelight-Hardware wurde damit nicht automatisch kalibriert."
+                        )
                     } else {
                         val scene = availableScenes.firstOrNull { it.id == sceneId }
                             ?: error("Farbverlauf auswählen")
