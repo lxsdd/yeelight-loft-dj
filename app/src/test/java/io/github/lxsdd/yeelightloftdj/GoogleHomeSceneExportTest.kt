@@ -265,4 +265,76 @@ class GoogleHomeSceneExportTest {
         assertTrue(export.warnings.any { it.contains("Zurücksetzen") })
     }
 
+    @Test fun oneStarterSixTransitionsKeepObservedAtoBSequenceAndExactDelays() {
+        val original = rgb(rgb = 0xFFB36B, brightness = 45)
+        val result = GoogleHomeSceneExport.rgbAlternatingCycle(
+            "Loft Couchtisch Farbwechsel", "Loft Farbwechsel", original, "#FF7700"
+        )
+        assertEquals(1, Regex("type: assistant.event.OkGoogle").findAll(result.yaml).count())
+        assertFalse(result.yaml.contains("assistant.command.OkGoogle"))
+        assertEquals(7, Regex("type: device.command.ColorAbsolute").findAll(result.yaml).count())
+        assertEquals(1, Regex("type: device.command.BrightnessAbsolute").findAll(result.yaml).count())
+        assertEquals(1, Regex("for: 2sec").findAll(result.yaml).count())
+        assertEquals(1, Regex("for: 8sec").findAll(result.yaml).count())
+        assertEquals(5, Regex("for: 10sec").findAll(result.yaml).count())
+        assertEquals(15, result.actionCount)
+        assertEquals(1, Regex("brightness: 45").findAll(result.yaml).count())
+        assertEquals(0, Regex("type: device.command.OnOff").findAll(result.yaml).count())
+        val colors = result.yaml.lines().filter { "spectrumRGB:" in it }
+            .map { it.substringAfter("spectrumRGB: ").trim().removeSurrounding("\"") }
+        assertEquals(listOf("FFB36B", "FF7700", "FFB36B", "FF7700",
+            "FFB36B", "FF7700", "FFB36B"), colors)
+        assertEquals(HomeColor.Rgb(0xFFB36B), original.color)
+    }
+
+    @Test fun alternatingCycleRejectsInvalidColorAndUnchangedAlternative() {
+        for (hex in listOf("FFB36B", "#FFB36B", "garbage", "0xFF7700", "#FF77000")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                GoogleHomeSceneExport.rgbAlternatingCycle(
+                    "Farbwechsel", "Loft Farbwechsel", rgb(rgb = 0xFFB36B), hex
+                )
+            }
+        }
+    }
+
+    @Test fun alternatingCycleRejectsOffKelvinAndUnsafeOrAmbiguousNames() {
+        for (lamp in listOf(
+            HomeLamp("Licht - Wohnzimmer", false),
+            HomeLamp("Licht - Wohnzimmer", true, 45, HomeColor.Temperature(2700)),
+            rgb("Licht"),
+            rgb("192.168.1.42 - Wohnzimmer")
+        )) {
+            assertThrows(IllegalArgumentException::class.java) {
+                GoogleHomeSceneExport.rgbAlternatingCycle(
+                    "Farbwechsel", "Loft Farbwechsel", lamp, "FF7700"
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GoogleHomeSceneExport.rgbAlternatingCycle(
+                "Farbwechsel", "Hey Google, Loft Farbwechsel", rgb(), "FFB36B"
+            )
+        }
+    }
+
+    @Test fun alternatingCycleDoesNotAlterStaticScenesOrTwoStarterAbMode() {
+        val lamp = rgb(rgb = 0xFFB36B, brightness = 45)
+        val single = GoogleHomeSceneExport.staticScene(
+            "Abend", "Loft Abend", listOf(lamp)
+        )
+        val dual = GoogleHomeSceneExport.rgbComparison(
+            "A/B", "Loft Farbe A", "Loft Farbe B", lamp, "FF7700"
+        )
+        val cycle = GoogleHomeSceneExport.rgbAlternatingCycle(
+            "Wechsel", "Loft Farbwechsel", lamp, "FF7700"
+        )
+        assertEquals(1, Regex("type: assistant.event.OkGoogle").findAll(single.yaml).count())
+        assertEquals(2, Regex("type: assistant.event.OkGoogle").findAll(dual.yaml).count())
+        assertEquals(1, Regex("type: assistant.event.OkGoogle").findAll(cycle.yaml).count())
+        assertEquals(0, Regex("for: 10sec").findAll(dual.yaml).count())
+        assertEquals(5, Regex("for: 10sec").findAll(cycle.yaml).count())
+        assertFalse(cycle.yaml.contains("192.168."))
+        assertFalse(cycle.yaml.contains("repeat:"))
+    }
+
 }

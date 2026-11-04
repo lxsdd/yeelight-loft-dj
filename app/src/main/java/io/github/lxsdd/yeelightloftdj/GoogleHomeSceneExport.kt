@@ -128,6 +128,41 @@ object GoogleHomeSceneExport {
         ))
     }
 
+    /**
+     * A one-shot, one-bulb reference/candidate cycle demonstrated in Google Home:
+     * A at start, B/A/B/A/B/A at nominal 10-second intervals.
+     * One OkGoogle starter, no event loop, no hardware writes from the app.
+     * Cloud command delivery is not real-time; only the YAML schedule is fixed.
+     */
+    fun rgbAlternatingCycle(
+        name: String, voicePhrase: String, reference: HomeLamp, alternativeHex: String
+    ): HomeExport {
+        val a = checkedLamps(listOf(reference)).single()
+        require(a.on && a.color is HomeColor.Rgb) {
+            "Farbwechsel nur für eine eingeschaltete RGB-Lampe"
+        }
+        val b = GoogleHomeColorTuning.applyOverrides(
+            listOf(a), mapOf(a.deviceAndRoom to alternativeHex)
+        ).single()
+        require(a.color != b.color) {
+            "Farbe B muss sich von Referenz A unterscheiden"
+        }
+        val actions = mutableListOf<String>()
+        appendState(actions, listOf(a)) // A, 2s delay, brightness
+        actions += delay(8_000L) // first B ~10s after A, not 12s
+        repeat(6) { i ->
+            val next = if (i % 2 == 0) b else a
+            actions += requireNotNull(colorAction(next))
+            if (i < 5) actions += delay(10_000L)
+        }
+        return build(name, voicePhrase, actions, listOf(
+            "Einmaliger A/B-Farbvergleich: 6 Wechsel in ungefähr 60 Sekunden.",
+            "Getestete Google-Home-Befehlsform: assistant.event.OkGoogle, nicht assistant.command.OkGoogle.",
+            "Nur eine Lampe, feste Helligkeit. Keine automatische Wiederholung und kein Rücksetzen.",
+            "Google-Home-Cloudlatenz kann die tatsächlichen Wechselzeiten verändern; keine Farbmessung."
+        ))
+    }
+
     private fun checkedLamps(lamps: List<HomeLamp>): List<HomeLamp> {
         require(lamps.size in 1..MAX_LAMPS) { "1 bis $MAX_LAMPS Lampen pro Export" }
         lamps.forEach { lamp ->

@@ -40,6 +40,9 @@ fun GoogleHomeExportPanel(controller: LoftController) {
     var voiceB by remember {
         mutableStateOf(preferences.getString("compare.voice.b", "Loft Farbe B").orEmpty())
     }
+    var cyclePhrase by remember {
+        mutableStateOf(preferences.getString("compare.voice.cycle", "Loft Farbwechsel").orEmpty())
+    }
     var consent by remember { mutableStateOf(false) }
     var sceneId by remember { mutableStateOf(SceneLibrary.scenes.firstOrNull()?.id.orEmpty()) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -317,6 +320,54 @@ fun GoogleHomeExportPanel(controller: LoftController) {
                         }
                     },
                 ) { Text("A/B-Farbvergleich exportieren") }
+                HorizontalDivider()
+                Text("Automatischer A/B-Vergleich · 60 Sekunden",
+                    style = MaterialTheme.typography.titleMedium)
+                Text("Ein Startbefehl, dann sechs Farbwechsel alle ca. 10 Sekunden. " +
+                    "Einmalig, ohne Wiederholung; die letzte Farbe ist A. " +
+                    "Nur Google-Home-Skript – beim Export wird keine Lampe angesteuert.",
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(
+                    value = cyclePhrase,
+                    onValueChange = {
+                        cyclePhrase = it
+                        preferences.edit().putString("compare.voice.cycle", it).apply()
+                        result = null
+                    },
+                    label = { Text("Startbefehl für 60-s-Vergleich") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(
+                    enabled = !rgbEdits[only.id].isNullOrBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        runCatching {
+                            val ref = (refs[only.id] ?:
+                                preferences.getString("ref." + only.id, "").orEmpty()).trim()
+                            val capturedNow = controller.googleHomeCaptured[only.ip]
+                                ?: error("Erfasster Farbzustand fehlt")
+                            require(controller.googleHomeCapturedIds == setOf(only.id) &&
+                                !controller.busy && !controller.recoveryPending) {
+                                "Bitte eine einzelne verfügbare RGB-Lampe neu erfassen"
+                            }
+                            val lamps = GoogleHomeSnapshotAdapter.fromFreshSnapshots(
+                                mapOf(only.ip to ref), mapOf(only.ip to capturedNow)
+                            )
+                            GoogleHomeSceneExport.rgbAlternatingCycle(
+                                title.trim() + " Farbwechsel", cyclePhrase.trim(),
+                                lamps.single(), rgbEdits[only.id].orEmpty()
+                            )
+                        }.onSuccess {
+                            result = it
+                            notice = "60-s-A/B-Skript erzeugt. In Google Home validieren, " +
+                                "speichern und einmal manuell oder per Sprache auslösen."
+                        }.onFailure {
+                            result = null
+                            notice = "Automatischer A/B-Vergleich nicht möglich: " +
+                                it.message.orEmpty()
+                        }
+                    },
+                ) { Text("Sechs Farbwechsel als Google-Home-Skript exportieren") }
             }
         }
         if (notice.isNotBlank()) Text(notice, style = MaterialTheme.typography.bodySmall)
