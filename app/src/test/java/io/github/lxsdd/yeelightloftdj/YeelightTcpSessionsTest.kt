@@ -219,7 +219,7 @@ class YeelightTcpSessionsTest {
             )
             val tcp = YeelightTcpSessions(
                 trace = { },
-                onFirmwareQuotaRejected = { ip, error ->
+                onFirmwareQuotaRejected = { ip, _, error ->
                     gate.recordFirmwareRejection(ip, error)
                 },
                 connect = { ip, port -> Socket(ip, port).apply { soTimeout = 1_000 } },
@@ -260,7 +260,7 @@ class YeelightTcpSessionsTest {
             val gate = DeviceCommandGate(nowMs = { 10_000L }, minSpacingMs = 0)
             val tcp = YeelightTcpSessions(
                 trace = { },
-                onFirmwareQuotaRejected = { ip, error ->
+                onFirmwareQuotaRejected = { ip, _, error ->
                     gate.recordFirmwareRejection(ip, error)
                 },
                 connect = { ip, port -> Socket(ip, port).apply { soTimeout = 1_000 } },

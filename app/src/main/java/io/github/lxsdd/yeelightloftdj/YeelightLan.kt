@@ -44,16 +44,20 @@ data class YeelightDevice(
 
 object YeelightLan {
     private const val QUARANTINED_IPS_KEY = "firmware-quota-blocked-ips"
+    private const val EVIDENCE_KEY = "firmware-quota-evidence-v1"
+    private val evidenceLock = Any()
+    @Volatile private var evidencePrefs: android.content.SharedPreferences? = null
     @Volatile private var quotaJournal: QuotaPreferenceJournal? = null
     private val commandGate = DeviceCommandGate(
         onQuarantined = { ip -> writeQuarantine(ip, blocked = true) },
         onRecovered = { ip -> writeQuarantine(ip, blocked = false) }
     )
     private val tcp = YeelightTcpSessions(
-        onFirmwareQuotaRejected = { ip, error ->
-            // Transport-level detection covers power, manual, status and
-            // future callers uniformly. Never wait for a caller's JSON check.
+        onFirmwareQuotaRejected = { ip, method, error ->
+            // Mandatory per-IP quarantine always precedes optional evidence.
             commandGate.recordFirmwareRejection(ip, error)
+            if (QuotaRecoveryPolicy.isQuotaRejection(error))
+                runCatching { recordQuotaEvidence(ip, method) }
         }
     )
 
@@ -65,6 +69,7 @@ object YeelightLan {
         val prefs = context.applicationContext.getSharedPreferences(
             "lan-firmware-safety", Context.MODE_PRIVATE
         )
+        evidencePrefs = prefs
         val journal = QuotaPreferenceJournal(
             readBlocked = {
                 prefs.getStringSet(QUARANTINED_IPS_KEY, emptySet()).orEmpty().toSet()
@@ -89,6 +94,26 @@ object YeelightLan {
 
     fun isLanQuarantined(device: YeelightDevice): Boolean =
         commandGate.isQuarantined(device.ip)
+
+    /** App-private historical evidence only; no network commands. */
+    fun lastLanQuotaEvidence(device: YeelightDevice): LanQuotaEvidence? {
+        val prefs = evidencePrefs ?: return null
+        val raw = synchronized(evidenceLock) { prefs.getString(EVIDENCE_KEY, null) }
+        return LanQuotaEvidenceCodec.decode(raw).lastOrNull { it.ip == device.ip }
+    }
+
+    private fun recordQuotaEvidence(ip: String, method: String) {
+        val prefs = evidencePrefs ?: return
+        val ownCount = commandGate.consumed(ip)
+        synchronized(evidenceLock) {
+            val serialized = LanQuotaEvidenceCodec.append(
+                prefs.getString(EVIDENCE_KEY, null), ip, method,
+                ownCount, System.currentTimeMillis()
+            )
+            // Optional diagnostic only; failure never weakens quarantine.
+            prefs.edit().putString(EVIDENCE_KEY, serialized).commit()
+        }
+    }
 
     /**
      * A single explicitly requested read-only get_prop. Never auto-run it in

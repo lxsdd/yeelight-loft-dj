@@ -25,7 +25,7 @@ class YeelightTcpSessions(
         // No user data, RGB values, cloud tokens or credentials are logged.
         runCatching { android.util.Log.i("LoftDjLan", event) }
     },
-    private val onFirmwareQuotaRejected: (String, String?) -> Unit = { _, _ -> },
+    private val onFirmwareQuotaRejected: (String, String, String?) -> Unit = { _, _, _ -> },
     private val connect: (String, Int) -> Socket = { ip, port ->
         // connect() can throw before a Session owns the socket.
         // Never leak even a half-initialized client slot.
@@ -117,7 +117,7 @@ class YeelightTcpSessions(
                             val firmwareMessage = reply.optJSONObject("error")
                                 ?.optString("message", "Yeelight-Fehler")
                             if (QuotaRecoveryPolicy.isQuotaRejection(firmwareMessage)) {
-                                onFirmwareQuotaRejected(ip, firmwareMessage)
+                                onFirmwareQuotaRejected(ip, method, firmwareMessage)
                             }
                         }
                         return reply
