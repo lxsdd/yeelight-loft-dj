@@ -8,6 +8,49 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 class YeelightTcpSessionsTest {
+    @Test fun brokenInputStreamDuringSessionSetupClosesSocketWithoutRetryOrLeakedSlot() {
+        val broken = object : Socket() {
+            override fun getInputStream(): java.io.InputStream {
+                throw java.io.IOException("simulated input-stream initialization failure")
+            }
+        }
+        var connectionAttempts = 0
+        val tcp = YeelightTcpSessions(
+            trace = {},
+            connect = { _, _ ->
+                connectionAttempts++
+                broken
+            }
+        )
+        try {
+            val error = runCatching {
+                tcp.request("127.0.0.1",55443,100,"get_prop",listOf("power"))
+            }.exceptionOrNull()
+            assertTrue(error is java.io.IOException)
+            assertEquals(1,connectionAttempts)
+            assertTrue("Session constructor must close the connected socket",broken.isClosed)
+            assertEquals(0,tcp.openCount())
+        } finally { tcp.closeAll() }
+    }
+
+    @Test fun brokenOutputStreamDuringSessionSetupClosesSocketWithoutSendingAnything() {
+        val broken = object : Socket() {
+            override fun getInputStream(): java.io.InputStream =
+                java.io.ByteArrayInputStream(byteArrayOf())
+            override fun getOutputStream(): java.io.OutputStream =
+                throw java.io.IOException("simulated output-stream initialization failure")
+        }
+        val tcp = YeelightTcpSessions(trace = {}, connect = { _, _ -> broken })
+        try {
+            val failure = runCatching {
+                tcp.request("127.0.0.1",55443,101,"get_prop",listOf("power"))
+            }.exceptionOrNull()
+            assertTrue(failure is java.io.IOException)
+            assertTrue("Failed output stream must not leave a firmware TCP slot",broken.isClosed)
+            assertEquals(0,tcp.openCount())
+        } finally { tcp.closeAll() }
+    }
+
     @Test fun reusesOneConnectionAndSkipsUnsolicitedNotifications() {
         ServerSocket(0).use { server ->
             val accepted = AtomicInteger()
