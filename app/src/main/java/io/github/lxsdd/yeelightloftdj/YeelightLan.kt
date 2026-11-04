@@ -96,7 +96,7 @@ object YeelightLan {
         commandGate.isQuarantined(device.ip)
 
     /** App-private historical evidence only; no network commands. */
-    fun lastLanQuotaEvidence(device: YeelightDevice): LanQuotaEvidence? {
+    internal fun lastLanQuotaEvidence(device: YeelightDevice): LanQuotaEvidence? {
         val prefs = evidencePrefs ?: return null
         val raw = synchronized(evidenceLock) { prefs.getString(EVIDENCE_KEY, null) }
         return LanQuotaEvidenceCodec.decode(raw).lastOrNull { it.ip == device.ip }

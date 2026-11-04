@@ -1094,7 +1094,7 @@ class LoftController(context: Context) {
     fun isLampLanQuarantined(device: YeelightDevice): Boolean =
         YeelightLan.isLanQuarantined(device)
 
-    fun lastLanQuotaEvidence(device: YeelightDevice): LanQuotaEvidence? =
+    internal fun lastLanQuotaEvidence(device: YeelightDevice): LanQuotaEvidence? =
         YeelightLan.lastLanQuotaEvidence(device)
 
     /** Local journal only; NEVER start TCP requests to render a warning. */
