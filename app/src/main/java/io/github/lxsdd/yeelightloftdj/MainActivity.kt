@@ -1369,6 +1369,18 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val lanQuarantined = controller.isLampLanQuarantined(device)
+        val lastQuotaEvidence = controller.lastLanQuotaEvidence(device)
+        if (lastQuotaEvidence != null) {
+            val whenObserved = java.text.DateFormat.getDateTimeInstance()
+                .format(java.util.Date(lastQuotaEvidence.observedAtEpochMs))
+            Text(
+                "Historischer LAN-Quota-Fehler: " + lastQuotaEvidence.method +
+                    " · " + lastQuotaEvidence.appAdmittedLastMinute +
+                    " von Loft DJ gezählte Befehle in 60 s · " + whenObserved +
+                    ". Befehle anderer Apps und Firmware-Ursache nicht messbar.",
+                color = Color(0xFFFFD38A), fontSize = 11.sp
+            )
+        }
         if (device.model.equals("color4", ignoreCase = true)) {
             Text(
                 "Steuerweg: lokales Yeelight-LAN (TCP 55443) · " +

@@ -21,7 +21,7 @@ internal object Color4DualAcceptancePolicy {
     ): String? {
         val reason = Color4PairReadinessPolicy.refusal(selected, blockedIps, recoveryPending)
         if (reason != null) return reason
-        if (!signedTestApproved) return "Zwei-Lampen-Test nur im freigegebenen RC7."
+        if (!signedTestApproved) return "Zwei-Lampen-Test nach Firmware-LAN-Lockout vorläufig pausiert."
         // Human-readable names add a local authorization boundary. The
         // distinct-IP, SUPPORTED color4, quarantine and recovery checks above
         // remain mandatory. Do not authorize Wellness or untested Esstisch.

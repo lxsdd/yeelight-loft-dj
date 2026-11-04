@@ -11,13 +11,26 @@ class Color4MusicAcceptancePolicyTest {
     ) = YeelightDevice("Couchtisch", ip, model = model, methods = methods)
 
     @Test fun permitsOnlyOneExplicitlyIdentifiedMusicCapableColor4() {
+        assertFalse(Color4MusicAcceptancePolicy.LIVE_TEST_APPROVED)
+        assertTrue(Color4MusicAcceptancePolicy.refusal(
+            listOf(lamp()), emptySet(), false)!!.contains("pausiert"))
+        // Test internal validation against a hypothetical, explicit future
+        // permission. This does NOT enable any production Color4 write.
         assertNull(Color4MusicAcceptancePolicy.refusal(
-            listOf(lamp()), emptySet(), false))
-        // No name-bound gating: a second, explicitly authorized and verified
-        // Color4 uses the identical one-bulb safety conditions.
+            listOf(lamp()), emptySet(), false, signedTestApproved = true))
         assertNull(Color4MusicAcceptancePolicy.refusal(
-            listOf(lamp().copy(id = "Flur")), emptySet(), false))
+            listOf(lamp().copy(id = "Flur")), emptySet(), false, signedTestApproved = true))
         assertEquals(15_000L, Color4MusicAcceptancePolicy.DURATION_MS)
+    }
+
+    @Test fun safetyPauseDoesNotEraseSpecificRecoveryAndQuotaReasons() {
+        val blocked = lamp(ip = "192.168.0.136")
+        assertTrue(Color4MusicAcceptancePolicy.refusal(
+            listOf(blocked), setOf(blocked.ip), false)!!.contains("Firmware"))
+        assertTrue(Color4MusicAcceptancePolicy.refusal(
+            listOf(blocked), emptySet(), true)!!.contains("Wiederherstellung"))
+        assertTrue(Color4MusicAcceptancePolicy.refusal(
+            listOf(blocked), emptySet(), false)!!.contains("pausiert"))
     }
 
     @Test fun rejectsZeroOrMultiplePhysicalLampTargets() {
@@ -46,6 +59,9 @@ class Color4MusicAcceptancePolicyTest {
 
     @Test fun deduplicatedAliasesCannotTriggerTwoCommandsToSameIp() {
         assertNull(Color4MusicAcceptancePolicy.refusal(
+            listOf(lamp(), lamp().copy(id = "old-cache-id")),
+            emptySet(), false, signedTestApproved = true))
+        assertNotNull(Color4MusicAcceptancePolicy.refusal(
             listOf(lamp(), lamp().copy(id = "old-cache-id")),
             emptySet(), false))
     }

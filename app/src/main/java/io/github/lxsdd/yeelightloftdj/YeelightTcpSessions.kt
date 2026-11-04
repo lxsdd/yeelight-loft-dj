@@ -25,12 +25,20 @@ class YeelightTcpSessions(
         // No user data, RGB values, cloud tokens or credentials are logged.
         runCatching { android.util.Log.i("LoftDjLan", event) }
     },
-    private val onFirmwareQuotaRejected: (String, String?) -> Unit = { _, _ -> },
+    private val onFirmwareQuotaRejected: (String, String, String?) -> Unit = { _, _, _ -> },
     private val connect: (String, Int) -> Socket = { ip, port ->
-        Socket().apply {
-            connect(InetSocketAddress(ip, port), 1800)
-            soTimeout = 1800
-            keepAlive = true
+        // connect() can throw before a Session owns the socket.
+        // Never leak even a half-initialized client slot.
+        Socket().let { created ->
+            try {
+                created.connect(InetSocketAddress(ip, port), 1800)
+                created.soTimeout = 1800
+                created.keepAlive = true
+                created
+            } catch (failure: Exception) {
+                runCatching { created.close() }
+                throw failure
+            }
         }
     },
 ) {
@@ -69,7 +77,15 @@ class YeelightTcpSessions(
         require(port in 1..65535 && id > 0)
         val key = Key(ip,port)
         val session = sessions.computeIfAbsent(key) {
-            val opened = Session(connect(ip,port))
+            val socket = connect(ip,port)
+            val opened = try {
+                Session(socket)
+            } catch (failure: Exception) {
+                // getInputStream/getOutputStream can fail after connect().
+                // The map must never retain, or leak, that half-session.
+                runCatching { socket.close() }
+                throw failure
+            }
             traceSafe("event=connect target=.${ip.substringAfterLast('.')} port=$port")
             opened
         }
@@ -101,7 +117,7 @@ class YeelightTcpSessions(
                             val firmwareMessage = reply.optJSONObject("error")
                                 ?.optString("message", "Yeelight-Fehler")
                             if (QuotaRecoveryPolicy.isQuotaRejection(firmwareMessage)) {
-                                onFirmwareQuotaRejected(ip, firmwareMessage)
+                                onFirmwareQuotaRejected(ip, method, firmwareMessage)
                             }
                         }
                         return reply
