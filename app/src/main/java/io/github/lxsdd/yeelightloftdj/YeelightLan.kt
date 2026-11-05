@@ -824,6 +824,20 @@ object YeelightLan {
         return true
     }
 
+    /** An optional second brightness command follows the RGB command on the
+     * SAME per-device Music socket. No normal-LAN fallback or blind retries.
+     * Caller must preflight confirmed set_bright support in adaptive mode.
+     */
+    fun sendMusicVisual(device: YeelightDevice, visual: Color4MusicVisual): Boolean {
+        check(!commandGate.isQuarantined(device.ip)) {
+            "Music-Mode pausiert: Firmware-LAN-Quarantäne dieser Lampe"
+        }
+        val channel = musicChannels[device.ip] ?: return false
+        channel.sendRgb(visual.rgb, visual.transitionMs)
+        visual.brightness?.let { channel.sendBrightness(it, visual.transitionMs) }
+        return true
+    }
+
     /**
      * Stop live music mode, or explicitly disable a persisted music session
      * after an Android process restart. The old reverse socket is then already
