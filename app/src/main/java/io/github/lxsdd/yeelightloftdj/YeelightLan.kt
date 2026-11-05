@@ -764,7 +764,7 @@ object YeelightLan {
         "set_music" in device.methods && "set_rgb" in device.methods
 
     @Synchronized
-    fun startMusicMode(device: YeelightDevice): Boolean {
+    fun startMusicMode(device: YeelightDevice, socketStopOnly: Boolean = false): Boolean {
         if (!supportsMusicMode(device)) return false
         require(isLocalIp(device.ip))
         if (musicChannels[device.ip]?.isActive == true) return true
@@ -775,6 +775,7 @@ object YeelightLan {
             ?: error("Music-Mode benötigt eine lokale WLAN-IPv4-Adresse")
         val channel = YeelightMusicChannel(
             deviceIp = device.ip,
+            socketStopOnly = socketStopOnly,
             enableOnDevice = { localIp, port ->
                 send(device, "set_music", listOf(1, localIp, port))
             },
@@ -796,6 +797,14 @@ object YeelightLan {
         musicChannels[device.ip] = channel
         return true
     }
+
+    /** Release this lamp's normal LAN socket after the one-time music handshake. */
+    fun releaseMusicControlSlot(device: YeelightDevice) =
+        tcp.closeTarget(device.ip, device.port)
+
+    /** Includes disconnected channels which still need local cleanup. */
+    fun musicChannelExists(device: YeelightDevice): Boolean =
+        musicChannels.containsKey(device.ip)
 
     fun musicModeActive(device: YeelightDevice): Boolean =
         musicChannels[device.ip]?.isActive == true

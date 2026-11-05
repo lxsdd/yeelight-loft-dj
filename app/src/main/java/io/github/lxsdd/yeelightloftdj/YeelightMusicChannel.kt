@@ -23,6 +23,7 @@ class YeelightMusicChannel(
     private val deviceIp: String,
     private val enableOnDevice: (String, Int) -> Unit,
     private val disableOnDevice: () -> Unit,
+    private val socketStopOnly: Boolean = false,
     private val listenerFactory: (String) -> ServerSocket = { host ->
         ServerSocket(0, 1, InetAddress.getByName(host))
     },
@@ -155,7 +156,7 @@ class YeelightMusicChannel(
             closed = true // no new RGB writes after stop begins
             previousSocket = socket
             socket = null
-            shouldDisable = enabledAttempted
+            shouldDisable = enabledAttempted && !socketStopOnly
             enabledAttempted = false
         }
         try {
