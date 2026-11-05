@@ -265,6 +265,55 @@ fun MusicScreen(controller: LoftController) {
                     "und behalten eine Stoppreserve. " +
                     "Keine Stroboskop-Effekte.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
+                val probeRefusal = controller.minimalProbeRefusal()
+                var showMinimalProbeConfirm by remember { mutableStateOf(false) }
+                OutlinedButton(
+                    onClick = { showMinimalProbeConfirm = true },
+                    enabled = audioRunning && probeRefusal == null &&
+                        !controller.minimalProbeRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Color4-Transporttest · 8 Sekunden · Music-Rückkanal") }
+                Text(
+                    probeRefusal ?: "Einzel-Lampe, max. acht Music-RGB-Frames, kein normales LAN-RGB. " +
+                        "Lampe vorher einschalten; alte Farbe wird nicht automatisch wiederhergestellt.",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp
+                )
+                if (controller.minimalProbeNeedsReadback()) {
+                    OutlinedButton(
+                        onClick = controller::verifyMinimalProbeEnd,
+                        enabled = !controller.busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Music-Ende nur lesend nachprüfen") }
+                }
+                Text(controller.minimalProbeReport,
+                    color = Color(0xFF98A6C0), fontSize = 11.sp)
+                if (showMinimalProbeConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showMinimalProbeConfirm = false },
+                        title = { Text("Eine Color4 einmalig prüfen?") },
+                        text = {
+                            Text("Nur mit eingeschalteter, zuvor funktionierender Color4. " +
+                                "Die App liest einen Zustand, startet einen einzelnen " +
+                                "set_music-Rückkanal, sendet höchstens acht Musikfarben " +
+                                "innerhalb von acht Sekunden und schließt den Rückkanal. " +
+                                "Kein normaler RGB-Fallback und kein automatischer Neustart. " +
+                                "Farbzustand eventuell hinterher in Yeelight Classic ändern. " +
+                                "Sobald Quota oder ein unbestätigter Stop auftritt, nicht wiederholen.")
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showMinimalProbeConfirm = false
+                                controller.runMinimalColor4Probe()
+                            }) { Text("Einmalig testen") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showMinimalProbeConfirm = false }) {
+                                Text("Abbrechen")
+                            }
+                        }
+                    )
+                }
+
                 val acceptanceRefusal = controller.color4MusicAcceptanceRefusal()
                 val acceptanceTarget = controller.color4AcceptanceTargetName() ?: "unbekannt"
                 OutlinedButton(

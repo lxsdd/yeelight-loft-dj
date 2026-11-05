@@ -2237,4 +2237,159 @@ class LoftController(context: Context) {
             scope.cancel()
         }
     }
+
+    // Isolated short music-channel diagnostic. No normal-LAN RGB, no automatic
+    // power-on, no scene restoration writes, and no new session after failure.
+    private val minimalProbePreferenceKey = "minimal-color4-music-unconfirmed-ips"
+    private var minimalProbeUnconfirmed by mutableStateOf(
+        prefs.getStringSet(minimalProbePreferenceKey, emptySet()).orEmpty().toSet()
+    )
+    var minimalProbeRunning by mutableStateOf(false)
+        private set
+    var minimalProbeReport by mutableStateOf("Noch kein isolierter Color4-Test")
+        private set
+
+    fun minimalProbeNeedsReadback(): Boolean = minimalProbeUnconfirmed.isNotEmpty()
+
+    fun minimalProbeRefusal(): String? {
+        val chosen = selected().distinctBy { it.ip }
+        val blocked = chosen.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet()
+        return MinimalColor4ProbePolicy.refusal(
+            selected = chosen,
+            blockedIps = blocked,
+            recoveryPending = recoveryPending || runningDeviceIps.isNotEmpty() ||
+                musicLightArmed || musicDeviceSession || scannerRunning,
+            running = busy || minimalProbeRunning || musicSending || musicStopPending,
+            unconfirmedIps = minimalProbeUnconfirmed,
+        )
+    }
+
+    /** Only the user may arm the eight-second one-Color4 backchannel test. */
+    fun runMinimalColor4Probe() {
+        val refusal = minimalProbeRefusal()
+        if (refusal != null) { status = refusal; return }
+        val device = selected().distinctBy { it.ip }.singleOrNull() ?: return
+        if (!(microphoneRunning || InternalAudioBridge.running)) {
+            status = "Zuerst Mikrofon oder interne Musikaufnahme starten."
+            return
+        }
+        task("Isolierter Color4-Musikrückkanal: Vorprüfung …") {
+            minimalProbeRunning = true
+            var attempted = 0
+            var failure: String? = null
+            var channelStarted = false
+            try {
+                val previous = withContext(Dispatchers.IO) {
+                    YeelightLan.readMusicPreflight(device)
+                }
+                check(previous.isOn) {
+                    "Color4 bitte vor diesem Test in Yeelight Classic einschalten."
+                }
+                // Commit an unresolved marker BEFORE the first possible set_music.
+                val nextGuard = minimalProbeUnconfirmed + device.ip
+                check(prefs.edit().putStringSet(
+                    minimalProbePreferenceKey, nextGuard
+                ).commit()) { "Music-Testwache konnte nicht gespeichert werden." }
+                minimalProbeUnconfirmed = nextGuard
+                try {
+                    withContext(Dispatchers.IO) {
+                        YeelightLan.startMusicMode(device, socketStopOnly = true)
+                        YeelightLan.releaseMusicControlSlot(device)
+                    }
+                    channelStarted = true
+                    val startedAt = android.os.SystemClock.elapsedRealtime()
+                    var lastSentElapsed = -MinimalColor4ProbePolicy.MIN_FRAME_MS
+                    while (microphoneRunning || InternalAudioBridge.running) {
+                        delay(120L)
+                        val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+                        if (elapsed >= MinimalColor4ProbePolicy.DURATION_MS) break
+                        val frame = musicFrame ?: InternalAudioBridge.frame
+                        if (MinimalColor4ProbePolicy.canSend(
+                            frame, elapsed, lastSentElapsed, attempted
+                        )) {
+                            val color = MusicLightPolicy.color(frame!!, 0, attempted.toLong())
+                            withContext(Dispatchers.IO) {
+                                check(YeelightLan.sendMusicRgb(device, color)) {
+                                    "Musikrückkanal wurde geschlossen."
+                                }
+                            }
+                            attempted++
+                            lastSentElapsed = elapsed
+                        }
+                    }
+                } catch (problem: Exception) {
+                    failure = problem.message ?: problem.javaClass.simpleName
+                } finally {
+                    // Close reverse TCP; this particular probe intentionally does
+                    // not send set_music(0) or normal-LAN RGB. A single read
+                    // must independently prove music_on=0 afterwards.
+                    var stopped: Boolean? = null
+                    val stopProblem = runCatching {
+                        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                            if (YeelightLan.musicChannelExists(device)) {
+                                YeelightLan.stopMusicMode(device)
+                            }
+                            YeelightLan.releaseMusicControlSlot(device)
+                            delay(650L)
+                            val observed = YeelightLan.readRecoveryObservation(device)
+                            YeelightLan.releaseMusicControlSlot(device)
+                            stopped = observed.musicOn
+                        }
+                    }.exceptionOrNull()
+                    if (stopped == false) {
+                        val cleared = minimalProbeUnconfirmed - device.ip
+                        if (prefs.edit().putStringSet(minimalProbePreferenceKey, cleared).commit()) {
+                            minimalProbeUnconfirmed = cleared
+                        } else {
+                            failure = "Music-Ende bestätigt, aber lokales Sicherheitsjournal konnte nicht geschrieben werden."
+                        }
+                    } else {
+                        failure = (failure?.plus(" · ") ?: "") +
+                            "Music-Ende nicht bestätigt" +
+                            (stopProblem?.message?.let { ": " + it } ?: "; music_on unbekannt/aktiv")
+                    }
+                }
+            } catch (problem: Exception) {
+                failure = problem.message ?: problem.javaClass.simpleName
+            } finally {
+                minimalProbeRunning = false
+            }
+            val report = if (failure == null) {
+                "Color4-Probe: $attempted RGB über Music-Socket gesendet; " +
+                    "music_on=0 lesend bestätigt. Farbe ggf. in Classic neu wählen. " +
+                    "Senden ist keine optische Bestätigung."
+            } else {
+                "Color4-Probe nicht vollständig erfolgreich: $failure · " +
+                    "Keine automatische Wiederholung, keine weiteren Lampenbefehle."
+            }
+            minimalProbeReport = report
+            report
+        }
+    }
+
+    /** An unconfirmed previous probe can be cleared only by a fresh valid read. */
+    fun verifyMinimalProbeEnd() {
+        val device = selected().distinctBy { it.ip }.singleOrNull()
+        if (device == null || device.ip !in minimalProbeUnconfirmed || busy ||
+            musicLightArmed || musicDeviceSession || scannerRunning) {
+            status = "Bitte genau die Color4 mit offener Music-Prüfung auswählen."
+            return
+        }
+        task("Prüfe ausschließlich lesend, ob der Music-Modus beendet ist …") {
+            val observation = withContext(Dispatchers.IO) {
+                try { YeelightLan.readRecoveryObservation(device) }
+                finally { YeelightLan.releaseMusicControlSlot(device) }
+            }
+            check(observation.musicOn == false) {
+                "music_on noch aktiv oder unbekannt. Kein neuer Test."
+            }
+            val next = minimalProbeUnconfirmed - device.ip
+            check(prefs.edit().putStringSet(minimalProbePreferenceKey, next).commit()) {
+                "Sicherheitsstatus konnte nicht gespeichert werden."
+            }
+            minimalProbeUnconfirmed = next
+            "Music-Modus lesend als beendet bestätigt. Testfreigabe erneut möglich."
+        }
+    }
+
 }
