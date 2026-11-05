@@ -2315,6 +2315,13 @@ class LoftController(context: Context) {
     private var minimalProbeUnconfirmed by mutableStateOf(
         prefs.getStringSet(minimalProbePreferenceKey, emptySet()).orEmpty().toSet()
     )
+    // A per-bulb ONE-USE permission for firmware that cannot report music_on.
+    // Created only by a clean app-owned reverse-socket stop plus a live read,
+    // or by explicit user-attested mains power-cycle plus a live read.
+    // Removed durably together with the next pre-start safety journal write.
+    private val musicUnknownPermitPreferenceKey = "color4-music-unknown-one-shot-ips"
+    private var musicUnknownPermitIps =
+        prefs.getStringSet(musicUnknownPermitPreferenceKey, emptySet()).orEmpty().toSet()
     var minimalProbeRunning by mutableStateOf(false)
         private set
 
@@ -2464,6 +2471,7 @@ class LoftController(context: Context) {
             color4LiveDjRunning=true
             activeColor4LiveStyle=style
             val journaled=mutableListOf<YeelightDevice>()
+            val ownedSockets=mutableSetOf<String>()
             var failure: String?=null
             var sent=0
             var brightnessWrites=0
@@ -2474,22 +2482,26 @@ class LoftController(context: Context) {
                 // Fail closed before enabling even the first music session.
                 targets.forEach { d ->
                     check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
-                    val preflight=withContext(Dispatchers.IO) {
-                        YeelightLan.readMusicPreflight(d)
+                    val observed=withContext(Dispatchers.IO) {
+                        YeelightLan.readMusicEndStatus(d)
                     }
-                    check(preflight.isOn) {
-                        "Bitte alle ausgewählten Musiklampen vor der Show einschalten."
-                    }
+                    MusicEndRecoveryPolicy.admissionRefusal(
+                        observed, d.ip in musicUnknownPermitIps
+                    )?.let { error(displayName(d) + ": " + it) }
                 }
                 targets.forEach { d ->
                     check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
                     // Persist each bulb BEFORE that bulb's first set_music(1).
                     val next=minimalProbeUnconfirmed + d.ip
-                    check(prefs.edit().putStringSet(
-                        minimalProbePreferenceKey,next).commit()) {
+                    val remainingPermits=musicUnknownPermitIps - d.ip
+                    check(prefs.edit()
+                        .putStringSet(minimalProbePreferenceKey,next)
+                        .putStringSet(musicUnknownPermitPreferenceKey,remainingPermits)
+                        .commit()) {
                         "Music-Wiederherstellungsjournal nicht sicher geschrieben."
                     }
                     minimalProbeUnconfirmed=next
+                    musicUnknownPermitIps=remainingPermits
                     journaled += d
                     withContext(Dispatchers.IO) {
                         check(YeelightLan.startMusicMode(d,socketStopOnly=true)) {
@@ -2497,6 +2509,7 @@ class LoftController(context: Context) {
                         }
                         YeelightLan.releaseMusicControlSlot(d)
                     }
+                    ownedSockets += d.ip
                 }
                 val clock=Color4LivePulseClock(musicBeatCount)
                 val director=Color4LiveVisualDirector(targets.size,style)
@@ -2553,7 +2566,9 @@ class LoftController(context: Context) {
                 // Always attempt EVERY journaled bulb, including failed starts.
                 // A failure on one channel must never skip other cleanup.
                 journaled.asReversed().forEach { d ->
-                    var off=false
+                    val ownedAndClosed=d.ip in ownedSockets &&
+                        YeelightLan.musicChannelExists(d)
+                    var observed: MusicEndStatus?=null
                     val stopError=runCatching {
                         withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
                             try {
@@ -2561,17 +2576,26 @@ class LoftController(context: Context) {
                                     YeelightLan.stopMusicMode(d)
                                 YeelightLan.releaseMusicControlSlot(d)
                                 delay(650L)
-                                off=YeelightLan.readRecoveryObservation(d).musicOn == false
+                                observed=YeelightLan.readMusicEndStatus(d)
                             } finally {
                                 YeelightLan.releaseMusicControlSlot(d)
                             }
                         }
                     }.exceptionOrNull()
-                    if (stopError == null && off) {
+                    val decision=MusicEndRecoveryPolicy.afterOwnStop(
+                        observed, ownedAndClosed, stopError != null
+                    )
+                    if (decision != MusicEndRelease.UNRESOLVED) {
                         val cleaned=minimalProbeUnconfirmed - d.ip
-                        if (prefs.edit().putStringSet(
-                            minimalProbePreferenceKey,cleaned).commit()) {
+                        val permit=if (decision == MusicEndRelease.OWN_SOCKET_CLOSED)
+                            musicUnknownPermitIps + d.ip
+                        else musicUnknownPermitIps - d.ip
+                        if (prefs.edit()
+                            .putStringSet(minimalProbePreferenceKey,cleaned)
+                            .putStringSet(musicUnknownPermitPreferenceKey,permit)
+                            .commit()) {
                             minimalProbeUnconfirmed=cleaned
+                            musicUnknownPermitIps=permit
                         } else {
                             failure=(failure?.plus(" · ") ?: "") +
                                 "Music-Journal-Write beim Beenden fehlgeschlagen"
@@ -2580,7 +2604,7 @@ class LoftController(context: Context) {
                         failure=(failure?.plus(" · ") ?: "") +
                             "Music-Ende einer Lampe ungeklärt" +
                             (stopError?.message?.let { ": " + it }
-                                ?: " (music_on nicht bestätigt)")
+                                ?: " (keine sichere Firmware-/Socket-Bestätigung)")
                     }
                 }
                 minimalProbeRunning=false
@@ -2786,8 +2810,7 @@ class LoftController(context: Context) {
         val device = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
         task("Prüfe music_on für " + musicReadbackLabel(ip) + " nur lesend …") {
             val observation = withContext(Dispatchers.IO) {
-                try { YeelightLan.readRecoveryObservation(device) }
-                finally { YeelightLan.releaseMusicControlSlot(device) }
+                YeelightLan.readMusicEndStatus(device)
             }
             check(observation.musicOn == false) {
                 "music_on ist aktiv oder unbekannt. Kein neuer Start; " +
@@ -2800,10 +2823,15 @@ class LoftController(context: Context) {
                 "Inzwischen läuft eine Music-Sitzung. Keine lokale Freigabe."
             }
             val next = minimalProbeUnconfirmed - device.ip
-            check(prefs.edit().putStringSet(minimalProbePreferenceKey, next).commit()) {
+            val permits = musicUnknownPermitIps - device.ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey, next)
+                .putStringSet(musicUnknownPermitPreferenceKey, permits)
+                .commit()) {
                 "Music-Sicherheitsstatus konnte nicht gespeichert werden."
             }
             minimalProbeUnconfirmed = next
+            musicUnknownPermitIps = permits
             musicReadbackLabel(ip) + ": music_on=0 unabhängig bestätigt; " +
                 "nur die lokale Geräte-Music-Vormerkung entfernt."
         }
@@ -2861,8 +2889,7 @@ class LoftController(context: Context) {
                 "Neuübernahme abgebrochen: Lampe/Steuerung inzwischen belegt."
             }
             val observed = withContext(Dispatchers.IO) {
-                try { YeelightLan.readRecoveryObservation(device) }
-                finally { YeelightLan.releaseMusicControlSlot(device) }
+                YeelightLan.readMusicEndStatus(device)
             }.musicOn
             val decision = MusicSessionHandoffPolicy.decidePreflight(observed)
             check(decision != MusicHandoffReadDecision.UNKNOWN) {
@@ -2891,7 +2918,7 @@ class LoftController(context: Context) {
             val observedAfter = withContext(Dispatchers.IO) {
                 try {
                     YeelightLan.endUnownedMusicSessionOnce(device)
-                    YeelightLan.readRecoveryObservation(device).musicOn
+                    YeelightLan.readMusicEndStatus(device).musicOn
                 } finally { YeelightLan.releaseMusicControlSlot(device) }
             }
             check(MusicSessionHandoffPolicy.verifiedStopped(true,observedAfter)) {
