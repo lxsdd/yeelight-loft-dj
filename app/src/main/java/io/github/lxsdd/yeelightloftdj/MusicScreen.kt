@@ -50,6 +50,14 @@ fun MusicScreen(controller: LoftController) {
         if (granted) controller.startMicrophone()
         else controller.report("Mikrofonberechtigung nicht erteilt · keine Audioaufnahme")
     }
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // A denied notification is not permission to do hidden capture.
+        // The service stays visible to Android's active-app manager and the
+        // in-app STOP remains available; no automatic background start.
+        controller.startForegroundColor4LiveDjGroupAware()
+    }
     val projection = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -338,11 +346,12 @@ fun MusicScreen(controller: LoftController) {
                     "Keine Stroboskop-Effekte.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
                 val probeRefusal = controller.minimalProbeRefusal()
+                val liveDjRefusal = controller.liveDjRefusal()
                 var showMinimalProbeConfirm by remember { mutableStateOf(false) }
                 var showTempoProbeConfirm by remember { mutableStateOf(false) }
                 var showLiveDjConfirm by remember { mutableStateOf(false) }
 
-                Text("Color4 Live-DJ · Einzel-Lampe, Music-Rückkanal",
+                Text("Color4 Live-DJ · 1–4 Music-Rückkanäle",
                     color = Color.White, fontWeight = FontWeight.SemiBold)
                 if (controller.color4LiveDjRunning) {
                     Button(
@@ -352,33 +361,42 @@ fun MusicScreen(controller: LoftController) {
                 } else {
                     Button(
                         onClick = { showLiveDjConfirm = true },
-                        enabled = audioRunning && probeRefusal == null && !controller.busy,
+                        enabled = audioRunning && liveDjRefusal == null && !controller.busy,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Live-DJ auf einer Color4 starten") }
+                    ) { Text("Live-DJ auf ausgewählten Color4 starten") }
                 }
                 Text(
-                    "Keine starre 8-Sekunden-Grenze: läuft bei geöffneter App " +
-                        "mit aktiver Audioquelle bis zu deinem Stopp. Nur echte Beat-Ereignisse, " +
+                    (liveDjRefusal ?: "Keine Zeitgrenze: eine bis vier bestätigte Color4 " +
+                        "mit eigenen Music-Rückkanälen und gemeinsamem Beat. " +
+                        "Läuft auch bei Displaysperre über den Vordergrunddienst. " +
+                        "Nur echte Beat-Ereignisse, " +
                         "gemessene Akzente und gekennzeichnete BPM-Zwischentakte " +
-                        "über den bestätigten Music-Socket; niemals normales LAN-RGB.",
+                        "über individuell bestätigte Music-Sockets, niemals normales LAN-RGB."),
                     color = Color(0xFFAAB6CE), fontSize = 11.sp
                 )
                 if (showLiveDjConfirm) {
                     AlertDialog(
                         onDismissRequest = { showLiveDjConfirm = false },
-                        title = { Text("Color4 Live-DJ starten?") },
+                        title = { Text("Ausgewählte Color4 im Live-DJ starten?") },
                         text = { Text(
                             "Neue Funktion, noch nicht als Langzeitshow auf dieser Firmware " +
-                                "abgenommen. Nur eine intakte, bereits eingeschaltete Color4; " +
-                                "keine parallele Yeelight-Steuerung. Musikfarben ausschließlich " +
-                                "im set_music-Rückkanal. Stoppen über diese Seite oder " +
-                                "Mikrofon-Stopp/App verlassen. Bei Quota/ungeklärtem music_on " +
-                                "kein neuer Versuch. Farbzustand wird nicht automatisch zurückgesetzt."
+                                "abgenommen. Nur 1–4 intakte, bereits eingeschaltete Color4 " +
+                                "mit bestätigtem Music-Modus; keine parallele Classic-Steuerung. " +
+                                "Jede Lampe erhält einen eigenen set_music-Rückkanal. " +
+                                "Stoppen hier oder (wenn erlaubt) über die Benachrichtigung. " +
+                                "Bei Quota/ungeklärtem music_on kein Neustart. " +
+                                "Vorherige Farben werden nicht automatisch zurückgesetzt."
                         ) },
                         confirmButton = {
                             TextButton(onClick = {
                                 showLiveDjConfirm = false
-                                controller.runMinimalColor4Probe(liveDj = true)
+                                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                                    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                                    PackageManager.PERMISSION_GRANTED) {
+                                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    controller.startForegroundColor4LiveDjGroupAware()
+                                }
                             }) { Text("Live-DJ ausdrücklich starten") }
                         },
                         dismissButton = {

@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var controller: LoftController
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        controller = LoftController(applicationContext)
+        controller = LoftControllerStore.attach(applicationContext)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
                 primary = lavender,
@@ -81,14 +81,16 @@ class MainActivity : ComponentActivity() {
     }
     override fun onStop() {
         controller.requestStopScanner()
-        controller.stopMicrophone()
-        // Do not monopolize the device's four TCP slots when Yeelight/Home
-        // apps may need control. Active scanner cleanup owns its sockets.
-        if (!controller.scannerRunning) YeelightLan.releaseTcpConnections()
+        // Screen lock invokes onStop; an expressly started Live-DJ service
+        // keeps this controller and its Music socket alive.
+        if (!LiveDjSessionService.isHolding()) {
+            controller.stopMicrophone()
+            if (!controller.scannerRunning) YeelightLan.releaseTcpConnections()
+        }
         super.onStop()
     }
     override fun onDestroy() {
-        controller.close()
+        LoftControllerStore.detach(controller)
         super.onDestroy()
     }
 }

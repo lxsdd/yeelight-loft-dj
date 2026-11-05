@@ -127,8 +127,28 @@ jobs:
           green="$(jq --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success" and .event == "pull_request" and .name == "Android CI")] | length' <<< "$runs")"
           [[ "$green" =~ ^[0-9]+$ && "$green" -ge 1 ]] || { echo '::error::RC12 exact source CI is not green'; exit 1; }
           echo "RC12 owner-only signed temporary APK permitted for $GITHUB_SHA"
+      - name: Validate owner-dispatched RC13 Live DJ and exact-source CI
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc13-standby-multicolor4-20261105' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_ACTOR" == "lxsdd" ]] || { echo '::error::Only repo owner may sign RC13'; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || exit 1
+          grep -Fq 'versionCode = 31' app/build.gradle.kts || exit 1
+          grep -Fq 'versionName = "0.2.8-rc13"' app/build.gradle.kts || exit 1
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/65")"
+          [[ "$(jq -r '.head.sha' <<< "$pr")" == "$GITHUB_SHA" ]] || exit 1
+          [[ "$(jq -r '.head.ref' <<< "$pr")" == 'chat/rc13-standby-multicolor4-20261105' ]] || exit 1
+          [[ "$(jq -r '.base.ref' <<< "$pr")" == 'chat/rc12-live-dj-classic-20261105' ]] || exit 1
+          [[ "$(jq -r '.state' <<< "$pr")" == 'open' && "$(jq -r '.draft' <<< "$pr")" == 'true' ]] || exit 1
+          runs="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs" -f event=pull_request -f head_sha="$GITHUB_SHA" -f per_page=100)"
+          green="$(jq --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success" and .event == "pull_request" and .name == "Android CI")] | length' <<< "$runs")"
+          [[ "$green" =~ ^[0-9]+$ && "$green" -ge 1 ]] || { echo '::error::RC13 exact source CI is not green'; exit 1; }
+          echo "RC13 owner-only signed temporary APK permitted for $GITHUB_SHA"
       - name: Configure stable signing (trusted builds only)
-        if: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/color4-minimal-music-probe-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc10-mic-ab-adaptive-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc11-music-visuals-tempo-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc12-live-dj-classic-20261105' && github.actor == 'lxsdd') }}
+        if: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/color4-minimal-music-probe-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc10-mic-ab-adaptive-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc11-music-visuals-tempo-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc12-live-dj-classic-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc13-standby-multicolor4-20261105' && github.actor == 'lxsdd') }}
         env:
           STORE_B64: ${{ secrets.YEELIGHT_SIGNING_STORE_B64 }}
           STORE_PASSWORD: ${{ secrets.YEELIGHT_SIGNING_PASSWORD }}
@@ -158,7 +178,7 @@ jobs:
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - name: Verify permanent APK signing certificate
-        if: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/color4-minimal-music-probe-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc10-mic-ab-adaptive-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc11-music-visuals-tempo-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc12-live-dj-classic-20261105' && github.actor == 'lxsdd') }}
+        if: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/color4-minimal-music-probe-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc10-mic-ab-adaptive-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc11-music-visuals-tempo-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc12-live-dj-classic-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc13-standby-multicolor4-20261105' && github.actor == 'lxsdd') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -182,7 +202,7 @@ jobs:
             exit 1
           fi
       - uses: actions/upload-artifact@v4
-        if: ${{ success() && ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/color4-minimal-music-probe-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc10-mic-ab-adaptive-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc11-music-visuals-tempo-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc12-live-dj-classic-20261105' && github.actor == 'lxsdd')) }}
+        if: ${{ success() && ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/rc8-safety-google-home-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/color4-minimal-music-probe-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc10-mic-ab-adaptive-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc11-music-visuals-tempo-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc12-live-dj-classic-20261105' && github.actor == 'lxsdd') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc13-standby-multicolor4-20261105' && github.actor == 'lxsdd')) }}
         with:
           name: yeelight-loft-dj-stable-signed
           path: app/build/outputs/apk/debug/*.apk
