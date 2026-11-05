@@ -14,6 +14,9 @@ class Color4TcpResponseLedger {
         var session: Session? = null
         var inflight: Inflight? = null
         var lastProtocolId = 0L
+        // Admission tickets are fleet-wide monotonic. Never accept a spent ticket again,
+        // including after a socket reconnect or explicit quarantine recovery.
+        var lastTicket = 0L
         var quarantined = false
     }
     private val devices = mutableMapOf<String, Device>()
@@ -32,7 +35,8 @@ class Color4TcpResponseLedger {
     @Synchronized
     fun begin(deviceId: String, session: Session, ticket: Long, protocolId: Long): Boolean {
         val d = devices[deviceId] ?: return false
-        if (ticket <= 0 || protocolId <= 0 || d.quarantined || d.session != session || d.inflight != null || protocolId <= d.lastProtocolId) return false
+        if (ticket <= d.lastTicket || protocolId <= 0 || d.quarantined || d.session != session || d.inflight != null || protocolId <= d.lastProtocolId) return false
+        d.lastTicket = ticket
         d.lastProtocolId = protocolId
         d.inflight = Inflight(ticket, protocolId)
         return true
