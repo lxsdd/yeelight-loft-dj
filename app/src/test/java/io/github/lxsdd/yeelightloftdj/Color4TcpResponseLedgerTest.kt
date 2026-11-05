@@ -79,4 +79,46 @@ class Color4TcpResponseLedgerTest {
             assertEquals(i + 1L, l.reply("lamp-$i", sessions[i], 5, true, false)?.ticket)
         }
     }
+
+    @Test fun spentAdmissionTicketCannotBeReusedWithinSession() {
+        val l = Color4TcpResponseLedger()
+        val s = l.open("one")!!
+        assertTrue(l.begin("one", s, 10, 1))
+        assertEquals(10L, l.reply("one", s, 1, true, false)?.ticket)
+        assertFalse(l.begin("one", s, 10, 2))
+        assertFalse(l.begin("one", s, 9, 2))
+        assertTrue(l.begin("one", s, 11, 2))
+        assertEquals(11L, l.reply("one", s, 2, true, false)?.ticket)
+    }
+
+    @Test fun spentTicketCannotReplayAfterReconnectOrQuarantineRecovery() {
+        val l = Color4TcpResponseLedger()
+        val first = l.open("one")!!
+        assertTrue(l.begin("one", first, 77, 1))
+        assertEquals(77L, l.close("one", first)?.ticket)
+        assertTrue(l.isQuarantined("one"))
+        assertTrue(l.clearQuarantineByUser("one"))
+        val second = l.open("one")!!
+        assertFalse(l.begin("one", second, 77, 1))
+        assertFalse(l.begin("one", second, 76, 1))
+        assertTrue(l.begin("one", second, 78, 1))
+        assertEquals(78L, l.reply("one", second, 1, true, false)?.ticket)
+        assertNull(l.reply("one", first, 1, false, true))
+    }
+
+    @Test fun rejectedReplayNeverConsumesProtocolIdOrAffectsOtherLamp() {
+        val l = Color4TcpResponseLedger()
+        val a = l.open("one")!!
+        val b = l.open("two")!!
+        assertTrue(l.begin("one", a, 3, 1))
+        assertEquals(3L, l.reply("one", a, 1, true, false)?.ticket)
+        assertFalse(l.begin("one", a, 3, 100))
+        assertTrue(l.begin("one", a, 4, 2))
+        assertTrue(l.begin("two", b, 3, 1))
+        assertEquals(4L, l.reply("one", a, 2, true, false)?.ticket)
+        assertEquals(3L, l.reply("two", b, 1, true, false)?.ticket)
+        assertFalse(l.isQuarantined("one"))
+        assertFalse(l.isQuarantined("two"))
+    }
+
 }
