@@ -58,6 +58,42 @@ class Color4LiveVisualDirectorTest {
             .map { it.rgb }.distinct().size)
     }
 
+    @Test fun gradualEnergyChangesControlSpeedNotOnlyTwoRigidModes() {
+        val d = Color4LiveVisualDirector(1, Color4LiveStyle.ADAPTIVE)
+        val quiet = d.next(frame(.002f,.01f), LiveColorPulse.NONE, 0)!!.single()
+        var middle: Color4MusicVisual? = null
+        for (i in 1..12) {
+            val shown = d.next(frame(.04f,.13f), LiveColorPulse.NONE, i*900L)
+            if (shown != null) middle = shown.single()
+        }
+        assertNotNull(middle)
+        assertTrue("medium should be between slow and fast",
+            middle!!.transitionMs in 371..1749)
+        var loud: Color4MusicVisual? = null
+        for (i in 13..22) {
+            d.next(frame(.23f,.65f), LiveColorPulse.DETECTED_BEAT, i*900L)
+                ?.let { loud=it.single() }
+        }
+        assertNotNull(loud)
+        assertTrue("loud must be faster than mid",
+            loud!!.transitionMs < middle.transitionMs)
+        assertTrue(quiet.transitionMs > middle.transitionMs)
+    }
+
+    @Test fun adaptiveRgbGetsVisiblyBrighterWithoutOptionalSetBrightTransport() {
+        val d = Color4LiveVisualDirector(1, Color4LiveStyle.ADAPTIVE)
+        val dim = d.next(frame(.001f,.005f), LiveColorPulse.NONE,0)!!.single()
+        var strong: Color4MusicVisual? = null
+        repeat(12) { i ->
+            d.next(frame(.19f,.60f), LiveColorPulse.NONE,(i+1)*1_000L)
+                ?.let { strong=it.single() }
+        }
+        assertNotNull(strong)
+        fun sum(rgb:Int)=((rgb shr 16) and 255)+((rgb shr 8) and 255)+(rgb and 255)
+        assertTrue("RGB intensity should increase even if set_bright is ignored",
+            sum(strong!!.rgb)>sum(dim.rgb))
+    }
+
     @Test fun missingInvalidOrReversedAudioNeverDispatches() {
         val director = Color4LiveVisualDirector(1, Color4LiveStyle.ADAPTIVE)
         assertNull(director.next(null, LiveColorPulse.NONE, 0))
