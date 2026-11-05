@@ -701,6 +701,30 @@ object YeelightLan {
         return parseRecoveryProperties((0 until values.length()).map { values.optString(it) })
     }
 
+    /**
+     * Minimal Music-specific observation for Color4 firmware that may reject
+     * or truncate the legacy 9+-property recovery batch. Exactly one
+     * quota-accounted get_prop for power + music_on, then release the TCP
+     * client slot. UNKNOWN remains unknown; no extra fallback request.
+     */
+    internal fun readMusicEndStatus(device: YeelightDevice): MusicEndStatus =
+        commandGate.run(device.ip) {
+            require(isLocalIp(device.ip))
+            try {
+                val reply = tcp.request(device.ip, device.port, seq.getAndIncrement(),
+                    "get_prop", listOf("power", "music_on"))
+                if (reply.has("error")) {
+                    throw RejectedCommand("Music-Status abgelehnt: " +
+                        reply.getJSONObject("error").optString("message", "Yeelight-Fehler"))
+                }
+                val values = reply.optJSONArray("result")
+                    ?: error("Music-Status: keine Firmwarewerte")
+                MusicEndStatus.parse(listOf(values.optString(0), values.optString(1)))
+            } finally {
+                tcp.closeTarget(device.ip, device.port)
+            }
+        }
+
     internal fun preferAtomicFlowStart(methods: Set<String>): Boolean =
         methods.isEmpty() || "set_scene" in methods
 

@@ -51,6 +51,7 @@ fun MusicScreen(controller: LoftController) {
     var showLiveDjConfirm by remember { mutableStateOf(false) }
     var showMusicHandoffChooser by remember { mutableStateOf(false) }
     var musicHandoffIp by remember { mutableStateOf<String?>(null) }
+    var physicalRecoveryIp by remember { mutableStateOf<String?>(null) }
     var showAudioDetails by rememberSaveable { mutableStateOf(false) }
     var showAdvancedMusicTests by rememberSaveable { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(
@@ -174,6 +175,14 @@ fun MusicScreen(controller: LoftController) {
                             modifier = Modifier.fillMaxWidth()) {
                             Text(controller.musicReadbackLabel(ip) + " · music_on nur lesen")
                         }
+                        TextButton(
+                            onClick = { physicalRecoveryIp = ip },
+                            enabled = controller.canReadMusicEnd(ip),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(controller.musicReadbackLabel(ip) +
+                                " · nach echter Stromtrennung wieder freigeben")
+                        }
                     }
                 }
                 Text(controller.minimalProbeReport,
@@ -185,6 +194,35 @@ fun MusicScreen(controller: LoftController) {
                         else "Audioquelle, Verstärkung und Spektrum")
                 }
             }
+        }
+        physicalRecoveryIp?.let { ip ->
+            AlertDialog(
+                onDismissRequest = { physicalRecoveryIp = null },
+                title = { Text("Color4 nach Stromtrennung freigeben?") },
+                text = { Text(
+                    controller.musicReadbackLabel(ip) + ": Nur bestätigen, wenn " +
+                    "diese konkrete Lampe SEIT dem ungeklärten Live-DJ-Ende " +
+                    "vollständig vom Stromnetz getrennt und wieder eingeschaltet wurde. " +
+                    "Ein bloßes Ausschalten in Yeelight/Google Home zählt nicht. " +
+                    "Andere Apps dürfen keinen Music-Modus mehr steuern. " +
+                    "Die App liest genau einmal power und music_on; sie sendet " +
+                    "keinen Stop- oder Farbbefehl. Wenn die Firmware music_on " +
+                    "nicht liefert, gilt die Stromtrennung als bewusste " +
+                    "Freigabe nur für EINEN neuen Live-DJ-Start. " +
+                    "Bei Quota, fehlender Antwort oder music_on=1 bleibt die Lampe gesperrt."
+                ) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        physicalRecoveryIp = null
+                        controller.recoverMusicAfterPhysicalPowerCycle(ip)
+                    }) { Text("Stromtrennung bestätigt · prüfen") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { physicalRecoveryIp = null }) {
+                        Text("Abbrechen")
+                    }
+                }
+            )
         }
         if (showMusicHandoffChooser) {
             AlertDialog(

@@ -2315,6 +2315,13 @@ class LoftController(context: Context) {
     private var minimalProbeUnconfirmed by mutableStateOf(
         prefs.getStringSet(minimalProbePreferenceKey, emptySet()).orEmpty().toSet()
     )
+    // A per-bulb ONE-USE permission for firmware that cannot report music_on.
+    // Created only by a clean app-owned reverse-socket stop plus a live read,
+    // or by explicit user-attested mains power-cycle plus a live read.
+    // Removed durably together with the next pre-start safety journal write.
+    private val musicUnknownPermitPreferenceKey = "color4-music-unknown-one-shot-ips"
+    private var musicUnknownPermitIps =
+        prefs.getStringSet(musicUnknownPermitPreferenceKey, emptySet()).orEmpty().toSet()
     var minimalProbeRunning by mutableStateOf(false)
         private set
 
@@ -2464,6 +2471,7 @@ class LoftController(context: Context) {
             color4LiveDjRunning=true
             activeColor4LiveStyle=style
             val journaled=mutableListOf<YeelightDevice>()
+            val ownedSockets=mutableSetOf<String>()
             var failure: String?=null
             var sent=0
             var brightnessWrites=0
@@ -2474,22 +2482,31 @@ class LoftController(context: Context) {
                 // Fail closed before enabling even the first music session.
                 targets.forEach { d ->
                     check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
-                    val preflight=withContext(Dispatchers.IO) {
-                        YeelightLan.readMusicPreflight(d)
+                    check(!YeelightLan.musicChannelExists(d)) {
+                        "Für " + displayName(d) +
+                            " existiert bereits ein lokaler Music-Rückkanal. " +
+                            "Keine zweite Sitzung öffnen oder bestehenden Kanal übernehmen."
                     }
-                    check(preflight.isOn) {
-                        "Bitte alle ausgewählten Musiklampen vor der Show einschalten."
+                    val observed=withContext(Dispatchers.IO) {
+                        YeelightLan.readMusicEndStatus(d)
                     }
+                    MusicEndRecoveryPolicy.admissionRefusal(
+                        observed, d.ip in musicUnknownPermitIps
+                    )?.let { error(displayName(d) + ": " + it) }
                 }
                 targets.forEach { d ->
                     check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
                     // Persist each bulb BEFORE that bulb's first set_music(1).
                     val next=minimalProbeUnconfirmed + d.ip
-                    check(prefs.edit().putStringSet(
-                        minimalProbePreferenceKey,next).commit()) {
+                    val remainingPermits=musicUnknownPermitIps - d.ip
+                    check(prefs.edit()
+                        .putStringSet(minimalProbePreferenceKey,next)
+                        .putStringSet(musicUnknownPermitPreferenceKey,remainingPermits)
+                        .commit()) {
                         "Music-Wiederherstellungsjournal nicht sicher geschrieben."
                     }
                     minimalProbeUnconfirmed=next
+                    musicUnknownPermitIps=remainingPermits
                     journaled += d
                     withContext(Dispatchers.IO) {
                         check(YeelightLan.startMusicMode(d,socketStopOnly=true)) {
@@ -2497,6 +2514,7 @@ class LoftController(context: Context) {
                         }
                         YeelightLan.releaseMusicControlSlot(d)
                     }
+                    ownedSockets += d.ip
                 }
                 val clock=Color4LivePulseClock(musicBeatCount)
                 val director=Color4LiveVisualDirector(targets.size,style)
@@ -2553,7 +2571,12 @@ class LoftController(context: Context) {
                 // Always attempt EVERY journaled bulb, including failed starts.
                 // A failure on one channel must never skip other cleanup.
                 journaled.asReversed().forEach { d ->
-                    var off=false
+                    // A disconnected or interrupted writer is NOT a clean
+                    // documented own-socket stop: only an active reverse
+                    // connection immediately before close counts as evidence.
+                    val ownedAndClosed=d.ip in ownedSockets &&
+                        YeelightLan.musicModeActive(d)
+                    var observed: MusicEndStatus?=null
                     val stopError=runCatching {
                         withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
                             try {
@@ -2561,17 +2584,26 @@ class LoftController(context: Context) {
                                     YeelightLan.stopMusicMode(d)
                                 YeelightLan.releaseMusicControlSlot(d)
                                 delay(650L)
-                                off=YeelightLan.readRecoveryObservation(d).musicOn == false
+                                observed=YeelightLan.readMusicEndStatus(d)
                             } finally {
                                 YeelightLan.releaseMusicControlSlot(d)
                             }
                         }
                     }.exceptionOrNull()
-                    if (stopError == null && off) {
+                    val decision=MusicEndRecoveryPolicy.afterOwnStop(
+                        observed, ownedAndClosed, stopError != null
+                    )
+                    if (decision != MusicEndRelease.UNRESOLVED) {
                         val cleaned=minimalProbeUnconfirmed - d.ip
-                        if (prefs.edit().putStringSet(
-                            minimalProbePreferenceKey,cleaned).commit()) {
+                        val permit=if (decision == MusicEndRelease.OWN_SOCKET_CLOSED)
+                            musicUnknownPermitIps + d.ip
+                        else musicUnknownPermitIps - d.ip
+                        if (prefs.edit()
+                            .putStringSet(minimalProbePreferenceKey,cleaned)
+                            .putStringSet(musicUnknownPermitPreferenceKey,permit)
+                            .commit()) {
                             minimalProbeUnconfirmed=cleaned
+                            musicUnknownPermitIps=permit
                         } else {
                             failure=(failure?.plus(" · ") ?: "") +
                                 "Music-Journal-Write beim Beenden fehlgeschlagen"
@@ -2580,7 +2612,7 @@ class LoftController(context: Context) {
                         failure=(failure?.plus(" · ") ?: "") +
                             "Music-Ende einer Lampe ungeklärt" +
                             (stopError?.message?.let { ": " + it }
-                                ?: " (music_on nicht bestätigt)")
+                                ?: " (keine sichere Firmware-/Socket-Bestätigung)")
                     }
                 }
                 minimalProbeRunning=false
@@ -2786,8 +2818,7 @@ class LoftController(context: Context) {
         val device = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
         task("Prüfe music_on für " + musicReadbackLabel(ip) + " nur lesend …") {
             val observation = withContext(Dispatchers.IO) {
-                try { YeelightLan.readRecoveryObservation(device) }
-                finally { YeelightLan.releaseMusicControlSlot(device) }
+                YeelightLan.readMusicEndStatus(device)
             }
             check(observation.musicOn == false) {
                 "music_on ist aktiv oder unbekannt. Kein neuer Start; " +
@@ -2800,12 +2831,83 @@ class LoftController(context: Context) {
                 "Inzwischen läuft eine Music-Sitzung. Keine lokale Freigabe."
             }
             val next = minimalProbeUnconfirmed - device.ip
-            check(prefs.edit().putStringSet(minimalProbePreferenceKey, next).commit()) {
+            val permits = musicUnknownPermitIps - device.ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey, next)
+                .putStringSet(musicUnknownPermitPreferenceKey, permits)
+                .commit()) {
                 "Music-Sicherheitsstatus konnte nicht gespeichert werden."
             }
             minimalProbeUnconfirmed = next
+            musicUnknownPermitIps = permits
             musicReadbackLabel(ip) + ": music_on=0 unabhängig bestätigt; " +
                 "nur die lokale Geräte-Music-Vormerkung entfernt."
+        }
+    }
+
+    /**
+     * Explicit owner recovery for an OLD stuck guard, e.g. after a lost
+     * Android process or a Color4 that omits music_on from get_prop.
+     *
+     * The UI requires a specific confirmation of mains disconnection since
+     * the failed session. We then use only ONE focused, quota-accounted
+     * get_prop. A valid power reply is NOT firmware proof of music_on=0:
+     * the resulting one-use permit is consumed *before* set_music(1).
+     * No set_music(0), scene writes or LAN RGB are sent here.
+     */
+    fun recoverMusicAfterPhysicalPowerCycle(ip: String) {
+        val device=devices.firstOrNull { it.ip == ip }
+        if (device == null || !YeelightLan.supportsMusicMode(device) ||
+            !canReadMusicEnd(ip)) {
+            status="Stromtrennungs-Freigabe verweigert: die Music-Lampe ist " +
+                "nicht eindeutig bekannt oder die Steuerung ist noch belegt."
+            return
+        }
+        val now=SystemClock.elapsedRealtime()
+        val last=lastRecoveryReadAt[ip]
+        if (last != null && now - last in 0 until 10_000L) {
+            status="Bitte frühestens nach zehn Sekunden erneut prüfen."
+            return
+        }
+        lastRecoveryReadAt[ip]=now
+        task("Prüfe bestätigte Stromtrennung für " + displayName(device) + " …") {
+            val observed=withContext(Dispatchers.IO) {
+                YeelightLan.readMusicEndStatus(device)
+            }
+            val safe=ip in minimalProbeUnconfirmed &&
+                !YeelightLan.isLanQuarantined(device) &&
+                !YeelightLan.musicChannelExists(device) &&
+                !color4LiveDjRunning && !musicLightArmed &&
+                !scannerRunning && !musicSending && !musicStopPending
+            val decision=MusicEndRecoveryPolicy.afterPhysicalPowerCycle(
+                observed, userConfirmedMainsDisconnection=true,
+                safeLocalDevice=safe && YeelightLan.isLocalIp(ip)
+            )
+            check(decision != MusicEndRelease.UNRESOLVED) {
+                if (observed.musicOn == true)
+                    "Firmware meldet music_on=1. Keine Freigabe; fremde Sitzung " +
+                        "oder nicht zurückgesetzte Color4 möglich."
+                else "Die Color4 antwortet noch nicht mit gültigem power/music_on. " +
+                    "Schutz bleibt bestehen; keine Steuerbefehle gesendet."
+            }
+            val pending=minimalProbeUnconfirmed - ip
+            val permits=if (decision == MusicEndRelease.OWNER_POWER_CYCLE)
+                musicUnknownPermitIps + ip else musicUnknownPermitIps - ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey,pending)
+                .putStringSet(musicUnknownPermitPreferenceKey,permits)
+                .commit()) {
+                "Lokaler Sicherheitsstatus nicht gespeichert; Sperre bleibt bestehen."
+            }
+            minimalProbeUnconfirmed=pending
+            musicUnknownPermitIps=permits
+            if (decision == MusicEndRelease.OWNER_POWER_CYCLE)
+                displayName(device) + ": lokaler Music-Schutz nach bestätigter " +
+                    "Stromtrennung und gültiger Gerätestatusantwort freigegeben. " +
+                    "Firmware meldet music_on weiterhin nicht: genau EIN bewusster " +
+                    "neuer Music-Start wird zugelassen, danach normale Schutzprüfung."
+            else displayName(device) +
+                ": music_on=0 bestätigt. Nur dieser Music-Schutz wurde freigegeben."
         }
     }
 
@@ -2861,8 +2963,7 @@ class LoftController(context: Context) {
                 "Neuübernahme abgebrochen: Lampe/Steuerung inzwischen belegt."
             }
             val observed = withContext(Dispatchers.IO) {
-                try { YeelightLan.readRecoveryObservation(device) }
-                finally { YeelightLan.releaseMusicControlSlot(device) }
+                YeelightLan.readMusicEndStatus(device)
             }.musicOn
             val decision = MusicSessionHandoffPolicy.decidePreflight(observed)
             check(decision != MusicHandoffReadDecision.UNKNOWN) {
@@ -2871,10 +2972,15 @@ class LoftController(context: Context) {
             if (decision == MusicHandoffReadDecision.ALREADY_STOPPED) {
                 val next = minimalProbeUnconfirmed - ip
                 if (ip in minimalProbeUnconfirmed) {
-                    check(prefs.edit().putStringSet(minimalProbePreferenceKey,next).commit()) {
+                    val permits=musicUnknownPermitIps - ip
+                    check(prefs.edit()
+                        .putStringSet(minimalProbePreferenceKey,next)
+                        .putStringSet(musicUnknownPermitPreferenceKey,permits)
+                        .commit()) {
                         "Bestätigter Music-Stopp konnte lokal nicht gesichert werden."
                     }
                     minimalProbeUnconfirmed=next
+                    musicUnknownPermitIps=permits
                 }
                 return@task displayName(device) +
                     ": music_on=0 – Music-Modus bereits beendet, kein Stoppbefehl nötig. " +
@@ -2891,7 +2997,7 @@ class LoftController(context: Context) {
             val observedAfter = withContext(Dispatchers.IO) {
                 try {
                     YeelightLan.endUnownedMusicSessionOnce(device)
-                    YeelightLan.readRecoveryObservation(device).musicOn
+                    YeelightLan.readMusicEndStatus(device).musicOn
                 } finally { YeelightLan.releaseMusicControlSlot(device) }
             }
             check(MusicSessionHandoffPolicy.verifiedStopped(true,observedAfter)) {
@@ -2901,10 +3007,15 @@ class LoftController(context: Context) {
             // Do not clear any other bulb's journal or an unrelated old
             // global music-light-session/recovery snapshot.
             val clear = minimalProbeUnconfirmed - ip
-            check(prefs.edit().putStringSet(minimalProbePreferenceKey,clear).commit()) {
+            val permits=musicUnknownPermitIps - ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey,clear)
+                .putStringSet(musicUnknownPermitPreferenceKey,permits)
+                .commit()) {
                 "Firmware meldet Music aus, aber lokales Journal bleibt geschützt."
             }
             minimalProbeUnconfirmed=clear
+            musicUnknownPermitIps=permits
             displayName(device) + ": Music-Sitzung mit genau einem set_music(0) beendet " +
                 "und music_on=0 nachgelesen. Live-DJ nun manuell neu starten; " +
                 "weitere Schutzmarkierungen bleiben unverändert."
