@@ -222,4 +222,50 @@ class Color4UiAdmissionTest {
         assertTrue(a.complete("other", other.ticket, true, false))
     }
 
+    @Test fun capabilityLossDuringInflightNeverReleasesSlotOrReplaysPending() {
+        val a = Color4UiAdmission()
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 1, true))
+        val first = a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0L, true)!!
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 2, true))
+        assertFalse(a.offer("one", Color4UiAdmission.Kind.BRIGHTNESS, 50, false))
+        assertTrue(a.isQuarantined("one"))
+        a.clearQuarantineByUser("one")
+        assertTrue(a.isQuarantined("one"))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 1500L, true))
+        assertTrue(a.complete("one", first.ticket, true, false))
+        assertTrue(a.isQuarantined("one"))
+        a.clearQuarantineByUser("one")
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 3000L, true))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.BRIGHTNESS, 3000L, true))
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 3, true))
+        assertEquals(3, a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 3000L, true)?.value)
+    }
+
+    @Test fun deniedAttemptsNeverConsumeBudgetOrAdvanceSpacing() {
+        val a = Color4UiAdmission()
+        assertFalse(a.offer("one", Color4UiAdmission.Kind.RGB, -1, true))
+        assertFalse(a.offer("one", Color4UiAdmission.Kind.BRIGHTNESS, 101, true))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0L, true))
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 1, true))
+        val first = a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0L, true)!!
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 1500L, true))
+        assertTrue(a.complete("one", first.ticket, true, false))
+        assertTrue(a.offer("one", Color4UiAdmission.Kind.RGB, 2, true))
+        assertNull(a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 1499L, true))
+        assertEquals(2, a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 1500L, true)?.value)
+    }
+
+    @Test fun staleFailureCannotAffectAnotherLampAfterRecovery() {
+        val a = Color4UiAdmission()
+        for (id in listOf("one", "two")) assertTrue(a.offer(id, Color4UiAdmission.Kind.RGB, 1, true))
+        val first = a.takeOnUiEvent("one", Color4UiAdmission.Kind.RGB, 0L, true)!!
+        val second = a.takeOnUiEvent("two", Color4UiAdmission.Kind.RGB, 0L, true)!!
+        assertTrue(a.complete("one", first.ticket, false, true))
+        a.clearQuarantineByUser("one")
+        assertFalse(a.complete("one", first.ticket, false, true))
+        assertFalse(a.complete("two", first.ticket, false, true))
+        assertFalse(a.isQuarantined("two"))
+        assertTrue(a.complete("two", second.ticket, true, false))
+    }
+
 }
