@@ -2566,8 +2566,11 @@ class LoftController(context: Context) {
                 // Always attempt EVERY journaled bulb, including failed starts.
                 // A failure on one channel must never skip other cleanup.
                 journaled.asReversed().forEach { d ->
+                    // A disconnected or interrupted writer is NOT a clean
+                    // documented own-socket stop: only an active reverse
+                    // connection immediately before close counts as evidence.
                     val ownedAndClosed=d.ip in ownedSockets &&
-                        YeelightLan.musicChannelExists(d)
+                        YeelightLan.musicModeActive(d)
                     var observed: MusicEndStatus?=null
                     val stopError=runCatching {
                         withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
@@ -2964,10 +2967,15 @@ class LoftController(context: Context) {
             if (decision == MusicHandoffReadDecision.ALREADY_STOPPED) {
                 val next = minimalProbeUnconfirmed - ip
                 if (ip in minimalProbeUnconfirmed) {
-                    check(prefs.edit().putStringSet(minimalProbePreferenceKey,next).commit()) {
+                    val permits=musicUnknownPermitIps - ip
+                    check(prefs.edit()
+                        .putStringSet(minimalProbePreferenceKey,next)
+                        .putStringSet(musicUnknownPermitPreferenceKey,permits)
+                        .commit()) {
                         "Bestätigter Music-Stopp konnte lokal nicht gesichert werden."
                     }
                     minimalProbeUnconfirmed=next
+                    musicUnknownPermitIps=permits
                 }
                 return@task displayName(device) +
                     ": music_on=0 – Music-Modus bereits beendet, kein Stoppbefehl nötig. " +
@@ -2994,10 +3002,15 @@ class LoftController(context: Context) {
             // Do not clear any other bulb's journal or an unrelated old
             // global music-light-session/recovery snapshot.
             val clear = minimalProbeUnconfirmed - ip
-            check(prefs.edit().putStringSet(minimalProbePreferenceKey,clear).commit()) {
+            val permits=musicUnknownPermitIps - ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey,clear)
+                .putStringSet(musicUnknownPermitPreferenceKey,permits)
+                .commit()) {
                 "Firmware meldet Music aus, aber lokales Journal bleibt geschützt."
             }
             minimalProbeUnconfirmed=clear
+            musicUnknownPermitIps=permits
             displayName(device) + ": Music-Sitzung mit genau einem set_music(0) beendet " +
                 "und music_on=0 nachgelesen. Live-DJ nun manuell neu starten; " +
                 "weitere Schutzmarkierungen bleiben unverändert."
