@@ -2307,6 +2307,8 @@ class LoftController(context: Context) {
     @Volatile private var minimalStopRequested = false
     var color4LiveDjRunning by mutableStateOf(false)
         private set
+    var activeColor4LiveStyle by mutableStateOf<Color4LiveStyle?>(null)
+        private set
 
     /** Local action: stop emitting Music frames immediately, then close/read back. */
     fun stopColor4LiveDj() {
@@ -2350,21 +2352,25 @@ class LoftController(context: Context) {
     }
 
     /** The original single-Color4 path remains intact and selectable. */
-    fun liveDjRefusal(): String? {
+    fun liveDjRefusal(style: Color4LiveStyle = Color4LiveStyle.BEAT): String? {
         val targets=selected()
         return Color4LiveGroupPolicy.refusal(
             candidates=targets.map { Color4LiveCandidate(
-                it.ip,it.model,YeelightLan.supportsMusicMode(it)) },
+                it.ip,it.model,YeelightLan.supportsMusicMode(it),
+                "set_bright" in it.methods) },
             quotaBlocked=targets.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet(),
             unconfirmedMusic=minimalProbeUnconfirmed,
             otherAction=busy || minimalProbeRunning || recoveryPending ||
                 musicSending || musicStopPending || musicLightArmed ||
                 musicDeviceSession || scannerRunning || runningDeviceIps.isNotEmpty(),
+            requireBrightness = style == Color4LiveStyle.ADAPTIVE,
         )
     }
 
-    fun startForegroundColor4LiveDjGroupAware() {
-        liveDjRefusal()?.let { status=it; return }
+    fun startForegroundColor4LiveDjGroupAware(
+        style: Color4LiveStyle = Color4LiveStyle.BEAT
+    ) {
+        liveDjRefusal(style)?.let { status=it; return }
         if (!(microphoneRunning || InternalAudioBridge.running)) {
             status="Zuerst eine Audioquelle starten."
             return
@@ -2379,18 +2385,23 @@ class LoftController(context: Context) {
                 (e.message ?: e.javaClass.simpleName)
             return
         }
-        if (targets.size == 1) runMinimalColor4Probe(liveDj=true)
-        else runColor4LiveGroup(targets)
+        // Single and four-lamp shows now share exactly the same fail-closed
+        // per-IP group transport. Bounded 8-second diagnostic remains unchanged.
+        runColor4LiveGroup(targets, style)
     }
 
-    private fun runColor4LiveGroup(targets: List<YeelightDevice>) {
+    private fun runColor4LiveGroup(
+        targets: List<YeelightDevice>, style: Color4LiveStyle
+    ) {
         minimalStopRequested=false
         task("Live-DJ: einzelne Color4-Music-Kanäle werden gesichert …") {
             minimalProbeRunning=true
             color4LiveDjRunning=true
+            activeColor4LiveStyle=style
             val journaled=mutableListOf<YeelightDevice>()
             var failure: String?=null
             var sent=0
+            var brightnessWrites=0
             var detected=0
             var predicted=0
             var accents=0
@@ -2421,9 +2432,9 @@ class LoftController(context: Context) {
                     }
                 }
                 val clock=Color4LivePulseClock(musicBeatCount)
+                val director=Color4LiveVisualDirector(targets.size,style)
                 val startAt=android.os.SystemClock.elapsedRealtime()
                 var reportAt=0L
-                var pulseNumber=0L
                 while (!minimalStopRequested &&
                        (microphoneRunning || InternalAudioBridge.running)) {
                     delay(30L)
@@ -2433,34 +2444,34 @@ class LoftController(context: Context) {
                     val elapsed=android.os.SystemClock.elapsedRealtime()-startAt
                     val frame=musicFrame ?: InternalAudioBridge.frame
                     val pulse=clock.decide(frame,musicBeatCount,elapsed)
-                    if (pulse != LiveColorPulse.NONE) {
-                        check(frame != null) { "Audioframe nicht verfügbar." }
-                        val frameIndex=pulseNumber
-                        // Shared musical clock; per-IP independent reverse
-                        // socket. No normal LAN write fallback, ever.
+                    val visualFrames=director.next(frame,pulse,elapsed)
+                    if (visualFrames != null) {
+                        // One shared audio phase, one ordered Music socket per lamp.
+                        // Stop entire group if ANY bulb fails; no LAN RGB fallback.
                         kotlinx.coroutines.coroutineScope {
                             targets.mapIndexed { index,d ->
                                 async(Dispatchers.IO) {
-                                    val color=MusicLightPolicy.color(frame,index,frameIndex)
-                                    check(YeelightLan.sendMusicRgb(d,color)) {
+                                    check(YeelightLan.sendMusicVisual(d,visualFrames[index])) {
                                         "Color4-Music-Kanal unerwartet geschlossen."
                                     }
                                 }
                             }.awaitAll()
                         }
                         sent += targets.size
-                        pulseNumber++
-                        when (pulse) {
-                            LiveColorPulse.DETECTED_BEAT -> detected++
-                            LiveColorPulse.BPM_GRID -> predicted++
-                            else -> accents++
-                        }
+                        brightnessWrites += visualFrames.count { it.brightness != null }
+                    }
+                    when (pulse) {
+                        LiveColorPulse.DETECTED_BEAT -> detected++
+                        LiveColorPulse.BPM_GRID -> predicted++
+                        LiveColorPulse.SPECTRAL_ACCENT,
+                        LiveColorPulse.AUDIBLE_FALLBACK -> accents++
+                        else -> Unit
                     }
                     if (elapsed-reportAt >= 1_000L) {
                         reportAt=elapsed
-                        minimalProbeReport="Live-DJ auf ${targets.size} Color4 · " +
-                            "$sent Music-RGB · $detected echte Beats · " +
-                            "$predicted Zwischentakte · $accents Audioakzente"
+                        minimalProbeReport="Live-DJ ${style.label} · ${targets.size} Color4 · " +
+                            "$sent Music-RGB · $brightnessWrites Helligkeit · " +
+                            "$detected echte Beats · $predicted Zwischentakte"
                     }
                 }
             } catch (e: Exception) {
@@ -2501,12 +2512,14 @@ class LoftController(context: Context) {
                 }
                 minimalProbeRunning=false
                 color4LiveDjRunning=false
+                activeColor4LiveStyle=null
                 minimalStopRequested=false
                 LiveDjSessionService.finish(app)
             }
             val report=if (failure == null) {
-                "Mehrlampen-Live-DJ: ${targets.size} Color4 · $sent Music-RGB · " +
-                    "$detected erkannte Beats · $predicted BPM-Zwischentakte · " +
+                "Live-DJ ${style.label}: ${targets.size} Color4 · $sent Music-RGB · " +
+                    "$brightnessWrites Helligkeit · $detected erkannte Beats · " +
+                    "$predicted BPM-Zwischentakte · " +
                     "$accents Akzente; music_on=0 für ALLE einzeln nachgelesen."
             } else {
                 "Mehrlampen-Live-DJ abgebrochen: $failure · kein automatischer " +

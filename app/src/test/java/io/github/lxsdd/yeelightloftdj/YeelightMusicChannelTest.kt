@@ -261,6 +261,57 @@ class YeelightMusicChannelTest {
         assertTrue(runCatching { channel.sendRgb(0xFF0000) }.isFailure)
     }
 
+    @Test fun smoothRgbThenBrightnessUseSameReverseSocketInOrder() {
+        val messages = mutableListOf<JSONObject>()
+        val done = CountDownLatch(1)
+        val workerError = AtomicReference<Throwable>()
+        var worker: Thread? = null
+        val channel = YeelightMusicChannel("127.0.0.1",
+            enableOnDevice = { host, port ->
+                worker = thread {
+                    try {
+                        Socket(host, port).use { socket ->
+                            socket.soTimeout = 2500
+                            val input = socket.getInputStream().bufferedReader()
+                            repeat(2) { messages += JSONObject(input.readLine()) }
+                        }
+                    } catch (e: Throwable) { workerError.set(e) }
+                    finally { done.countDown() }
+                }
+            },
+            disableOnDevice = { },
+        )
+        try {
+            channel.start("127.0.0.1")
+            channel.sendRgb(0x23AB45, 1200)
+            channel.sendBrightness(37, 1500)
+            assertTrue(done.await(3, TimeUnit.SECONDS))
+        } finally {
+            channel.close()
+            worker?.join(2500)
+        }
+        assertNull(workerError.get()?.toString(), workerError.get())
+        assertEquals(2, messages.size)
+        assertEquals("set_rgb", messages[0].getString("method"))
+        assertEquals("smooth", messages[0].getJSONArray("params").getString(1))
+        assertEquals(1200, messages[0].getJSONArray("params").getInt(2))
+        assertEquals("set_bright", messages[1].getString("method"))
+        assertEquals(37, messages[1].getJSONArray("params").getInt(0))
+        assertEquals("smooth", messages[1].getJSONArray("params").getString(1))
+        assertEquals(1500, messages[1].getJSONArray("params").getInt(2))
+        assertEquals(1, messages[0].getInt("id"))
+        assertEquals(2, messages[1].getInt("id"))
+    }
+
+    @Test fun invalidTransitionsOrBrightnessNeverReachSocket() {
+        val channel = YeelightMusicChannel("127.0.0.1", { _, _ -> }, {})
+        assertTrue(runCatching { channel.sendRgb(0xFFFFFF, 99) }.isFailure)
+        assertTrue(runCatching { channel.sendRgb(0xFFFFFF, 5_001) }.isFailure)
+        assertTrue(runCatching { channel.sendBrightness(0, 1200) }.isFailure)
+        assertTrue(runCatching { channel.sendBrightness(101, 1200) }.isFailure)
+        channel.close()
+    }
+
     @Test fun invalidColorNeverTouchesTransport() {
         val channel = YeelightMusicChannel(
             "127.0.0.1", { _, _ -> }, { }

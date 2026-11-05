@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class Color4LiveGroupPolicyTest {
+    @Test fun dynamicBrightnessRequiresAdvertisementOnEveryBulb() {
+        val devices = listOf(Color4LiveCandidate("192.168.1.10", "color4", true, false))
+        assertTrue(Color4LiveGroupPolicy.refusal(devices, emptySet(), emptySet(), false,
+            requireBrightness = true)!!.contains("set_bright"))
+        assertNull(Color4LiveGroupPolicy.refusal(devices, emptySet(), emptySet(), false,
+            requireBrightness = false))
+    }
+
     private val bulbs=(2..6).map { n ->
         Color4LiveCandidate("192.168.1.$n","yeelink.light.color4",true)
     }

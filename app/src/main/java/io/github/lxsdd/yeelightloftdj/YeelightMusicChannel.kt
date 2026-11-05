@@ -108,9 +108,26 @@ class YeelightMusicChannel(
             !closed && socket?.isConnected == true && socket?.isClosed == false
         }
 
-    /** One non-replayed write; no ACK or fake device-state confirmation. */
-    fun sendRgb(rgb: Int) {
+    /** Smooth RGB changes use the same existing quota-free reverse socket.
+     * No reverse-stream command is acknowledged by the firmware.
+     */
+    fun sendRgb(rgb: Int, transitionMs: Int = 0) {
         require(rgb in 0..0xFFFFFF)
+        require(transitionMs == 0 || transitionMs in 100..5_000)
+        sendFrame("set_rgb", listOf(rgb,
+            if (transitionMs == 0) "sudden" else "smooth", transitionMs))
+    }
+
+    /** 0% brightness is not physical OFF; the protocol uses 1..100. */
+    fun sendBrightness(brightness: Int, transitionMs: Int) {
+        require(brightness in 1..100)
+        require(transitionMs == 0 || transitionMs in 100..5_000)
+        sendFrame("set_bright", listOf(brightness,
+            if (transitionMs == 0) "sudden" else "smooth", transitionMs))
+    }
+
+    /** Single ordered write; a failed output never gets replayed on normal LAN. */
+    private fun sendFrame(method: String, params: List<Any>) {
         synchronized(sendLock) {
             val channel: Socket
             val request: String
@@ -119,18 +136,15 @@ class YeelightMusicChannel(
                     ?: error("Music-Mode-Rückkanal ist nicht verbunden")
                 request = JSONObject()
                     .put("id", nextId++)
-                    .put("method", "set_rgb")
-                    .put("params", JSONArray(listOf(rgb, "sudden", 0)))
+                    .put("method", method)
+                    .put("params", JSONArray(params))
                     .toString() + "\r\n"
             }
             try {
-                // No lock held that stopMusicMode / close() needs. Closing the
-                // socket from another thread interrupts a blocked write.
+                // Closing the socket from another thread interrupts a blocked write.
                 channel.getOutputStream().write(request.toByteArray(StandardCharsets.UTF_8))
                 channel.getOutputStream().flush()
             } catch (failure: Exception) {
-                // Never replay an ambiguous music frame on the quota-limited
-                // control channel: firmware might have processed it already.
                 runCatching { channel.close() }
                 throw failure
             }
