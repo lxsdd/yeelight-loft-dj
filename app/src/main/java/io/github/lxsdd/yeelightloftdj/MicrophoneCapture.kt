@@ -3,7 +3,6 @@ package io.github.lxsdd.yeelightloftdj
 import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
-import android.media.MediaRecorder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -19,24 +18,40 @@ class MicrophoneCapture {
     val sampleRate = 16000
     val frameSize = 1024
     @Volatile private var analysisGain = MicrophoneAnalysisGain.DEFAULT
+    @Volatile private var automaticGain = false
+    @Volatile private var inputProfile = MicrophoneInputProfile.MIC
+
+    fun setAutomaticGain(enabled: Boolean) { automaticGain = enabled }
+
+    fun setInputProfile(profile: MicrophoneInputProfile) {
+        check(!enabled.get()) { "Aufnahmeprofil erst nach Stoppen wechseln." }
+        inputProfile = profile
+    }
 
     fun setAnalysisGain(gain: Float) {
         analysisGain = MicrophoneAnalysisGain.normalize(gain)
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun run(onFrame: suspend (MusicFrame) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun run(
+        onFrame: suspend (MusicFrame) -> Unit,
+        onDiagnostics: suspend (MicDiagnostics) -> Unit = {},
+    ) = withContext(Dispatchers.IO) {
         check(!stopped.get()) { "Mikrofon wurde bereits gestoppt" }
         check(enabled.compareAndSet(false, true)) { "Mikrofon läuft bereits" }
         var analyzer = MusicAnalyzer(sampleRate, frameSize)
         var previousGain = analysisGain
+        var previousAuto = automaticGain
+        val autoGain = AdaptiveMicrophoneGain()
+        var reportFrames = 0
+        val profile = inputProfile
         try {
             val minimum = AudioRecord.getMinBufferSize(
                 sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
             )
             check(minimum > 0) { "Das Mikrofon unterstützt 16-kHz-PCM nicht" }
             val audio = AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioSource(profile.source)
                 .setAudioFormat(AudioFormat.Builder()
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .setSampleRate(sampleRate)
@@ -52,6 +67,8 @@ class MicrophoneCapture {
                 "Mikrofonaufnahme wurde vom Gerät verweigert"
             }
             val samples = ShortArray(frameSize)
+            val route = audio.routedDevice?.productName?.toString()?.take(80)
+                ?: "Android-Standardmikrofon"
             while (enabled.get()) {
                 var count = 0
                 while (enabled.get() && count < samples.size) {
@@ -61,20 +78,36 @@ class MicrophoneCapture {
                     count += n
                 }
                 if (enabled.get() && count == samples.size) {
-                    val gain = analysisGain
-                    if (gain != previousGain) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val raw = RawMicLevel.from(samples)
+                    val isAuto = automaticGain
+                    val gain = if (isAuto) autoGain.observe(raw, now) else analysisGain
+                    val processed = MicrophoneAnalysisGain.apply(samples, gain)
+                    reportFrames++
+                    if (reportFrames % 4 == 0) {
+                        val out = RawMicLevel.from(processed)
+                        onDiagnostics(MicDiagnostics(
+                            rawRmsDbfs = raw.rmsDbfs(),
+                            rawPeakDbfs = raw.peakDbfs(),
+                            rawClipping = raw.clipped,
+                            outputClipping = out.clipped,
+                            gain = gain,
+                            profile = profile.title,
+                            routedInput = route,
+                        ))
+                    }
+                    if (gain != previousGain || isAuto != previousAuto) {
+                        previousAuto = isAuto
+
                         // Reset transient history after a manual gain adjustment.
                         // A sudden artificial change in PCM gain must never
                         // be mistaken for a new musical beat.
                         analyzer = MusicAnalyzer(sampleRate, frameSize)
                         previousGain = gain
-                        analyzer.analyze(
-                            MicrophoneAnalysisGain.apply(samples, gain),
-                            android.os.SystemClock.elapsedRealtime()
-                        )
+                        // Prime detector history on a gain change, never synthesize a beat.
+                        analyzer.analyze(processed, now)
                     } else {
-                        val measured = MicrophoneAnalysisGain.apply(samples, gain)
-                        onFrame(analyzer.analyze(measured, android.os.SystemClock.elapsedRealtime()))
+                        onFrame(analyzer.analyze(processed, now))
                     }
                 }
             }
