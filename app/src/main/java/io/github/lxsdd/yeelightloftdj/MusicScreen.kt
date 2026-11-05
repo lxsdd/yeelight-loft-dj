@@ -44,6 +44,7 @@ fun MusicScreen(controller: LoftController) {
     val context = LocalContext.current
     var showColor4AcceptanceConfirm by remember { mutableStateOf(false) }
     var dualDialogSelectionKey by remember { mutableStateOf<String?>(null) }
+    var liveDjStyle by remember { mutableStateOf(Color4LiveStyle.BEAT) }
     val permission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -56,7 +57,7 @@ fun MusicScreen(controller: LoftController) {
         // A denied notification is not permission to do hidden capture.
         // The service stays visible to Android's active-app manager and the
         // in-app STOP remains available; no automatic background start.
-        controller.startForegroundColor4LiveDjGroupAware()
+        controller.startForegroundColor4LiveDjGroupAware(liveDjStyle)
     }
     val projection = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -141,7 +142,7 @@ fun MusicScreen(controller: LoftController) {
                             if (controller.microphoneRunning) "Mikrofon aktiv" else "Mikrofon ausgeschaltet",
                             color = Color.White, fontWeight = FontWeight.SemiBold
                         )
-                        Text("Nur bei geöffneter App · keine Speicherung · keine Cloud",
+                        Text("Live-DJ läuft auch bei Displaysperre · keine Speicherung · keine Cloud",
                             fontSize = 11.sp, color = Color(0xFF98A6C0))
                     }
                 }
@@ -346,13 +347,27 @@ fun MusicScreen(controller: LoftController) {
                     "Keine Stroboskop-Effekte.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
                 val probeRefusal = controller.minimalProbeRefusal()
-                val liveDjRefusal = controller.liveDjRefusal()
+                val liveDjRefusal = controller.liveDjRefusal(liveDjStyle)
                 var showMinimalProbeConfirm by remember { mutableStateOf(false) }
                 var showTempoProbeConfirm by remember { mutableStateOf(false) }
                 var showLiveDjConfirm by remember { mutableStateOf(false) }
 
                 Text("Color4 Live-DJ · 1–4 Music-Rückkanäle",
                     color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Lichtstil vor dem Start wählen",
+                    color = Color(0xFFAAB6CE), fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Color4LiveStyle.entries.forEach { style ->
+                        FilterChip(
+                            selected = (controller.activeColor4LiveStyle ?: liveDjStyle) == style,
+                            enabled = !controller.color4LiveDjRunning && !controller.busy,
+                            onClick = { liveDjStyle = style },
+                            label = { Text(style.label) }
+                        )
+                    }
+                }
+                Text((controller.activeColor4LiveStyle ?: liveDjStyle).description,
+                    color = Color(0xFF98A6C0), fontSize = 11.sp)
                 if (controller.color4LiveDjRunning) {
                     Button(
                         onClick = controller::stopColor4LiveDj,
@@ -379,7 +394,10 @@ fun MusicScreen(controller: LoftController) {
                         onDismissRequest = { showLiveDjConfirm = false },
                         title = { Text("Ausgewählte Color4 im Live-DJ starten?") },
                         text = { Text(
-                            "Neue Funktion, noch nicht als Langzeitshow auf dieser Firmware " +
+                            "Lichtstil: ${liveDjStyle.label}. " +
+                                "Dynamisch nutzt erstmals sanfte Music-Übergänge und Helligkeit " +
+                                "(noch separat am Gerät zu prüfen). " +
+                                "Neue Funktion, noch nicht als Langzeitshow auf dieser Firmware " +
                                 "abgenommen. Nur 1–4 intakte, bereits eingeschaltete Color4 " +
                                 "mit bestätigtem Music-Modus; keine parallele Classic-Steuerung. " +
                                 "Jede Lampe erhält einen eigenen set_music-Rückkanal. " +
@@ -395,7 +413,7 @@ fun MusicScreen(controller: LoftController) {
                                     PackageManager.PERMISSION_GRANTED) {
                                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 } else {
-                                    controller.startForegroundColor4LiveDjGroupAware()
+                                    controller.startForegroundColor4LiveDjGroupAware(liveDjStyle)
                                 }
                             }) { Text("Live-DJ ausdrücklich starten") }
                         },
