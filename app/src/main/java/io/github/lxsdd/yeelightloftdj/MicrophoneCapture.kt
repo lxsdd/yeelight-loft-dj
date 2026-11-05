@@ -66,18 +66,24 @@ class MicrophoneCapture {
             check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 "Mikrofonaufnahme wurde vom Gerät verweigert"
             }
-            val samples = ShortArray(frameSize)
+            // Preserve the 1024-sample FFT frequency resolution but advance
+            // the beat detector every 512 samples (32 ms instead of 64 ms).
+            // This reduces onset quantization without raising microphone gain.
+            val hop = ShortArray(frameSize / 2)
+            val overlap = OverlappingPcmWindows(frameSize)
             val route = audio.routedDevice?.productName?.toString()?.take(80)
                 ?: "Android-Standardmikrofon"
             while (enabled.get()) {
                 var count = 0
-                while (enabled.get() && count < samples.size) {
-                    val n = audio.read(samples, count, samples.size - count, AudioRecord.READ_BLOCKING)
+                while (enabled.get() && count < hop.size) {
+                    val n = audio.read(hop, count, hop.size - count, AudioRecord.READ_BLOCKING)
                     if (n < 0) error("Mikrofon-Lesefehler ($n)")
                     if (n == 0) continue
                     count += n
                 }
-                if (enabled.get() && count == samples.size) {
+                val samples = if (enabled.get() && count == hop.size)
+                    overlap.accept(hop) else null
+                if (enabled.get() && samples != null) {
                     val now = android.os.SystemClock.elapsedRealtime()
                     val raw = RawMicLevel.from(samples)
                     val isAuto = automaticGain
