@@ -168,7 +168,7 @@ jobs:
           [[ "$green" =~ ^[0-9]+$ && "$green" -ge 1 ]] || { echo '::error::RC14 exact source CI is not green'; exit 1; }
           echo "RC14 owner-only signed temporary APK permitted for $GITHUB_SHA"
       - name: Validate owner-dispatched RC15 Live DJ and exact-source CI
-        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc15-adaptive-spectrum-notification-20261105' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/chat/rc15-live-dj-reliability-controls-20261105' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -180,7 +180,7 @@ jobs:
           grep -Fq 'versionName = "0.2.8-rc15"' app/build.gradle.kts || exit 1
           pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/67")"
           [[ "$(jq -r '.head.sha' <<< "$pr")" == "$GITHUB_SHA" ]] || exit 1
-          [[ "$(jq -r '.head.ref' <<< "$pr")" == 'chat/rc15-adaptive-spectrum-notification-20261105' ]] || exit 1
+          [[ "$(jq -r '.head.ref' <<< "$pr")" == 'chat/rc15-live-dj-reliability-controls-20261105' ]] || exit 1
           [[ "$(jq -r '.base.ref' <<< "$pr")" == 'chat/rc14-adaptive-spectrum-notification-20261105' ]] || exit 1
           [[ "$(jq -r '.state' <<< "$pr")" == 'open' && "$(jq -r '.draft' <<< "$pr")" == 'true' ]] || exit 1
           runs="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs" -f event=pull_request -f head_sha="$GITHUB_SHA" -f per_page=100)"
