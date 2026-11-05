@@ -81,6 +81,48 @@ class LoftController(context: Context) {
         private set
     var microphoneRunning by mutableStateOf(false)
         private set
+
+    private val rawMicProfileSupported: Boolean =
+        ((app.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager)
+            .getProperty(android.media.AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)
+            ?.equals("true", ignoreCase = true) == true)
+
+    val microphoneProfiles: List<MicrophoneInputProfile> =
+        MicrophoneInputProfile.available(rawMicProfileSupported)
+
+    var microphoneInputProfile by mutableStateOf(
+        MicrophoneInputProfile.restore(prefs.getString("microphone-input-profile", null))
+            .takeIf { it in microphoneProfiles } ?: MicrophoneInputProfile.MIC
+    )
+        private set
+
+    var automaticMicrophoneGain by mutableStateOf(
+        prefs.getBoolean("microphone-automatic-gain", false)
+    )
+        private set
+
+    var microphoneDiagnostics by mutableStateOf<MicDiagnostics?>(null)
+        private set
+
+    fun updateMicrophoneInputProfile(profile: MicrophoneInputProfile) {
+        if (microphoneRunning) {
+            status = "Mikrofon erst stoppen, danach Aufnahmeprofil ändern."
+            return
+        }
+        if (profile !in microphoneProfiles) {
+            status = "Unverarbeitete Aufnahme wird vom Android-Gerät nicht bestätigt."
+            return
+        }
+        microphoneInputProfile = profile
+        microphoneDiagnostics = null
+        prefs.edit().putString("microphone-input-profile", profile.name).apply()
+    }
+
+    fun updateAutomaticMicrophoneGain(enabled: Boolean) {
+        automaticMicrophoneGain = enabled
+        microphone?.setAutomaticGain(enabled)
+        prefs.edit().putBoolean("microphone-automatic-gain", enabled).apply()
+    }
     var microphoneAnalysisGain by mutableStateOf(
         MicrophoneAnalysisGain.normalize(prefs.getFloat("microphone-analysis-gain", 1f))
     )
@@ -1718,20 +1760,32 @@ class LoftController(context: Context) {
             return
         }
         if (microphoneRunning) return
-        microphone = MicrophoneCapture().apply { setAnalysisGain(microphoneAnalysisGain) }
+        microphone = MicrophoneCapture().apply {
+            setAnalysisGain(microphoneAnalysisGain)
+            setInputProfile(microphoneInputProfile)
+            setAutomaticGain(automaticMicrophoneGain)
+        }
         val capture = microphone ?: return
         microphoneRunning = true
         musicFrame = null
+        microphoneDiagnostics = null
         musicBeatCount = 0L
         musicLightStatus = if (musicLightArmed) "Musik-Lichtsteuerung aktiv"
             else "Mikrofon läuft nur im Vordergrund · kein Audio wird gespeichert"
         scope.launch {
             try {
-                capture.run { frame ->
-                    withContext(Dispatchers.Main.immediate) {
-                        if (microphoneRunning) consumeMusicFrame(frame)
-                    }
-                }
+                capture.run(
+                    onFrame = { frame ->
+                        withContext(Dispatchers.Main.immediate) {
+                            if (microphoneRunning) consumeMusicFrame(frame)
+                        }
+                    },
+                    onDiagnostics = { diagnostic ->
+                        withContext(Dispatchers.Main.immediate) {
+                            if (microphoneRunning) microphoneDiagnostics = diagnostic
+                        }
+                    },
+                )
             } catch (e: Exception) {
                 if (microphoneRunning) {
                     status = "Mikrofon-Fehler: " + (e.message ?: e.javaClass.simpleName)
@@ -1740,6 +1794,7 @@ class LoftController(context: Context) {
                 microphoneRunning = false
                 microphone = null
                 musicFrame = null
+                microphoneDiagnostics = null
                 if (musicLightArmed) disarmMusicLights()
             }
         }

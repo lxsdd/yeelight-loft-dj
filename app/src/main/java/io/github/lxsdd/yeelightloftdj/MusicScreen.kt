@@ -164,6 +164,46 @@ fun MusicScreen(controller: LoftController) {
                     }
                 }
                 if (!internalRunning) {
+                    Text("Android-Mikrofonprofil · nur bei gestoppter Aufnahme wechseln",
+                        color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                    var profileMenuExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(
+                            onClick = { profileMenuExpanded = true },
+                            enabled = !controller.microphoneRunning,
+                        ) { Text(controller.microphoneInputProfile.title) }
+                        DropdownMenu(
+                            expanded = profileMenuExpanded,
+                            onDismissRequest = { profileMenuExpanded = false }
+                        ) {
+                            controller.microphoneProfiles.forEach { profile ->
+                                DropdownMenuItem(
+                                    text = { Text(profile.title) },
+                                    onClick = {
+                                        profileMenuExpanded = false
+                                        controller.updateMicrophoneInputProfile(profile)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Text(controller.microphoneInputProfile.description,
+                        color = Color(0xFF98A6C0), fontSize = 11.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Automatische Analyseverstärkung (begrenzt)",
+                            modifier = Modifier.weight(1f),
+                            color = Color.White, fontSize = 12.sp)
+                        Switch(
+                            checked = controller.automaticMicrophoneGain,
+                            onCheckedChange = controller::updateAutomaticMicrophoneGain,
+                        )
+                    }
+                    if (controller.automaticMicrophoneGain) {
+                        Text("Nur Software-Analyse, kein Hardware-Mikrofon-Gain. " +
+                            "Maximal ×4, Rauschen wird nicht automatisch hochgeregelt. " +
+                            "Änderungen der Verstärkung erzeugen keine künstlichen Beats.",
+                            color = Color(0xFF98A6C0), fontSize = 11.sp)
+                    }
                     Text(
                         "Mikrofon · Analyseempfindlichkeit ×" +
                             String.format(Locale.GERMANY, "%.2f", controller.microphoneAnalysisGain),
@@ -174,6 +214,7 @@ fun MusicScreen(controller: LoftController) {
                         onValueChange = controller::updateMicrophoneAnalysisGain,
                         valueRange = 0.5f..4f,
                         steps = 13,
+                        enabled = !controller.automaticMicrophoneGain,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
@@ -183,6 +224,30 @@ fun MusicScreen(controller: LoftController) {
                             "Standard ×1,00; keine zusätzlichen Lampenbefehle.",
                         color = Color(0xFF98A6C0), fontSize = 11.sp
                     )
+                    if (controller.microphoneRunning) {
+                        controller.microphoneDiagnostics?.let { diagnostic ->
+                            Text(
+                                "Android-Rohpegel (vor ×-Verstärkung): RMS " +
+                                    String.format(Locale.GERMANY, "%.1f", diagnostic.rawRmsDbfs) +
+                                    " dBFS · Spitze " +
+                                    String.format(Locale.GERMANY, "%.1f", diagnostic.rawPeakDbfs) +
+                                    " dBFS",
+                                color = Color.White, fontSize = 12.sp
+                            )
+                            Text(
+                                "Analyse ×" +
+                                    String.format(Locale.GERMANY, "%.2f", diagnostic.gain) +
+                                    " · Roh-Clipping " + diagnostic.rawClipping +
+                                    " · Digital-Clipping " + diagnostic.outputClipping +
+                                    " Samples/Frame",
+                                color = Color(0xFF98A6C0), fontSize = 11.sp
+                            )
+                            Text(
+                                "Aufnahmeroute: " + diagnostic.routedInput,
+                                color = Color(0xFF98A6C0), fontSize = 11.sp
+                            )
+                        }
+                    }
                 }
                 if (reading != null && audioRunning) {
                     Text("Live-Frequenzspektrum", color = Color.White, fontWeight = FontWeight.Medium)
