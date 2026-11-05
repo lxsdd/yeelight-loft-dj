@@ -1227,8 +1227,22 @@ class LoftController(context: Context) {
             else "Aus · " + capabilityText
     }
 
+    /** Direct power must not depend on identifying/brightness capabilities.
+     * It still respects per-IP recovery, Music sockets and firmware quota.
+     */
+    fun canPowerLamp(device: YeelightDevice): Boolean =
+        !YeelightLan.isLanQuarantined(device) &&
+        !YeelightLan.musicModeActive(device) &&
+        !color4LiveDjRunning &&
+        LampOperationGate.canIdentifyLamp(
+            busy, device.ip, runningDeviceIps, recoveryJournal.keys,
+            musicDeviceSession, musicStopPending || musicSending
+        ) &&
+        DeviceCapabilities.evidence(device, "set_power") != CapabilityEvidence.UNSUPPORTED
+
     fun controlLamp(device: YeelightDevice, command: LampCommand, description: String) {
-        if (!canIdentifyLamp(device)) {
+        if (if (command.method == "set_power") !canPowerLamp(device)
+            else !canIdentifyLamp(device)) {
             status = if (YeelightLan.isLanQuarantined(device))
                 "Firmware-LAN-Limit bestätigt: Wellness/andere betroffene Lampe geschützt. " +
                     "Nur eine ausdrückliche Recovery-Leseprüfung ist zugelassen."
@@ -2351,20 +2365,48 @@ class LoftController(context: Context) {
         runMinimalColor4Probe(liveDj = true)
     }
 
-    /** The original single-Color4 path remains intact and selectable. */
+    /** Missing audio is a separate, actionable UI state. This method checks
+     * target suitability only and never probes a physical bulb.
+     */
     fun liveDjRefusal(style: Color4LiveStyle = Color4LiveStyle.BEAT): String? {
         val targets=selected()
+        val pending=LampOperationGate.pendingIps(runningDeviceIps,recoveryJournal.keys)
         return Color4LiveGroupPolicy.refusal(
             candidates=targets.map { Color4LiveCandidate(
                 it.ip,it.model,YeelightLan.supportsMusicMode(it),
                 "set_bright" in it.methods) },
             quotaBlocked=targets.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet(),
-            unconfirmedMusic=minimalProbeUnconfirmed,
-            otherAction=busy || minimalProbeRunning || recoveryPending ||
+            unconfirmedMusic=minimalProbeUnconfirmed + pending,
+            otherAction=busy || minimalProbeRunning ||
                 musicSending || musicStopPending || musicLightArmed ||
-                musicDeviceSession || scannerRunning || runningDeviceIps.isNotEmpty(),
-            requireBrightness = style == Color4LiveStyle.ADAPTIVE,
+                musicDeviceSession || scannerRunning || activeScene != null,
         )
+    }
+
+    /** Local-only selection of every safely known Music/RGB capable device.
+     * Does not send commands, bypass preflight, or clear protection flags.
+     */
+    fun selectMusicCapableTargets() {
+        val pending=LampOperationGate.pendingIps(runningDeviceIps,recoveryJournal.keys) +
+            minimalProbeUnconfirmed
+        val eligible=orderedDevices().filter {
+            YeelightLan.supportsMusicMode(it) &&
+                !YeelightLan.isLanQuarantined(it) && it.ip !in pending
+        }
+        if (eligible.isEmpty()) {
+            status="Keine bestätigte, ungesperrte RGB-Musiklampe gespeichert. " +
+                "Gerätesuche/Support-Liste prüfen."
+            return
+        }
+        val selectedIds=eligible.map { it.id }.toSet()
+        check(prefs.edit()
+            .putString("selected-lamp-ids",JSONArray(selectedIds.toList()).toString())
+            .putString("selected-target","Auswahl")
+            .commit()) { "Musik-Lampenauswahl konnte nicht gespeichert werden." }
+        customSelectedIds=selectedIds
+        target="Auswahl"
+        status="${eligible.size} Music/RGB-Lampen ausgewählt · " +
+            "beim Start werden alle einzeln auf Erreichbarkeit geprüft."
     }
 
     fun startForegroundColor4LiveDjGroupAware(
@@ -2376,16 +2418,15 @@ class LoftController(context: Context) {
             return
         }
         val targets=selected()
-        if (targets.size == 1) {
-            minimalProbeRefusal()?.let { status=it; return }
-        }
+        // Never apply the separate, single-device 8s diagnostic policy to Live-DJ.
+        // All group sizes use the same journaled per-device Music transport.
         try { LiveDjSessionService.start(app) }
         catch (e: Exception) {
             status="DJ-Vordergrunddienst nicht verfügbar: " +
                 (e.message ?: e.javaClass.simpleName)
             return
         }
-        // Single and four-lamp shows now share exactly the same fail-closed
+        // Single and multi-lamp shows share exactly the same fail-closed
         // per-IP group transport. Bounded 8-second diagnostic remains unchanged.
         runColor4LiveGroup(targets, style)
     }
@@ -2394,7 +2435,7 @@ class LoftController(context: Context) {
         targets: List<YeelightDevice>, style: Color4LiveStyle
     ) {
         minimalStopRequested=false
-        task("Live-DJ: einzelne Color4-Music-Kanäle werden gesichert …") {
+        task("Live-DJ: Musikkanäle werden pro Lampe gesichert …") {
             minimalProbeRunning=true
             color4LiveDjRunning=true
             activeColor4LiveStyle=style
@@ -2408,14 +2449,16 @@ class LoftController(context: Context) {
             try {
                 // Fail closed before enabling even the first music session.
                 targets.forEach { d ->
+                    check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
                     val preflight=withContext(Dispatchers.IO) {
                         YeelightLan.readMusicPreflight(d)
                     }
                     check(preflight.isOn) {
-                        "Bitte alle ausgewählten Color4 vor der Show einschalten."
+                        "Bitte alle ausgewählten Musiklampen vor der Show einschalten."
                     }
                 }
                 targets.forEach { d ->
+                    check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
                     // Persist each bulb BEFORE that bulb's first set_music(1).
                     val next=minimalProbeUnconfirmed + d.ip
                     check(prefs.edit().putStringSet(
@@ -2426,7 +2469,7 @@ class LoftController(context: Context) {
                     journaled += d
                     withContext(Dispatchers.IO) {
                         check(YeelightLan.startMusicMode(d,socketStopOnly=true)) {
-                            "Color4 Music-Handshake wurde abgelehnt."
+                            "Music-Handshake einer Lampe wurde abgelehnt."
                         }
                         YeelightLan.releaseMusicControlSlot(d)
                     }
@@ -2451,14 +2494,20 @@ class LoftController(context: Context) {
                         kotlinx.coroutines.coroutineScope {
                             targets.mapIndexed { index,d ->
                                 async(Dispatchers.IO) {
-                                    check(YeelightLan.sendMusicVisual(d,visualFrames[index])) {
+                                    // Some supported Music/RGB bulbs do not advertise
+                                    // brightness. Never send unconfirmed set_bright.
+                                    val requested=visualFrames[index]
+                                    val allowed=if ("set_bright" in d.methods) requested
+                                        else requested.copy(brightness=null)
+                                    check(YeelightLan.sendMusicVisual(d,allowed)) {
                                         "Color4-Music-Kanal unerwartet geschlossen."
                                     }
                                 }
                             }.awaitAll()
                         }
                         sent += targets.size
-                        brightnessWrites += visualFrames.count { it.brightness != null }
+                        if (visualFrames.firstOrNull()?.brightness != null)
+                            brightnessWrites += targets.count { "set_bright" in it.methods }
                     }
                     when (pulse) {
                         LiveColorPulse.DETECTED_BEAT -> detected++
@@ -2469,7 +2518,7 @@ class LoftController(context: Context) {
                     }
                     if (elapsed-reportAt >= 1_000L) {
                         reportAt=elapsed
-                        minimalProbeReport="Live-DJ ${style.label} · ${targets.size} Color4 · " +
+                        minimalProbeReport="Live-DJ ${style.label} · ${targets.size} Lampen · " +
                             "$sent Music-RGB · $brightnessWrites Helligkeit · " +
                             "$detected echte Beats · $predicted Zwischentakte"
                     }
@@ -2505,7 +2554,7 @@ class LoftController(context: Context) {
                         }
                     } else {
                         failure=(failure?.plus(" · ") ?: "") +
-                            "Music-Ende einer Color4 ungeklärt" +
+                            "Music-Ende einer Lampe ungeklärt" +
                             (stopError?.message?.let { ": " + it }
                                 ?: " (music_on nicht bestätigt)")
                     }
@@ -2517,7 +2566,7 @@ class LoftController(context: Context) {
                 LiveDjSessionService.finish(app)
             }
             val report=if (failure == null) {
-                "Live-DJ ${style.label}: ${targets.size} Color4 · $sent Music-RGB · " +
+                "Live-DJ ${style.label}: ${targets.size} Lampen · $sent Music-RGB · " +
                     "$brightnessWrites Helligkeit · $detected erkannte Beats · " +
                     "$predicted BPM-Zwischentakte · " +
                     "$accents Akzente; music_on=0 für ALLE einzeln nachgelesen."
