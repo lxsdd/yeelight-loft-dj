@@ -97,6 +97,10 @@ fun MusicScreen(controller: LoftController) {
                 Text("Ziel: ${controller.targetLabel(controller.target)} · " +
                     "${controller.selectedCount()} Lampen",
                     color = Color(0xFFAAB6CE), fontSize = 12.sp)
+                Text("BPM: " + (reading?.estimatedBpm?.toString() ?: "–") +
+                    "   ·   erkannte Beats: " + controller.musicBeatCount,
+                    color = Color(0xFF67E1C8), fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold)
                 OutlinedButton(onClick = controller::selectMusicCapableTargets,
                     enabled = !controller.busy && !controller.color4LiveDjRunning,
                     modifier = Modifier.fillMaxWidth()) {
@@ -146,6 +150,9 @@ fun MusicScreen(controller: LoftController) {
                             else refusal ?: "",
                             color = Color(0xFFFFD38A), fontSize = 12.sp
                         )
+                        controller.liveDjBlockerDetails()?.let { details ->
+                            Text(details, color = Color(0xFFFFD38A), fontSize = 12.sp)
+                        }
                     }
                 }
                 if (controller.minimalProbeNeedsReadback()) {

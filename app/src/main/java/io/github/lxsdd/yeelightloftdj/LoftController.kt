@@ -2383,6 +2383,32 @@ class LoftController(context: Context) {
         )
     }
 
+    /** Expose a precise named cause without clearing or bypassing any safety
+     * journal. The same capability/recovery predicates guard real dispatch.
+     * Only already-selected devices are diagnosed; no network read is done.
+     */
+    fun liveDjBlockerDetails(): String? {
+        val chosen = selected()
+        if (chosen.isEmpty()) return "Keine Lampen ausgewählt."
+        val pending=LampOperationGate.pendingIps(runningDeviceIps,recoveryJournal.keys)
+        val blocked=chosen.mapNotNull { device ->
+            val reason=when {
+                YeelightLan.isLanQuarantined(device) ->
+                    "Firmware-Quota-Sperre; LAN-Wiederherstellung prüfen"
+                device.ip in minimalProbeUnconfirmed ->
+                    "Music-Ende nicht bestätigt; nur lesend nachprüfen"
+                device.ip in pending ->
+                    "offene Lichtshow/Wiederherstellung; zuerst gezielt klären"
+                !YeelightLan.supportsMusicMode(device) ->
+                    "set_music + set_rgb nicht beide bestätigt"
+                else -> null
+            }
+            reason?.let { displayName(device) + ": " + it }
+        }
+        return blocked.takeIf { it.isNotEmpty() }?.take(4)?.joinToString("\n") +
+            if (blocked.size > 4) "\n… und ${blocked.size-4} weitere Lampen" else ""
+    }
+
     /** Local-only selection of every safely known Music/RGB capable device.
      * Does not send commands, bypass preflight, or clear protection flags.
      */
