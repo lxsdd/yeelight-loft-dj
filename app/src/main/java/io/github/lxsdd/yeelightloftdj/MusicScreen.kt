@@ -243,10 +243,10 @@ fun MusicScreen(controller: LoftController) {
                 Text("Cast auf einen externen Empfänger oder durch die Quell-App " +
                     "gesperrtes Audio liefern möglicherweise Stille. Dafür Mikrofon nutzen.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
-                Text("Direkte Audioanalyse mit 64-ms-Fenstern. Die App benötigt " +
-                    "aktuell einen lebenden Loft-DJ-Controller für Lampenlicht: " +
-                    "Hintergrundbetrieb nach App-Wechsel oder Prozessende " +
-                    "ist noch nicht dauerhaft abgesichert.",
+                Text("32-ms-Analyseschritte (überlappend), 1024-Sample-FFT. " +
+                    "Ein ausdrücklich gestarteter Live-DJ läuft bei Displaysperre " +
+                    "im Vordergrunddienst; nach Android-Prozessende erfolgt kein " +
+                    "automatischer Neustart.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
             }
         }

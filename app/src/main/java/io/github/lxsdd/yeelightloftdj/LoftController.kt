@@ -2405,7 +2405,8 @@ class LoftController(context: Context) {
             }
             reason?.let { displayName(device) + ": " + it }
         }
-        return blocked.takeIf { it.isNotEmpty() }?.take(4)?.joinToString("\n") +
+        if (blocked.isEmpty()) return null
+        return blocked.take(4).joinToString("\n") +
             if (blocked.size > 4) "\n… und ${blocked.size-4} weitere Lampen" else ""
     }
 
