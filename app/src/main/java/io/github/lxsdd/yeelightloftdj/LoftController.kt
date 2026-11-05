@@ -2401,6 +2401,7 @@ class LoftController(context: Context) {
             val journaled=mutableListOf<YeelightDevice>()
             var failure: String?=null
             var sent=0
+            var brightnessWrites=0
             var detected=0
             var predicted=0
             var accents=0
@@ -2432,7 +2433,6 @@ class LoftController(context: Context) {
                 }
                 val clock=Color4LivePulseClock(musicBeatCount)
                 val director=Color4LiveVisualDirector(targets.size,style)
-                var brightnessWrites=0
                 val startAt=android.os.SystemClock.elapsedRealtime()
                 var reportAt=0L
                 while (!minimalStopRequested &&

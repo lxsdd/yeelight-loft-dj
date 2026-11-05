@@ -5,12 +5,12 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /** Beat mode preserves familiar timing. Adaptive is explicitly opted into before starting. */
-internal enum class Color4LiveStyle(val label: String, val description: String) {
+enum class Color4LiveStyle(val label: String, val description: String) {
     BEAT("Beat", "Beat-gesteuerte Impulse mit dem vollen Farbspektrum; keine Helligkeitsbefehle."),
     ADAPTIVE("Dynamisch", "Sanfte Farbverläufe und zur gemessenen Musik passende Helligkeit; neue Music-Funktion.")
 }
 
-internal data class Color4MusicVisual(
+data class Color4MusicVisual(
     val rgb: Int,
     val transitionMs: Int,
     val brightness: Int?,
