@@ -176,8 +176,8 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_ACTOR" == "lxsdd" ]] || { echo '::error::Only repo owner may sign RC15'; exit 1; }
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]] || exit 1
-          grep -Fq 'versionCode = 33' app/build.gradle.kts || exit 1
-          grep -Fq 'versionName = "0.2.8-rc15"' app/build.gradle.kts || exit 1
+          grep -Fq 'versionCode = 34' app/build.gradle.kts || exit 1
+          grep -Fq 'versionName = "0.2.8-rc15.1"' app/build.gradle.kts || exit 1
           pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/67")"
           [[ "$(jq -r '.head.sha' <<< "$pr")" == "$GITHUB_SHA" ]] || exit 1
           [[ "$(jq -r '.head.ref' <<< "$pr")" == 'chat/rc15-live-dj-reliability-controls-20261105' ]] || exit 1

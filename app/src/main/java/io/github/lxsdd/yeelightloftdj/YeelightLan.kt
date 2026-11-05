@@ -802,6 +802,27 @@ object YeelightLan {
     fun releaseMusicControlSlot(device: YeelightDevice) =
         tcp.closeTarget(device.ip, device.port)
 
+    /** Explicit user-approved release of an existing Music session that
+     * does not belong to any live socket in this process.
+     *
+     * Must be preceded by an independent read reporting music_on=1, and
+     * followed by an independent read proving music_on=0. Neither the
+     * preliminary read nor this helper ever retries or starts music mode.
+     * One quota-accounted set_music(0) is attempted on this single bulb.
+     */
+    @Synchronized
+    fun endUnownedMusicSessionOnce(device: YeelightDevice) {
+        require(isLocalIp(device.ip) && supportsMusicMode(device))
+        check(!musicChannels.containsKey(device.ip)) {
+            "Bereits eigener Music-Kanal vorhanden; keine fremde Sitzung beenden."
+        }
+        check(!commandGate.isQuarantined(device.ip)) {
+            "Firmware-Quota dieser Lampe aktiv; kein Music-Stoppbefehl."
+        }
+        try { send(device, "set_music", listOf(0)) }
+        finally { releaseMusicControlSlot(device) }
+    }
+
     /** Includes disconnected channels which still need local cleanup. */
     fun musicChannelExists(device: YeelightDevice): Boolean =
         musicChannels.containsKey(device.ip)

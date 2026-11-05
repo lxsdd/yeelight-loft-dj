@@ -2809,6 +2809,108 @@ class LoftController(context: Context) {
         }
     }
 
+    /** Visible, explicitly chosen handoff targets: no scans, no writes. */
+    fun musicHandoffTargets(): List<YeelightDevice> =
+        selected().distinctBy { it.ip }.filter(YeelightLan::supportsMusicMode)
+
+    fun canRequestMusicHandoff(device: YeelightDevice): Boolean =
+        MusicSessionHandoffPolicy.canOffer(
+            supportsMusic = YeelightLan.supportsMusicMode(device),
+            isQuarantined = YeelightLan.isLanQuarantined(device),
+            hasOwnChannel = YeelightLan.musicChannelExists(device),
+            otherAction = busy || minimalProbeRunning || color4LiveDjRunning ||
+                scannerRunning || musicLightArmed || musicStopPending || musicSending,
+        ) && musicHandoffTargets().any { it.ip == device.ip }
+
+    /**
+     * Explicit two-step owner confirmation happens in MusicScreen.
+     * A foreign/stale session cannot be adopted through its old TCP socket.
+     * Read music_on first; only TRUE authorizes exactly ONE set_music(0).
+     * Keep the per-bulb journal until ACK + separate music_on=0 readback.
+     * No automatic restart, retry, fake state, or global journal clearing.
+     */
+    fun requestMusicHandoff(ip: String) {
+        val device = musicHandoffTargets().firstOrNull { it.ip == ip }
+        if (device == null || !canRequestMusicHandoff(device)) {
+            status = "Neuübernahme verweigert: Lampe nicht geeignet, bereits aktiv " +
+                "oder wegen Quota/Wiederherstellung geschützt."
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        val last = lastRecoveryReadAt[ip]
+        if (last != null && now - last in 0 until 120_000L) {
+            status = "Neuübernahme für " + displayName(device) +
+                " frühestens nach zwei Minuten wieder möglich."
+            return
+        }
+        val wallNow = System.currentTimeMillis()
+        val previousAttempt = prefs.getLong("music-takeover-attempt." + ip, 0L)
+        if (previousAttempt > 0L &&
+            (wallNow < previousAttempt || wallNow - previousAttempt < 120_000L)) {
+            status = "Für " + displayName(device) +
+                " wurde bereits eine Music-Übernahme versucht. " +
+                "Mindestens zwei Minuten Abstand; kein automatischer Retry."
+            return
+        }
+        lastRecoveryReadAt[ip] = now
+        task("Prüfe bestehende Music-Sitzung von " + displayName(device) + " …") {
+            check(!YeelightLan.isLanQuarantined(device) &&
+                !YeelightLan.musicChannelExists(device) &&
+                !musicLightArmed && !color4LiveDjRunning && !scannerRunning &&
+                !musicSending && !musicStopPending) {
+                "Neuübernahme abgebrochen: Lampe/Steuerung inzwischen belegt."
+            }
+            val observed = withContext(Dispatchers.IO) {
+                try { YeelightLan.readRecoveryObservation(device) }
+                finally { YeelightLan.releaseMusicControlSlot(device) }
+            }.musicOn
+            val decision = MusicSessionHandoffPolicy.decidePreflight(observed)
+            check(decision != MusicHandoffReadDecision.UNKNOWN) {
+                "music_on unbekannt: keine Übernahme, kein set_music-Befehl."
+            }
+            if (decision == MusicHandoffReadDecision.ALREADY_STOPPED) {
+                val next = minimalProbeUnconfirmed - ip
+                if (ip in minimalProbeUnconfirmed) {
+                    check(prefs.edit().putStringSet(minimalProbePreferenceKey,next).commit()) {
+                        "Bestätigter Music-Stopp konnte lokal nicht gesichert werden."
+                    }
+                    minimalProbeUnconfirmed=next
+                }
+                return@task displayName(device) +
+                    ": music_on=0 – Music-Modus bereits beendet, kein Stoppbefehl nötig. " +
+                    "Andere Recovery-Sperren bleiben bestehen."
+            }
+            // Record intent BEFORE sending the only mutating command. A crash,
+            // ambiguous ACK or quota failure must NEVER trigger a blind retry.
+            val next = minimalProbeUnconfirmed + ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey,next)
+                .putLong("music-takeover-attempt." + ip,wallNow)
+                .commit()) { "Music-Übernahme konnte vor dem LAN-Befehl nicht journalisiert werden." }
+            minimalProbeUnconfirmed=next
+            val observedAfter = withContext(Dispatchers.IO) {
+                try {
+                    YeelightLan.endUnownedMusicSessionOnce(device)
+                    YeelightLan.readRecoveryObservation(device).musicOn
+                } finally { YeelightLan.releaseMusicControlSlot(device) }
+            }
+            check(MusicSessionHandoffPolicy.verifiedStopped(true,observedAfter)) {
+                "set_music(0) quittiert, aber music_on=0 nicht bestätigt; " +
+                    "Sicherheitsjournal bleibt bestehen. Nicht erneut versuchen."
+            }
+            // Do not clear any other bulb's journal or an unrelated old
+            // global music-light-session/recovery snapshot.
+            val clear = minimalProbeUnconfirmed - ip
+            check(prefs.edit().putStringSet(minimalProbePreferenceKey,clear).commit()) {
+                "Firmware meldet Music aus, aber lokales Journal bleibt geschützt."
+            }
+            minimalProbeUnconfirmed=clear
+            displayName(device) + ": Music-Sitzung mit genau einem set_music(0) beendet " +
+                "und music_on=0 nachgelesen. Live-DJ nun manuell neu starten; " +
+                "weitere Schutzmarkierungen bleiben unverändert."
+        }
+    }
+
     /** Older diagnostic entry point preserved for backwards compatibility. */
     fun verifyMinimalProbeEnd() {
         val single = selected().distinctBy { it.ip }.singleOrNull()

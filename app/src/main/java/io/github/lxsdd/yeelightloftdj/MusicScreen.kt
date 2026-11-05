@@ -49,6 +49,8 @@ fun MusicScreen(controller: LoftController) {
     var showMinimalProbeConfirm by remember { mutableStateOf(false) }
     var showTempoProbeConfirm by remember { mutableStateOf(false) }
     var showLiveDjConfirm by remember { mutableStateOf(false) }
+    var showMusicHandoffChooser by remember { mutableStateOf(false) }
+    var musicHandoffIp by remember { mutableStateOf<String?>(null) }
     var showAudioDetails by rememberSaveable { mutableStateOf(false) }
     var showAdvancedMusicTests by rememberSaveable { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(
@@ -155,6 +157,14 @@ fun MusicScreen(controller: LoftController) {
                         }
                     }
                 }
+                if (!controller.color4LiveDjRunning &&
+                    controller.musicHandoffTargets().isNotEmpty()) {
+                    TextButton(onClick = { showMusicHandoffChooser = true },
+                        enabled = !controller.busy,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("Music-Modus blockiert? Sitzung kontrolliert übernehmen")
+                    }
+                }
                 if (controller.pendingMusicReadbackIps().isNotEmpty()) {
                     Text("Ungeklärte Music-Stopps: nur betroffene Lampen prüfen",
                         color = Color(0xFFFFD38A), fontSize = 12.sp)
@@ -175,6 +185,60 @@ fun MusicScreen(controller: LoftController) {
                         else "Audioquelle, Verstärkung und Spektrum")
                 }
             }
+        }
+        if (showMusicHandoffChooser) {
+            AlertDialog(
+                onDismissRequest = { showMusicHandoffChooser = false },
+                title = { Text("Welche Music-Lampe prüfen?") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Nur ausdrücklich gewählte, bestätigte Music-/RGB-Lampen. " +
+                            "Die Auswahl allein sendet noch keinen Befehl.")
+                        controller.musicHandoffTargets().forEach { device ->
+                            OutlinedButton(
+                                onClick = {
+                                    showMusicHandoffChooser = false
+                                    musicHandoffIp = device.ip
+                                },
+                                enabled = controller.canRequestMusicHandoff(device),
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text(controller.displayName(device) +
+                                if (controller.isLampLanQuarantined(device))
+                                    " · Quota-Sperre" else "") }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showMusicHandoffChooser = false }) {
+                        Text("Schließen")
+                    }
+                }
+            )
+        }
+        musicHandoffIp?.let { ip ->
+            AlertDialog(
+                onDismissRequest = { musicHandoffIp = null },
+                title = { Text("Music-Sitzung bewusst neu übernehmen?") },
+                text = { Text(
+                    controller.musicReadbackLabel(ip) + ": Eine möglicherweise von " +
+                    "Yeelight Classic oder einer anderen App gesteuerte Music-Sitzung " +
+                    "würde unterbrochen. Zuerst wird nur music_on gelesen. Nur bei " +
+                    "bestätigtem music_on=1 folgt genau EIN set_music(0), danach " +
+                    "eine zweite Leseprüfung. Kein erneuter Versuch bei Fehlern, " +
+                    "kein automatischer DJ-Start und keine Quota-Umgehung."
+                ) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        musicHandoffIp = null
+                        controller.requestMusicHandoff(ip)
+                    }) { Text("Sitzung gezielt freigeben") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { musicHandoffIp = null }) {
+                        Text("Abbrechen")
+                    }
+                }
+            )
         }
         if (showLiveDjConfirm) {
             AlertDialog(
