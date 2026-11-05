@@ -8,12 +8,14 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.IBinder
 import android.os.PowerManager
 
 /** Explicit user-initiated session; never resumes automatically after kill. */
 class LiveDjSessionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -50,6 +52,14 @@ class LiveDjSessionService : Service() {
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,"io.github.lxsdd.yeelightloftdj:LiveDJ"
             ).apply { setReferenceCounted(false); acquire() }
+            // Keep Wi-Fi streaming active during a deliberate screen-locked
+            // live session. A failed optional lock must not bypass DJ guards.
+            runCatching {
+                val wifi = getSystemService(Context.WIFI_SERVICE) as WifiManager
+                wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    "io.github.lxsdd.yeelightloftdj:LiveDJ")
+                    .apply { setReferenceCounted(false); acquire() }
+            }
         } catch (_: Exception) {
             active = false
             requested = false
@@ -64,6 +74,8 @@ class LiveDjSessionService : Service() {
         requested = false
         runCatching { wakeLock?.let { if (it.isHeld) it.release() } }
         wakeLock = null
+        runCatching { wifiLock?.let { if (it.isHeld) it.release() } }
+        wifiLock = null
         LoftControllerStore.current()?.let {
             if (it.color4LiveDjRunning) {
                 it.stopColor4LiveDj()
