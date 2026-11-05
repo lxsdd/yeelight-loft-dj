@@ -51,7 +51,11 @@ internal class Color4LivePulseClock(startBeatCounter: Long) {
         val grid = nextGridAt
         if (measuredPeriod != null && anchor != null && grid != null &&
             nowMs >= grid && nowMs - lastPulseAt >= MIN_SEND_SPACING_MS &&
-            nowMs - anchor <= measuredPeriod * MAX_EXTRAPOLATED_BEATS
+            // The callback/poll loop runs asynchronously: allow modest
+            // scheduling jitter at the THIRD and final measured-grid pulse.
+            // This never extends into a fourth unmeasured beat.
+            nowMs - anchor <= measuredPeriod * MAX_EXTRAPOLATED_BEATS +
+                maxOf(50L, measuredPeriod / 8L)
         ) {
             // Resynchronize on the next detected beat; no endless metronome.
             nextGridAt = grid + measuredPeriod
