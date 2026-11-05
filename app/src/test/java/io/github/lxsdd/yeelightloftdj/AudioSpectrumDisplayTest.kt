@@ -32,6 +32,25 @@ class AudioSpectrumDisplayTest {
         assertTrue(silence.displayBands.all { it==0f })
         assertFalse(silence.beat)
     }
+    @Test fun realWeakTrebleBelowOldDisplayFloorIsNowVisible() {
+        val measured = listOf(.4f, .2f, .08f, .04f, .012f, .0064f)
+        val display = AudioSpectrumDisplay()
+        val visible = display.observe(measured, .08f, 1000L)
+        // Old hard floor .018 made presence and treble always zero.
+        assertTrue("Measured presence below old floor must be visible", visible[4] > .10f)
+        assertTrue("Measured treble below old floor must be visible", visible[5] > .10f)
+        assertEquals(.0064f, measured[5], 0f)
+        assertTrue("No invented bands", display.observe(
+            listOf(.3f,.2f,.1f,.02f,0f,0f),.08f,1100L)[5] == 0f)
+    }
+
+    @Test fun noSoundAndSubThresholdNoiseCannotProduceVisibleTreble() {
+        val display = AudioSpectrumDisplay()
+        val low = listOf(.002f,.002f,.002f,.002f,.002f,.002f)
+        assertEquals(0f, display.observe(low,.04f,1000L)[5],0f)
+        assertEquals(0f, display.observe(List(6){.2f},.0001f,1100L)[5],0f)
+    }
+
     @Test fun silenceNaNAndTemporalResetRemainFinite() {
         val display=AudioSpectrumDisplay()
         display.observe(List(6){.2f},.2f,1000L)

@@ -261,11 +261,18 @@ fun MusicScreen(controller: LoftController) {
                                 color = shades[index],
                                 trackColor = Color(0xFF323A50),
                             )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                String.format(Locale.GERMANY, "%.3f", reading.bands[index]),
+                                color = Color(0xFF98A6C0), fontSize = 10.sp,
+                                modifier = Modifier.width(40.dp)
+                            )
                         }
                     }
                     Text(
-                        "Bandpegel relativ dargestellt · echte Beat- und Akzenterkennung " +
-                            "nutzt weiterhin unveränderte Audio-Messwerte.",
+                        "Balken = relative Ansicht; Zahl = gemessener normierter FFT-Bandwert. " +
+                            "Kein dBFS-Wert. Echte Beat- und Akzenterkennung nutzt " +
+                            "weiterhin unveränderte Audio-Messwerte.",
                         color = Color(0xFF98A6C0), fontSize = 11.sp
                     )
                     HorizontalDivider(color = Color(0xFF323A50))
@@ -332,6 +339,7 @@ fun MusicScreen(controller: LoftController) {
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
                 val probeRefusal = controller.minimalProbeRefusal()
                 var showMinimalProbeConfirm by remember { mutableStateOf(false) }
+                var showTempoProbeConfirm by remember { mutableStateOf(false) }
                 OutlinedButton(
                     onClick = { showMinimalProbeConfirm = true },
                     enabled = audioRunning && probeRefusal == null &&
@@ -339,8 +347,21 @@ fun MusicScreen(controller: LoftController) {
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Color4-Transporttest · 8 Sekunden · Music-Rückkanal") }
                 Text(
-                    probeRefusal ?: "Einzel-Lampe, max. acht Music-RGB-Frames, kein normales LAN-RGB. " +
+                    probeRefusal ?: "Referenz: max. acht Music-RGB-Frames/8 s, kein normales LAN-RGB. " +
                         "Lampe vorher einschalten; alte Farbe wird nicht automatisch wiederhergestellt.",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp
+                )
+                OutlinedButton(
+                    onClick = { showTempoProbeConfirm = true },
+                    enabled = audioRunning && probeRefusal == null &&
+                        !controller.minimalProbeRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Color4-Tempo-Test · 8 Sekunden · max. 16 Music-RGB") }
+                Text(
+                    "Nur einzeln und ausdrücklich: Beat-Ereignisse auf dem bestätigten " +
+                        "Music-Rückkanal mit ≥450 ms Abstand. Wenn kein Bass-Beat erkannt wird, " +
+                        "nur gemessene Audioaktivität mit ≥1 s Abstand. " +
+                        "Keine zusätzlichen normalen LAN-RGB-Befehle.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp
                 )
                 if (controller.minimalProbeNeedsReadback()) {
@@ -373,6 +394,33 @@ fun MusicScreen(controller: LoftController) {
                         },
                         dismissButton = {
                             TextButton(onClick = { showMinimalProbeConfirm = false }) {
+                                Text("Abbrechen")
+                            }
+                        }
+                    )
+                }
+
+                if (showTempoProbeConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showTempoProbeConfirm = false },
+                        title = { Text("Schnelleren Color4-Music-Test zulassen?") },
+                        text = {
+                            Text("Dies ist ein neuer, noch nicht hardwarevalidierter Test. " +
+                                "Eine gesunde eingeschaltete Color4, kein anderer Controller. " +
+                                "Gleiches Music-Handshake-/Stop-/Readback wie beim Referenztest. " +
+                                "Höchstens 16 RGB-Telegramme in acht Sekunden, ausschließlich " +
+                                "über den Music-Socket, Mindestabstand 450 ms für echte Beats. " +
+                                "Keine Wiederholung nach Fehler oder ungeklärtem Music-Ende. " +
+                                "Nachher Yeelight Classic prüfen.")
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showTempoProbeConfirm = false
+                                controller.runMinimalColor4Probe(tempoTrial = true)
+                            }) { Text("Einmaligen Tempo-Test starten") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showTempoProbeConfirm = false }) {
                                 Text("Abbrechen")
                             }
                         }
