@@ -2320,7 +2320,7 @@ class LoftController(context: Context) {
     }
 
     /** Only the user may arm the eight-second one-Color4 backchannel test. */
-    fun runMinimalColor4Probe() {
+    fun runMinimalColor4Probe(tempoTrial: Boolean = false) {
         val refusal = minimalProbeRefusal()
         if (refusal != null) { status = refusal; return }
         val device = selected().distinctBy { it.ip }.singleOrNull() ?: return
@@ -2331,8 +2331,9 @@ class LoftController(context: Context) {
         task("Isolierter Color4-Musikrückkanal: Vorprüfung …") {
             minimalProbeRunning = true
             var attempted = 0
+            var measuredBeatWrites = 0
+            var activityWrites = 0
             var failure: String? = null
-            var channelStarted = false
             try {
                 val previous = withContext(Dispatchers.IO) {
                     YeelightLan.readMusicPreflight(device)
@@ -2351,17 +2352,27 @@ class LoftController(context: Context) {
                         YeelightLan.startMusicMode(device, socketStopOnly = true)
                         YeelightLan.releaseMusicControlSlot(device)
                     }
-                    channelStarted = true
                     val startedAt = android.os.SystemClock.elapsedRealtime()
-                    var lastSentElapsed = -MinimalColor4ProbePolicy.MIN_FRAME_MS
+                    var lastSentElapsed = if (tempoTrial) -Color4TempoProbePolicy.MIN_BEAT_SPACING_MS
+                        else -MinimalColor4ProbePolicy.MIN_FRAME_MS
+                    // Capture *event count*, not the latest display frame's beat flag.
+                    // 64-ms beat events would otherwise be missed by this loop.
+                    var lastConsumedBeat = musicBeatCount
                     while (microphoneRunning || InternalAudioBridge.running) {
-                        delay(120L)
+                        delay(if (tempoTrial) 40L else 120L)
                         val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
                         if (elapsed >= MinimalColor4ProbePolicy.DURATION_MS) break
                         val frame = musicFrame ?: InternalAudioBridge.frame
-                        if (MinimalColor4ProbePolicy.canSend(
+                        val beatCountNow = musicBeatCount
+                        val dispatch = if (tempoTrial) {
+                            Color4TempoProbePolicy.decide(
+                                frame, beatCountNow > lastConsumedBeat,
+                                elapsed, lastSentElapsed, attempted
+                            )
+                        } else if (MinimalColor4ProbePolicy.canSend(
                             frame, elapsed, lastSentElapsed, attempted
-                        )) {
+                        )) MusicFrameDispatch.AUDIO_ACTIVITY else MusicFrameDispatch.NONE
+                        if (dispatch != MusicFrameDispatch.NONE) {
                             val color = MusicLightPolicy.color(frame!!, 0, attempted.toLong())
                             withContext(Dispatchers.IO) {
                                 check(YeelightLan.sendMusicRgb(device, color)) {
@@ -2369,6 +2380,9 @@ class LoftController(context: Context) {
                                 }
                             }
                             attempted++
+                            if (dispatch == MusicFrameDispatch.BEAT) measuredBeatWrites++
+                            else activityWrites++
+                            lastConsumedBeat = beatCountNow
                             lastSentElapsed = elapsed
                         }
                     }
@@ -2410,7 +2424,9 @@ class LoftController(context: Context) {
                 minimalProbeRunning = false
             }
             val report = if (failure == null) {
-                "Color4-Probe: $attempted RGB über Music-Socket gesendet; " +
+                "Color4-Probe " + (if (tempoTrial) "Tempo" else "Referenz") +
+                    ": $attempted RGB über Music-Socket, davon $measuredBeatWrites " +
+                    "gemessene Beats und $activityWrites Audio-Aktivität; " +
                     "music_on=0 lesend bestätigt. Farbe ggf. in Classic neu wählen. " +
                     "Senden ist keine optische Bestätigung."
             } else {
