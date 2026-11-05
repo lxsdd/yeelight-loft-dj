@@ -707,7 +707,7 @@ object YeelightLan {
      * quota-accounted get_prop for power + music_on, then release the TCP
      * client slot. UNKNOWN remains unknown; no extra fallback request.
      */
-    fun readMusicEndStatus(device: YeelightDevice): MusicEndStatus =
+    internal fun readMusicEndStatus(device: YeelightDevice): MusicEndStatus =
         commandGate.run(device.ip) {
             require(isLocalIp(device.ip))
             try {
