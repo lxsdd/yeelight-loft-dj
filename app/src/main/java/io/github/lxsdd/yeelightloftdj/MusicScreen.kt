@@ -357,8 +357,9 @@ fun MusicScreen(controller: LoftController) {
                     ) { Text("Live-DJ auf einer Color4 starten") }
                 }
                 Text(
-                    "Keine starre 8-Sekunden-Grenze: läuft bei geöffneter App " +
-                        "mit aktiver Audioquelle bis zu deinem Stopp. Nur echte Beat-Ereignisse, " +
+                    "Keine 8-Sekunden-Grenze: läuft mit dem sichtbaren " +
+                        "Android-Mikrofon-Vordergrunddienst auch bei Displaysperre. " +
+                        "Nur echte Beat-Ereignisse, " +
                         "gemessene Akzente und gekennzeichnete BPM-Zwischentakte " +
                         "über den bestätigten Music-Socket; niemals normales LAN-RGB.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp
@@ -378,7 +379,7 @@ fun MusicScreen(controller: LoftController) {
                         confirmButton = {
                             TextButton(onClick = {
                                 showLiveDjConfirm = false
-                                controller.runMinimalColor4Probe(liveDj = true)
+                                controller.startForegroundColor4LiveDj()
                             }) { Text("Live-DJ ausdrücklich starten") }
                         },
                         dismissButton = {

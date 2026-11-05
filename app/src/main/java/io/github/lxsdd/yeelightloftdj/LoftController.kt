@@ -2333,6 +2333,22 @@ class LoftController(context: Context) {
         )
     }
 
+    /** Must be called while the user is visibly starting Live-DJ. */
+    fun startForegroundColor4LiveDj() {
+        minimalProbeRefusal()?.let { status = it; return }
+        if (!(microphoneRunning || InternalAudioBridge.running)) {
+            status = "Zuerst Audioaufnahme starten."
+            return
+        }
+        try { LiveDjSessionService.start(app) }
+        catch (failure: Exception) {
+            status = "Android-Vordergrunddienst nicht möglich: " +
+                (failure.message ?: failure.javaClass.simpleName)
+            return
+        }
+        runMinimalColor4Probe(liveDj = true)
+    }
+
     /** Only the user may arm the eight-second one-Color4 backchannel test. */
     fun runMinimalColor4Probe(tempoTrial: Boolean = false, liveDj: Boolean = false) {
         val refusal = minimalProbeRefusal()
@@ -2461,6 +2477,7 @@ class LoftController(context: Context) {
                 minimalProbeRunning = false
                 color4LiveDjRunning = false
                 minimalStopRequested = false
+                if (liveDj) LiveDjSessionService.finish(app)
             }
             val report = if (failure == null) {
                 "Color4 " + (if (liveDj) "Live-DJ" else if (tempoTrial) "Tempo" else "Referenz") +
