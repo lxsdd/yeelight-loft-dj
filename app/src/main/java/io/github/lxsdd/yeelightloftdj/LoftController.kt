@@ -1832,6 +1832,7 @@ class LoftController(context: Context) {
     }
 
     fun stopMicrophone() {
+        stopColor4LiveDj()
         microphoneRunning = false
         microphone?.stop()
         musicFrame = null
@@ -2261,6 +2262,7 @@ class LoftController(context: Context) {
         }
     }
     fun close() {
+        stopColor4LiveDj()
         if (scannerRunning) {
             requestStopScanner()
             scope.launch {
@@ -2301,6 +2303,18 @@ class LoftController(context: Context) {
     )
     var minimalProbeRunning by mutableStateOf(false)
         private set
+
+    @Volatile private var minimalStopRequested = false
+    var color4LiveDjRunning by mutableStateOf(false)
+        private set
+
+    /** Local action: stop emitting Music frames immediately, then close/read back. */
+    fun stopColor4LiveDj() {
+        if (color4LiveDjRunning) {
+            minimalStopRequested = true
+            minimalProbeReport = "Live-DJ wird gestoppt · Music-Socket schließen und music_on prüfen …"
+        }
+    }
     var minimalProbeReport by mutableStateOf("Noch kein isolierter Color4-Test")
         private set
 
@@ -2320,7 +2334,7 @@ class LoftController(context: Context) {
     }
 
     /** Only the user may arm the eight-second one-Color4 backchannel test. */
-    fun runMinimalColor4Probe(tempoTrial: Boolean = false) {
+    fun runMinimalColor4Probe(tempoTrial: Boolean = false, liveDj: Boolean = false) {
         val refusal = minimalProbeRefusal()
         if (refusal != null) { status = refusal; return }
         val device = selected().distinctBy { it.ip }.singleOrNull() ?: return
@@ -2328,11 +2342,16 @@ class LoftController(context: Context) {
             status = "Zuerst Mikrofon oder interne Musikaufnahme starten."
             return
         }
-        task("Isolierter Color4-Musikrückkanal: Vorprüfung …") {
+        minimalStopRequested = false
+        task(if (liveDj) "Color4 Live-DJ: bestätigten Music-Rückkanal aufbauen …"
+            else "Isolierter Color4-Musikrückkanal: Vorprüfung …") {
             minimalProbeRunning = true
+            color4LiveDjRunning = liveDj
             var attempted = 0
             var measuredBeatWrites = 0
             var activityWrites = 0
+            var predictedWrites = 0
+            var lastStatusRefresh = 0L
             var failure: String? = null
             try {
                 val previous = withContext(Dispatchers.IO) {
@@ -2355,16 +2374,25 @@ class LoftController(context: Context) {
                     val startedAt = android.os.SystemClock.elapsedRealtime()
                     var lastSentElapsed = if (tempoTrial) -Color4TempoProbePolicy.MIN_BEAT_SPACING_MS
                         else -MinimalColor4ProbePolicy.MIN_FRAME_MS
-                    // Capture *event count*, not the latest display frame's beat flag.
-                    // 64-ms beat events would otherwise be missed by this loop.
                     var lastConsumedBeat = musicBeatCount
-                    while (microphoneRunning || InternalAudioBridge.running) {
-                        delay(if (tempoTrial) 40L else 120L)
+                    val liveClock = Color4LivePulseClock(musicBeatCount)
+                    while (!minimalStopRequested &&
+                        (microphoneRunning || InternalAudioBridge.running)) {
+                        delay(if (liveDj) 30L else if (tempoTrial) 40L else 120L)
                         val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
-                        if (elapsed >= MinimalColor4ProbePolicy.DURATION_MS) break
+                        if (!liveDj && elapsed >= MinimalColor4ProbePolicy.DURATION_MS) break
+                        if (minimalStopRequested) break
                         val frame = musicFrame ?: InternalAudioBridge.frame
                         val beatCountNow = musicBeatCount
-                        val dispatch = if (tempoTrial) {
+                        val pulse = if (liveDj) liveClock.decide(frame, beatCountNow, elapsed)
+                            else LiveColorPulse.NONE
+                        val dispatch = if (liveDj) {
+                            when (pulse) {
+                                LiveColorPulse.DETECTED_BEAT -> MusicFrameDispatch.BEAT
+                                LiveColorPulse.NONE -> MusicFrameDispatch.NONE
+                                else -> MusicFrameDispatch.AUDIO_ACTIVITY
+                            }
+                        } else if (tempoTrial) {
                             Color4TempoProbePolicy.decide(
                                 frame, beatCountNow > lastConsumedBeat,
                                 elapsed, lastSentElapsed, attempted
@@ -2380,10 +2408,19 @@ class LoftController(context: Context) {
                                 }
                             }
                             attempted++
-                            if (dispatch == MusicFrameDispatch.BEAT) measuredBeatWrites++
+                            if (pulse == LiveColorPulse.BPM_GRID) predictedWrites++
+                            else if (dispatch == MusicFrameDispatch.BEAT) measuredBeatWrites++
                             else activityWrites++
                             lastConsumedBeat = beatCountNow
                             lastSentElapsed = elapsed
+                        }
+                        if (liveDj && elapsed - lastStatusRefresh >= 1_000L) {
+                            lastStatusRefresh = elapsed
+                            minimalProbeReport = "Live-DJ aktiv · $attempted RGB über Music · " +
+                                "$measuredBeatWrites erkannte Beats · " +
+                                "$predictedWrites BPM-Zwischentakte · " +
+                                "$activityWrites Audioakzente · " +
+                                "Stoppen über die Musikseite (kein normales LAN-RGB)"
                         }
                     }
                 } catch (problem: Exception) {
@@ -2422,13 +2459,15 @@ class LoftController(context: Context) {
                 failure = problem.message ?: problem.javaClass.simpleName
             } finally {
                 minimalProbeRunning = false
+                color4LiveDjRunning = false
+                minimalStopRequested = false
             }
             val report = if (failure == null) {
-                "Color4-Probe " + (if (tempoTrial) "Tempo" else "Referenz") +
-                    ": $attempted RGB über Music-Socket, davon $measuredBeatWrites " +
-                    "gemessene Beats und $activityWrites Audio-Aktivität; " +
-                    "music_on=0 lesend bestätigt. Farbe ggf. in Classic neu wählen. " +
-                    "Senden ist keine optische Bestätigung."
+                "Color4 " + (if (liveDj) "Live-DJ" else if (tempoTrial) "Tempo" else "Referenz") +
+                    ": $attempted RGB über Music-Socket, $measuredBeatWrites " +
+                    "erkannte Beats, $predictedWrites BPM-Zwischentakte und " +
+                    "$activityWrites Audio-Aktivität; music_on=0 lesend bestätigt. " +
+                    "Farbe ggf. in Classic neu wählen. Senden ist keine optische Bestätigung."
             } else {
                 "Color4-Probe nicht vollständig erfolgreich: $failure · " +
                     "Keine automatische Wiederholung, keine weiteren Lampenbefehle."

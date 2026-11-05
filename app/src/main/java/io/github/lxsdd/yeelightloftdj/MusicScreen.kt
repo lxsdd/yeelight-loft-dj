@@ -340,6 +340,54 @@ fun MusicScreen(controller: LoftController) {
                 val probeRefusal = controller.minimalProbeRefusal()
                 var showMinimalProbeConfirm by remember { mutableStateOf(false) }
                 var showTempoProbeConfirm by remember { mutableStateOf(false) }
+                var showLiveDjConfirm by remember { mutableStateOf(false) }
+
+                Text("Color4 Live-DJ · Einzel-Lampe, Music-Rückkanal",
+                    color = Color.White, fontWeight = FontWeight.SemiBold)
+                if (controller.color4LiveDjRunning) {
+                    Button(
+                        onClick = controller::stopColor4LiveDj,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Live-DJ STOPPEN · Music-Modus sicher beenden") }
+                } else {
+                    Button(
+                        onClick = { showLiveDjConfirm = true },
+                        enabled = audioRunning && probeRefusal == null && !controller.busy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Live-DJ auf einer Color4 starten") }
+                }
+                Text(
+                    "Keine starre 8-Sekunden-Grenze: läuft bei geöffneter App " +
+                        "mit aktiver Audioquelle bis zu deinem Stopp. Nur echte Beat-Ereignisse, " +
+                        "gemessene Akzente und gekennzeichnete BPM-Zwischentakte " +
+                        "über den bestätigten Music-Socket; niemals normales LAN-RGB.",
+                    color = Color(0xFFAAB6CE), fontSize = 11.sp
+                )
+                if (showLiveDjConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showLiveDjConfirm = false },
+                        title = { Text("Color4 Live-DJ starten?") },
+                        text = { Text(
+                            "Neue Funktion, noch nicht als Langzeitshow auf dieser Firmware " +
+                                "abgenommen. Nur eine intakte, bereits eingeschaltete Color4; " +
+                                "keine parallele Yeelight-Steuerung. Musikfarben ausschließlich " +
+                                "im set_music-Rückkanal. Stoppen über diese Seite oder " +
+                                "Mikrofon-Stopp/App verlassen. Bei Quota/ungeklärtem music_on " +
+                                "kein neuer Versuch. Farbzustand wird nicht automatisch zurückgesetzt."
+                        ) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showLiveDjConfirm = false
+                                controller.runMinimalColor4Probe(liveDj = true)
+                            }) { Text("Live-DJ ausdrücklich starten") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showLiveDjConfirm = false }) {
+                                Text("Abbrechen")
+                            }
+                        }
+                    )
+                }
                 OutlinedButton(
                     onClick = { showMinimalProbeConfirm = true },
                     enabled = audioRunning && probeRefusal == null &&
@@ -373,6 +421,34 @@ fun MusicScreen(controller: LoftController) {
                 }
                 Text(controller.minimalProbeReport,
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
+                OutlinedButton(
+                    onClick = {
+                        val classicPackage = "com.yeelight.cherry"
+                        val launch = context.packageManager.getLaunchIntentForPackage(classicPackage)
+                        if (launch == null) {
+                            controller.report("Yeelight Classic nicht installiert/auffindbar. " +
+                                "Original-App unverändert belassen.")
+                        } else {
+                            try {
+                                controller.stopMicrophone()
+                                launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(launch)
+                            } catch (failure: Exception) {
+                                controller.report("Yeelight Classic konnte nicht gestartet werden: " +
+                                    (failure.message ?: failure.javaClass.simpleName))
+                            }
+                        }
+                    },
+                    enabled = !controller.minimalProbeRunning && !controller.busy &&
+                        !controller.musicLightArmed && !controller.scannerRunning &&
+                        controller.runningDeviceIps.isEmpty() && !controller.recoveryPending,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Yeelight Classic öffnen · Räume, Farben, Szenen") }
+                Text(
+                    "Getrennte Original-App: kein Zugriff auf Classic-Zugangsdaten " +
+                        "oder Cloud-Konto. Loft DJ beendet vor dem Wechsel sein Mikrofon.",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp
+                )
                 if (showMinimalProbeConfirm) {
                     AlertDialog(
                         onDismissRequest = { showMinimalProbeConfirm = false },

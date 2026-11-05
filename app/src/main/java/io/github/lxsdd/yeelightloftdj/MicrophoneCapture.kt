@@ -39,7 +39,7 @@ class MicrophoneCapture {
     ) = withContext(Dispatchers.IO) {
         check(!stopped.get()) { "Mikrofon wurde bereits gestoppt" }
         check(enabled.compareAndSet(false, true)) { "Mikrofon läuft bereits" }
-        var analyzer = MusicAnalyzer(sampleRate, frameSize)
+        val analyzer = MusicAnalyzer(sampleRate, frameSize)
         var previousGain = analysisGain
         var previousAuto = automaticGain
         val autoGain = AdaptiveMicrophoneGain()
@@ -99,13 +99,12 @@ class MicrophoneCapture {
                     if (gain != previousGain || isAuto != previousAuto) {
                         previousAuto = isAuto
 
-                        // Reset transient history after a manual gain adjustment.
-                        // A sudden artificial change in PCM gain must never
-                        // be mistaken for a new musical beat.
-                        analyzer = MusicAnalyzer(sampleRate, frameSize)
+                        // Preserve measured beat timestamps across digital AGC
+                        // adjustments. Only suppress the immediate artificial
+                        // spectral step, or BPM would remain null forever.
                         previousGain = gain
-                        // Prime detector history on a gain change, never synthesize a beat.
-                        analyzer.analyze(processed, now)
+                        analyzer.onAnalysisGainChanged()
+                        onFrame(analyzer.analyze(processed, now))
                     } else {
                         onFrame(analyzer.analyze(processed, now))
                     }
