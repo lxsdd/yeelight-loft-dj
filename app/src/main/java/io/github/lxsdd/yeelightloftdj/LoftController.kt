@@ -2482,6 +2482,11 @@ class LoftController(context: Context) {
                 // Fail closed before enabling even the first music session.
                 targets.forEach { d ->
                     check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
+                    check(!YeelightLan.musicChannelExists(d)) {
+                        "Für " + displayName(d) +
+                            " existiert bereits ein lokaler Music-Rückkanal. " +
+                            "Keine zweite Sitzung öffnen oder bestehenden Kanal übernehmen."
+                    }
                     val observed=withContext(Dispatchers.IO) {
                         YeelightLan.readMusicEndStatus(d)
                     }
