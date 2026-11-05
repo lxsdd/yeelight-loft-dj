@@ -4,12 +4,10 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class Color4LiveGroupPolicyTest {
-    @Test fun dynamicBrightnessRequiresAdvertisementOnEveryBulb() {
+    @Test fun optionalBrightnessDoesNotBlockMusicRgb() {
         val devices = listOf(Color4LiveCandidate("192.168.1.10", "color4", true, false))
-        assertTrue(Color4LiveGroupPolicy.refusal(devices, emptySet(), emptySet(), false,
-            requireBrightness = true)!!.contains("set_bright"))
         assertNull(Color4LiveGroupPolicy.refusal(devices, emptySet(), emptySet(), false,
-            requireBrightness = false))
+            requireBrightness = true))
     }
 
     private val bulbs=(2..6).map { n ->
@@ -22,16 +20,17 @@ class Color4LiveGroupPolicyTest {
         active: Boolean = false
     ) = Color4LiveGroupPolicy.refusal(chosen,blocked,pending,active)
 
-    @Test fun admitsOneToFourDistinctHealthyBulbs() {
-        (1..4).forEach { assertNull(reject(bulbs.take(it))) }
+    @Test fun admitsAnyNumberOfDistinctAdvertisedMusicDevices() {
+        (1..5).forEach { assertNull(reject(bulbs.take(it))) }
+        val many = (1..24).map { Color4LiveCandidate("192.168.2.$it","music-rgb",true) }
+        assertNull(reject(many))
     }
-    @Test fun failsOnEmptyOverlimitAndRepeatedAddress() {
+    @Test fun failsOnEmptyAndRepeatedAddress() {
         assertNotNull(reject(emptyList()))
-        assertNotNull(reject(bulbs))
         assertNotNull(reject(listOf(bulbs[0],bulbs[0])))
     }
-    @Test fun rejectsUnknownOrIncapableBulbForEntireGroup() {
-        assertNotNull(reject(listOf(bulbs[0],bulbs[1].copy(model="ceiling1"))))
+    @Test fun rejectsUnconfirmedMusicWithoutAssumingModelCompatibility() {
+        assertNull(reject(listOf(bulbs[0],bulbs[1].copy(model="other-rgb-music"))))
         assertNotNull(reject(listOf(bulbs[0],bulbs[1].copy(music=false))))
     }
     @Test fun respectsPerBulbQuotaPendingStopAndConcurrentWork() {

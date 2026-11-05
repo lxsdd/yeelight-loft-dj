@@ -23,11 +23,11 @@ data class Color4MusicVisual(
 }
 
 /** HSV hue spans the whole circle, spectrally steered by all six measured FFT bands.
- * Spatial offsets give 1–4 separate bulbs distinct colors without a tiny fixed palette.
+ * Spatial offsets give all selected bulbs distinct colors without fixed palettes.
  */
 internal object Color4FullSpectrum {
     fun rgb(frame: MusicFrame, lamp: Int, count: Int, step: Long, slow: Boolean): Int {
-        require(lamp in 0 until count && count in 1..4 && step >= 0)
+        require(count > 0 && lamp in 0 until count && step >= 0)
         val bands = frame.bands
         val total = bands.sumOf { it.toDouble().coerceAtLeast(0.0) }
         val centroid = if (total > 0.00001)
@@ -66,7 +66,7 @@ internal class Color4LiveVisualDirector(
     private val count: Int,
     private val style: Color4LiveStyle,
 ) {
-    init { require(count in 1..4) }
+    init { require(count > 0) }
     private var step = 0L
     private var lastUpdate: Long? = null
     private var lastSend: Long? = null

@@ -65,6 +65,7 @@ class Color4LiveVisualDirectorTest {
         assertNull(director.next(frame(), LiveColorPulse.NONE, -1))
         assertEquals(1, director.next(frame(), LiveColorPulse.NONE, 0)!!.size)
         assertNull(director.next(frame(), LiveColorPulse.NONE, -2))
-        assertTrue(runCatching { Color4LiveVisualDirector(5, Color4LiveStyle.ADAPTIVE) }.isFailure)
+        assertEquals(1, Color4LiveVisualDirector(5, Color4LiveStyle.ADAPTIVE)
+            .next(frame(), LiveColorPulse.NONE, 0)!!.size / 5)
     }
 }
