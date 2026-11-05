@@ -21,3 +21,11 @@ Testaufwand: neue deterministische Regressionen für 1/4/N gemischt, ungültige/
 ## RC15 signierter Owner-Build: Guard-Korrektur
 
 Der RC15-Workflow enthielt im ausdrücklich signierten Owner-Dispatch eine falsch kopierte Branch-ID in der bedingten RC15-Prüfung **und** im PR-HEAD-Check. Damit wäre für den echten RC15-Branch die Prüfung übersprungen worden. Beides ist auf `chat/rc15-live-dj-reliability-controls-20261105` korrigiert; die existierenden Guards auf Owner, Draft-PR #67, Base, exakten HEAD, Version 33, mindestens einen grünen exakten Pull-Request-CI-Lauf bleiben unverändert. Ein signiertes Artefakt kommt nur nach manueller Owner-Freigabe und erfolgreichem Workflow, nicht durch diesen Quellcode-Commit. Der konkrete Couchtisch-Sperrstatus ist App-lokal und kann aus einem Screenshots von RC7 nicht festgestellt werden; keine Quarantäne oder music_on-Recovery-Markierung wurde gelöscht.
+
+## Nachtrag: Music-Sperren sicher diagnostizieren
+
+Eine alte gespeicherte `music-light-session` kann die Live-DJ-Zulassung trotz gesunder aktuell gewählter Lampen global sperren. Neue lokale Live-DJ-Blockerdiagnose nennt jetzt diese globale Sitzung ausdrücklich und zeigt daneben jede betroffene Lampe mit Quota, `music_on`-Stop-Journal, Recovery oder fehlendem `set_music`/`set_rgb`. Keine automatische Freigabe.
+
+Bei mehreren Lampen gibt es für jede noch offene `minimal-color4-music-unconfirmed-ips`-Vormerkung eine eigene Aktion `music_on nur lesen`. Sie macht EINEN budgetierten `get_prop`-Read pro ausdrücklich gewählter Lampe, ohne normale LAN-Schreibaktionen und ohne Wiederholung innerhalb von 10 s. Nur exakt `music_on=0` entfernt ausschließlich diese lokale Stop-Journal-Vormerkung. Globale Altsitzungs-Marker, andere Lampen und Firmware-Quarantäne werden niemals durch diesen Schritt gelöscht. Bei Quota, aktivem Music-Kanal oder unbekannter Antwort bleibt alles unverändert. Legacy-Einzeltest-Einstieg bleibt bestehen.
+
+Wichtige Hardware-Abgrenzung: aktuelle gerätespezifische Android-SharedPreferences und reale `music_on`-Werte liegen nicht in GitHub. Ein grüner Offline-Test bestätigt nicht, welche Lampe derzeit gesperrt ist. Die RC15-Signierung setzt weiterhin Owner-Dispatch auf exakten grünen PR-HEAD voraus.

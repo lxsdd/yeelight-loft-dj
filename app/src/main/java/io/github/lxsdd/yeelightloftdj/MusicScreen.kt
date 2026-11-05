@@ -155,11 +155,15 @@ fun MusicScreen(controller: LoftController) {
                         }
                     }
                 }
-                if (controller.minimalProbeNeedsReadback()) {
-                    OutlinedButton(onClick = controller::verifyMinimalProbeEnd,
-                        enabled = !controller.busy,
-                        modifier = Modifier.fillMaxWidth()) {
-                        Text("Unbestätigtes Music-Ende nur lesend prüfen")
+                if (controller.pendingMusicReadbackIps().isNotEmpty()) {
+                    Text("Ungeklärte Music-Stopps: nur betroffene Lampen prüfen",
+                        color = Color(0xFFFFD38A), fontSize = 12.sp)
+                    controller.pendingMusicReadbackIps().forEach { ip ->
+                        OutlinedButton(onClick = { controller.verifyMusicEndFor(ip) },
+                            enabled = controller.canReadMusicEnd(ip),
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(controller.musicReadbackLabel(ip) + " · music_on nur lesen")
+                        }
                     }
                 }
                 Text(controller.minimalProbeReport,
