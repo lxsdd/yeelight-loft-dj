@@ -65,10 +65,15 @@ private val lavender = Color(0xFFC3ACFF)
 private val muted = Color(0xFF9AA5BE)
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val ACTION_OPEN_MUSIC = "io.github.lxsdd.yeelightloftdj.OPEN_MUSIC"
+    }
     private lateinit var controller: LoftController
+    private var notificationMusicRequest by mutableIntStateOf(0)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         controller = LoftControllerStore.attach(applicationContext)
+        if (intent?.action == ACTION_OPEN_MUSIC) notificationMusicRequest++
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
                 primary = lavender,
@@ -76,8 +81,13 @@ class MainActivity : ComponentActivity() {
                 background = night,
                 surface = panel,
                 onBackground = Color.White,
-            )) { LoftApp(controller) }
+            )) { LoftApp(controller, notificationMusicRequest) }
         }
+    }
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_OPEN_MUSIC) notificationMusicRequest++
     }
     override fun onStop() {
         controller.requestStopScanner()
@@ -96,10 +106,17 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun LoftApp(controller: LoftController) {
-    var page by remember { mutableIntStateOf(0) }
+private fun LoftApp(controller: LoftController, notificationMusicRequest: Int = 0) {
+    var page by rememberSaveable { mutableIntStateOf(if (notificationMusicRequest > 0) 3 else 0) }
     var detailRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var parentRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(notificationMusicRequest) {
+        if (notificationMusicRequest > 0) {
+            detailRoute = null
+            parentRoute = null
+            page = 3
+        }
+    }
     // Route-local editor controls must survive navigating to the target picker.
     val routeState = rememberSaveableStateHolder()
     val goBack: () -> Unit = {

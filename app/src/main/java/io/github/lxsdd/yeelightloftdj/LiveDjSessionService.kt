@@ -35,6 +35,13 @@ class LiveDjSessionService : Service() {
         try {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL,"Live-DJ",NotificationManager.IMPORTANCE_LOW))
+            // Navigation is independent of STOP and never re-arms a music session.
+            val returnIntent = Intent(this,MainActivity::class.java).apply {
+                action = MainActivity.ACTION_OPEN_MUSIC
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            val returnAction = PendingIntent.getActivity(this,92,returnIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val stopIntent = Intent(this,LiveDjSessionService::class.java).apply { action = STOP }
             val stopAction = PendingIntent.getService(this,91,stopIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -43,6 +50,7 @@ class LiveDjSessionService : Service() {
                 .setContentTitle("Yeelight Loft DJ · Live-DJ aktiv")
                 .setContentText("Musiklicht läuft auch bei gesperrtem Bildschirm")
                 .setOngoing(true)
+                .setContentIntent(returnAction)
                 .addAction(Notification.Action.Builder(
                     android.R.drawable.ic_media_pause,"DJ stoppen",stopAction).build())
                 .build()
