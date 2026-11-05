@@ -1017,7 +1017,24 @@ private fun DeviceSummaryCard(
                         fontSize = 12.sp
                     )
                 }
-                TextButton(onClick = onDetails) { Text("Steuern") }
+                TextButton(onClick = onDetails) { Text("Details") }
+            }
+            // Direct power commands, without first opening a detail editor.
+            // A Color4 receives only one budgeted set_power ACK (no extra
+            // automatic get_prop read), and per-lamp recovery stays protected.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Button(
+                    onClick = { controller.controlLamp(
+                        device,LampCommands.power(true),"Einschalten") },
+                    enabled = controller.canPowerLamp(device),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Ein") }
+                OutlinedButton(
+                    onClick = { controller.controlLamp(
+                        device,LampCommands.power(false),"Ausschalten") },
+                    enabled = controller.canPowerLamp(device),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Aus") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedButton(onClick = { controller.refreshLamp(device) },

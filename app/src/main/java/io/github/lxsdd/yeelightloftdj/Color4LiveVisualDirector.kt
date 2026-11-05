@@ -23,11 +23,11 @@ data class Color4MusicVisual(
 }
 
 /** HSV hue spans the whole circle, spectrally steered by all six measured FFT bands.
- * Spatial offsets give 1–4 separate bulbs distinct colors without a tiny fixed palette.
+ * Spatial offsets give all selected bulbs distinct colors without fixed palettes.
  */
 internal object Color4FullSpectrum {
     fun rgb(frame: MusicFrame, lamp: Int, count: Int, step: Long, slow: Boolean): Int {
-        require(lamp in 0 until count && count in 1..4 && step >= 0)
+        require(count > 0 && lamp in 0 until count && step >= 0)
         val bands = frame.bands
         val total = bands.sumOf { it.toDouble().coerceAtLeast(0.0) }
         val centroid = if (total > 0.00001)
@@ -66,13 +66,24 @@ internal class Color4LiveVisualDirector(
     private val count: Int,
     private val style: Color4LiveStyle,
 ) {
-    init { require(count in 1..4) }
+    init { require(count > 0) }
     private var step = 0L
     private var lastUpdate: Long? = null
     private var lastSend: Long? = null
     private var lastBrightnessAt: Long? = null
     private var lastBrightness: Int? = null
     private var envelope = .12f
+    private var peakReference = .08f
+
+    /** RGB modulation also works when the lamp firmware ignores a
+     * brightness command inside Music mode. Never dims to invisible black.
+     */
+    private fun scaleRgb(rgb: Int, level: Float): Int {
+        val amount = level.coerceIn(.15f, 1f)
+        fun part(shift:Int):Int =
+            (((rgb shr shift) and 255) * amount).roundToInt().coerceIn(0,255)
+        return (part(16) shl 16) or (part(8) shl 8) or part(0)
+    }
 
     fun next(frame: MusicFrame?, pulse: LiveColorPulse, elapsedMs: Long): List<Color4MusicVisual>? {
         if (frame == null || elapsedMs < 0 || !frame.rms.isFinite() ||
@@ -93,14 +104,23 @@ internal class Color4LiveVisualDirector(
         val elapsed = if (previous == null) 0L else
             (elapsedMs - previous).coerceIn(0, 1500L)
         lastUpdate = elapsedMs
-        // Sound intensity remains grounded in measured PCM RMS, not only AGC peak.
-        // Separate attack and release constants prevent pumping or jitter.
-        val target = (frame.rms / .12f).coerceIn(0f, 1f).pow(.72f)
-        val tau = if (target > envelope) 450f else 2400f
+        // Pixel 9 and older phones report different absolute microphone RMS.
+        // Track a decaying measured peak: this normalizes their real PCM
+        // dynamic range without changing gain, fabricating beats, or lifting
+        // silence. A loud passage sets the reference; it decays gently.
+        val decay = if (previous == null) 1f else
+            (1f - elapsed / 30_000f).coerceIn(.90f,1f)
+        peakReference = maxOf(.025f, peakReference * decay, frame.rms)
+        val target = (frame.rms / peakReference).coerceIn(0f,1f).pow(.80f)
+        val tau = if (target > envelope) 420f else 2300f
         val alpha = if (previous == null) 1f else elapsed / (tau + elapsed)
         envelope += (target - envelope) * alpha
         val audible = frame.rms >= .009f && frame.peak >= .03f
-        val interval = if (audible) 900L else 1850L
+        // A continuous energy-dependent middle ground: no binary
+        // 'fast flashing' vs 'slow dissolving'. Quiet is slower, medium
+        // follows ~0.7-1 s, and strong peaks allow quicker musical accents.
+        val interval = if (!audible) 1850L
+            else (1150f - 700f * envelope).toLong().coerceIn(450L,1150L)
         if (lastSend != null && elapsedMs - lastSend!! < interval) return null
         lastSend = elapsedMs
 
@@ -116,10 +136,14 @@ internal class Color4LiveVisualDirector(
             lastBrightness = brightness
             lastBrightnessAt = elapsedMs
         }
-        val smooth = if (!audible) 2200 else if (pulse != LiveColorPulse.NONE) 550 else 1100
+        val smooth = if (!audible) 2200 else
+            (1750f - 1380f * envelope).roundToInt().coerceIn(370,1750)
+        // RGB itself is scaled as a fallback visible dimming path; optional
+        // set_bright is extra only for positively advertised capabilities.
+        val rgbLevel = (.17f + .83f * envelope).coerceIn(.17f,1f)
         val results = (0 until count).map { index ->
-            Color4MusicVisual(Color4FullSpectrum.rgb(frame, index, count, step, true),
-                smooth, brightness)
+            val full = Color4FullSpectrum.rgb(frame,index,count,step,true)
+            Color4MusicVisual(scaleRgb(full,rgbLevel),smooth,brightness)
         }
         step++
         return results

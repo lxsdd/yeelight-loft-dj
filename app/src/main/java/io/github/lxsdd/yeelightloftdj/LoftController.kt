@@ -1227,8 +1227,22 @@ class LoftController(context: Context) {
             else "Aus · " + capabilityText
     }
 
+    /** Direct power must not depend on identifying/brightness capabilities.
+     * It still respects per-IP recovery, Music sockets and firmware quota.
+     */
+    fun canPowerLamp(device: YeelightDevice): Boolean =
+        !YeelightLan.isLanQuarantined(device) &&
+        !YeelightLan.musicModeActive(device) &&
+        !color4LiveDjRunning &&
+        LampOperationGate.canIdentifyLamp(
+            busy, device.ip, runningDeviceIps, recoveryJournal.keys,
+            musicDeviceSession, musicStopPending || musicSending
+        ) &&
+        DeviceCapabilities.evidence(device, "set_power") != CapabilityEvidence.UNSUPPORTED
+
     fun controlLamp(device: YeelightDevice, command: LampCommand, description: String) {
-        if (!canIdentifyLamp(device)) {
+        if (if (command.method == "set_power") !canPowerLamp(device)
+            else !canIdentifyLamp(device)) {
             status = if (YeelightLan.isLanQuarantined(device))
                 "Firmware-LAN-Limit bestätigt: Wellness/andere betroffene Lampe geschützt. " +
                     "Nur eine ausdrückliche Recovery-Leseprüfung ist zugelassen."
@@ -2351,20 +2365,72 @@ class LoftController(context: Context) {
         runMinimalColor4Probe(liveDj = true)
     }
 
-    /** The original single-Color4 path remains intact and selectable. */
+    /** Missing audio is a separate, actionable UI state. This method checks
+     * target suitability only and never probes a physical bulb.
+     */
     fun liveDjRefusal(style: Color4LiveStyle = Color4LiveStyle.BEAT): String? {
         val targets=selected()
+        val pending=LampOperationGate.pendingIps(runningDeviceIps,recoveryJournal.keys)
         return Color4LiveGroupPolicy.refusal(
             candidates=targets.map { Color4LiveCandidate(
                 it.ip,it.model,YeelightLan.supportsMusicMode(it),
                 "set_bright" in it.methods) },
             quotaBlocked=targets.filter(YeelightLan::isLanQuarantined).map { it.ip }.toSet(),
-            unconfirmedMusic=minimalProbeUnconfirmed,
-            otherAction=busy || minimalProbeRunning || recoveryPending ||
+            unconfirmedMusic=minimalProbeUnconfirmed + pending,
+            otherAction=busy || minimalProbeRunning ||
                 musicSending || musicStopPending || musicLightArmed ||
-                musicDeviceSession || scannerRunning || runningDeviceIps.isNotEmpty(),
-            requireBrightness = style == Color4LiveStyle.ADAPTIVE,
+                musicDeviceSession || scannerRunning || activeScene != null,
         )
+    }
+
+    /** Local diagnosis only; no network calls or safety-marker resets.
+     * The legacy music session flag is global, while per-lamp safeguards are
+     * independent. Both MUST be shown; otherwise a healthy lamp appears
+     * inexplicably disabled when any old session remains recorded.
+     */
+    fun liveDjBlockerDetails(): String? {
+        val pending = LampOperationGate.pendingIps(runningDeviceIps, recoveryJournal.keys)
+        return LiveDjBlockerDiagnosticPolicy.explain(
+            previousMusicSession = musicDeviceSession,
+            activeScene = activeScene != null,
+            stopPending = musicStopPending,
+            lamps = selected().map { device ->
+                LiveDjLampBlocker(
+                    label = displayName(device),
+                    quotaBlocked = YeelightLan.isLanQuarantined(device),
+                    musicUnconfirmed = device.ip in minimalProbeUnconfirmed ||
+                        device.ip in unconfirmedMusicStopIps,
+                    restorePending = device.ip in pending,
+                    hasMusicCapability = YeelightLan.supportsMusicMode(device),
+                )
+            },
+        )
+    }
+
+    /** Local-only selection of every safely known Music/RGB capable device.
+     * Does not send commands, bypass preflight, or clear protection flags.
+     */
+    fun selectMusicCapableTargets() {
+        val pending=LampOperationGate.pendingIps(runningDeviceIps,recoveryJournal.keys) +
+            minimalProbeUnconfirmed
+        val eligible=orderedDevices().filter {
+            YeelightLan.supportsMusicMode(it) &&
+                !YeelightLan.isLanQuarantined(it) && it.ip !in pending
+        }
+        if (eligible.isEmpty()) {
+            status="Keine bestätigte, ungesperrte RGB-Musiklampe gespeichert. " +
+                "Gerätesuche/Support-Liste prüfen."
+            return
+        }
+        val selectedIds=eligible.map { it.id }.toSet()
+        check(prefs.edit()
+            .putString("selected-lamp-ids",JSONArray(selectedIds.toList()).toString())
+            .putString("selected-target","Auswahl")
+            .commit()) { "Musik-Lampenauswahl konnte nicht gespeichert werden." }
+        customSelectedIds=selectedIds
+        target="Auswahl"
+        status="${eligible.size} Music/RGB-Lampen ausgewählt · " +
+            "beim Start werden alle einzeln auf Erreichbarkeit geprüft."
     }
 
     fun startForegroundColor4LiveDjGroupAware(
@@ -2376,16 +2442,15 @@ class LoftController(context: Context) {
             return
         }
         val targets=selected()
-        if (targets.size == 1) {
-            minimalProbeRefusal()?.let { status=it; return }
-        }
+        // Never apply the separate, single-device 8s diagnostic policy to Live-DJ.
+        // All group sizes use the same journaled per-device Music transport.
         try { LiveDjSessionService.start(app) }
         catch (e: Exception) {
             status="DJ-Vordergrunddienst nicht verfügbar: " +
                 (e.message ?: e.javaClass.simpleName)
             return
         }
-        // Single and four-lamp shows now share exactly the same fail-closed
+        // Single and multi-lamp shows share exactly the same fail-closed
         // per-IP group transport. Bounded 8-second diagnostic remains unchanged.
         runColor4LiveGroup(targets, style)
     }
@@ -2394,7 +2459,7 @@ class LoftController(context: Context) {
         targets: List<YeelightDevice>, style: Color4LiveStyle
     ) {
         minimalStopRequested=false
-        task("Live-DJ: einzelne Color4-Music-Kanäle werden gesichert …") {
+        task("Live-DJ: Musikkanäle werden pro Lampe gesichert …") {
             minimalProbeRunning=true
             color4LiveDjRunning=true
             activeColor4LiveStyle=style
@@ -2408,14 +2473,16 @@ class LoftController(context: Context) {
             try {
                 // Fail closed before enabling even the first music session.
                 targets.forEach { d ->
+                    check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
                     val preflight=withContext(Dispatchers.IO) {
                         YeelightLan.readMusicPreflight(d)
                     }
                     check(preflight.isOn) {
-                        "Bitte alle ausgewählten Color4 vor der Show einschalten."
+                        "Bitte alle ausgewählten Musiklampen vor der Show einschalten."
                     }
                 }
                 targets.forEach { d ->
+                    check(!minimalStopRequested) { "Live-DJ wurde gestoppt." }
                     // Persist each bulb BEFORE that bulb's first set_music(1).
                     val next=minimalProbeUnconfirmed + d.ip
                     check(prefs.edit().putStringSet(
@@ -2426,7 +2493,7 @@ class LoftController(context: Context) {
                     journaled += d
                     withContext(Dispatchers.IO) {
                         check(YeelightLan.startMusicMode(d,socketStopOnly=true)) {
-                            "Color4 Music-Handshake wurde abgelehnt."
+                            "Music-Handshake einer Lampe wurde abgelehnt."
                         }
                         YeelightLan.releaseMusicControlSlot(d)
                     }
@@ -2451,14 +2518,20 @@ class LoftController(context: Context) {
                         kotlinx.coroutines.coroutineScope {
                             targets.mapIndexed { index,d ->
                                 async(Dispatchers.IO) {
-                                    check(YeelightLan.sendMusicVisual(d,visualFrames[index])) {
+                                    // Some supported Music/RGB bulbs do not advertise
+                                    // brightness. Never send unconfirmed set_bright.
+                                    val requested=visualFrames[index]
+                                    val allowed=if ("set_bright" in d.methods) requested
+                                        else requested.copy(brightness=null)
+                                    check(YeelightLan.sendMusicVisual(d,allowed)) {
                                         "Color4-Music-Kanal unerwartet geschlossen."
                                     }
                                 }
                             }.awaitAll()
                         }
                         sent += targets.size
-                        brightnessWrites += visualFrames.count { it.brightness != null }
+                        if (visualFrames.firstOrNull()?.brightness != null)
+                            brightnessWrites += targets.count { "set_bright" in it.methods }
                     }
                     when (pulse) {
                         LiveColorPulse.DETECTED_BEAT -> detected++
@@ -2469,7 +2542,7 @@ class LoftController(context: Context) {
                     }
                     if (elapsed-reportAt >= 1_000L) {
                         reportAt=elapsed
-                        minimalProbeReport="Live-DJ ${style.label} · ${targets.size} Color4 · " +
+                        minimalProbeReport="Live-DJ ${style.label} · ${targets.size} Lampen · " +
                             "$sent Music-RGB · $brightnessWrites Helligkeit · " +
                             "$detected echte Beats · $predicted Zwischentakte"
                     }
@@ -2505,7 +2578,7 @@ class LoftController(context: Context) {
                         }
                     } else {
                         failure=(failure?.plus(" · ") ?: "") +
-                            "Music-Ende einer Color4 ungeklärt" +
+                            "Music-Ende einer Lampe ungeklärt" +
                             (stopError?.message?.let { ": " + it }
                                 ?: " (music_on nicht bestätigt)")
                     }
@@ -2517,7 +2590,7 @@ class LoftController(context: Context) {
                 LiveDjSessionService.finish(app)
             }
             val report=if (failure == null) {
-                "Live-DJ ${style.label}: ${targets.size} Color4 · $sent Music-RGB · " +
+                "Live-DJ ${style.label}: ${targets.size} Lampen · $sent Music-RGB · " +
                     "$brightnessWrites Helligkeit · $detected erkannte Beats · " +
                     "$predicted BPM-Zwischentakte · " +
                     "$accents Akzente; music_on=0 für ALLE einzeln nachgelesen."
@@ -2675,29 +2748,176 @@ class LoftController(context: Context) {
         }
     }
 
-    /** An unconfirmed previous probe can be cleared only by a fresh valid read. */
-    fun verifyMinimalProbeEnd() {
-        val device = selected().distinctBy { it.ip }.singleOrNull()
-        if (device == null || device.ip !in minimalProbeUnconfirmed || busy ||
-            musicLightArmed || musicDeviceSession || scannerRunning) {
-            status = "Bitte genau die Color4 mit offener Music-Prüfung auswählen."
+    /** Explicitly listed pending Music journals; never inferred from the
+     * current selection. A four-bulb selection must not hide a single failed
+     * stop or require changing the selection to one bulb just to read it.
+     */
+    fun pendingMusicReadbackIps(): List<String> = minimalProbeUnconfirmed.sorted()
+    fun musicReadbackLabel(ip: String): String =
+        devices.firstOrNull { it.ip == ip }?.let(::displayName) ?:
+            "Gespeicherte Lampe …" + ip.substringAfterLast('.')
+
+    fun canReadMusicEnd(ip: String): Boolean {
+        if (ip !in minimalProbeUnconfirmed || !YeelightLan.isLocalIp(ip) ||
+            busy || musicLightArmed || color4LiveDjRunning || scannerRunning ||
+            musicSending || musicStopPending
+        ) return false
+        val device = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
+        return !YeelightLan.isLanQuarantined(device) && !YeelightLan.musicModeActive(device)
+    }
+
+    /** This READ-ONLY action never sends set_music, re-arms a socket, or
+     * clears the legacy music-light-session flag. Only one device-specific
+     * journal entry is removed after an explicit firmware music_on=0 reply.
+     */
+    fun verifyMusicEndFor(ip: String) {
+        if (!canReadMusicEnd(ip)) {
+            status = "Music-Ende für " + musicReadbackLabel(ip) +
+                " noch nicht gefahrlos lesbar; Quota/Aktivität zuerst prüfen."
             return
         }
-        task("Prüfe ausschließlich lesend, ob der Music-Modus beendet ist …") {
+        val now = SystemClock.elapsedRealtime()
+        val prior = lastRecoveryReadAt[ip]
+        if (prior != null && now - prior in 0 until 10_000L) {
+            status = "Music-Status dieser Lampe frühestens nach 10 Sekunden erneut prüfen."
+            return
+        }
+        lastRecoveryReadAt[ip] = now
+        val device = devices.firstOrNull { it.ip == ip } ?: YeelightLan.manual(ip)
+        task("Prüfe music_on für " + musicReadbackLabel(ip) + " nur lesend …") {
             val observation = withContext(Dispatchers.IO) {
                 try { YeelightLan.readRecoveryObservation(device) }
                 finally { YeelightLan.releaseMusicControlSlot(device) }
             }
             check(observation.musicOn == false) {
-                "music_on noch aktiv oder unbekannt. Kein neuer Test."
+                "music_on ist aktiv oder unbekannt. Kein neuer Start; " +
+                    "Lampe bleibt unverändert geschützt."
+            }
+            // State can change while a queued coroutine waits. Never erase
+            // a newer journal for the same IP on the basis of an older read.
+            check(!color4LiveDjRunning && !musicLightArmed && !musicSending &&
+                !musicStopPending && !YeelightLan.musicModeActive(device)) {
+                "Inzwischen läuft eine Music-Sitzung. Keine lokale Freigabe."
             }
             val next = minimalProbeUnconfirmed - device.ip
             check(prefs.edit().putStringSet(minimalProbePreferenceKey, next).commit()) {
-                "Sicherheitsstatus konnte nicht gespeichert werden."
+                "Music-Sicherheitsstatus konnte nicht gespeichert werden."
             }
             minimalProbeUnconfirmed = next
-            "Music-Modus lesend als beendet bestätigt. Testfreigabe erneut möglich."
+            musicReadbackLabel(ip) + ": music_on=0 unabhängig bestätigt; " +
+                "nur die lokale Geräte-Music-Vormerkung entfernt."
         }
+    }
+
+    /** Visible, explicitly chosen handoff targets: no scans, no writes. */
+    fun musicHandoffTargets(): List<YeelightDevice> =
+        selected().distinctBy { it.ip }.filter(YeelightLan::supportsMusicMode)
+
+    fun canRequestMusicHandoff(device: YeelightDevice): Boolean =
+        MusicSessionHandoffPolicy.canOffer(
+            supportsMusic = YeelightLan.supportsMusicMode(device),
+            isQuarantined = YeelightLan.isLanQuarantined(device),
+            hasOwnChannel = YeelightLan.musicChannelExists(device),
+            otherAction = busy || minimalProbeRunning || color4LiveDjRunning ||
+                scannerRunning || musicLightArmed || musicStopPending || musicSending,
+        ) && musicHandoffTargets().any { it.ip == device.ip }
+
+    /**
+     * Explicit two-step owner confirmation happens in MusicScreen.
+     * A foreign/stale session cannot be adopted through its old TCP socket.
+     * Read music_on first; only TRUE authorizes exactly ONE set_music(0).
+     * Keep the per-bulb journal until ACK + separate music_on=0 readback.
+     * No automatic restart, retry, fake state, or global journal clearing.
+     */
+    fun requestMusicHandoff(ip: String) {
+        val device = musicHandoffTargets().firstOrNull { it.ip == ip }
+        if (device == null || !canRequestMusicHandoff(device)) {
+            status = "Neuübernahme verweigert: Lampe nicht geeignet, bereits aktiv " +
+                "oder wegen Quota/Wiederherstellung geschützt."
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        val last = lastRecoveryReadAt[ip]
+        if (last != null && now - last in 0 until 120_000L) {
+            status = "Neuübernahme für " + displayName(device) +
+                " frühestens nach zwei Minuten wieder möglich."
+            return
+        }
+        val wallNow = System.currentTimeMillis()
+        val previousAttempt = prefs.getLong("music-takeover-attempt." + ip, 0L)
+        if (previousAttempt > 0L &&
+            (wallNow < previousAttempt || wallNow - previousAttempt < 120_000L)) {
+            status = "Für " + displayName(device) +
+                " wurde bereits eine Music-Übernahme versucht. " +
+                "Mindestens zwei Minuten Abstand; kein automatischer Retry."
+            return
+        }
+        lastRecoveryReadAt[ip] = now
+        task("Prüfe bestehende Music-Sitzung von " + displayName(device) + " …") {
+            check(!YeelightLan.isLanQuarantined(device) &&
+                !YeelightLan.musicChannelExists(device) &&
+                !musicLightArmed && !color4LiveDjRunning && !scannerRunning &&
+                !musicSending && !musicStopPending) {
+                "Neuübernahme abgebrochen: Lampe/Steuerung inzwischen belegt."
+            }
+            val observed = withContext(Dispatchers.IO) {
+                try { YeelightLan.readRecoveryObservation(device) }
+                finally { YeelightLan.releaseMusicControlSlot(device) }
+            }.musicOn
+            val decision = MusicSessionHandoffPolicy.decidePreflight(observed)
+            check(decision != MusicHandoffReadDecision.UNKNOWN) {
+                "music_on unbekannt: keine Übernahme, kein set_music-Befehl."
+            }
+            if (decision == MusicHandoffReadDecision.ALREADY_STOPPED) {
+                val next = minimalProbeUnconfirmed - ip
+                if (ip in minimalProbeUnconfirmed) {
+                    check(prefs.edit().putStringSet(minimalProbePreferenceKey,next).commit()) {
+                        "Bestätigter Music-Stopp konnte lokal nicht gesichert werden."
+                    }
+                    minimalProbeUnconfirmed=next
+                }
+                return@task displayName(device) +
+                    ": music_on=0 – Music-Modus bereits beendet, kein Stoppbefehl nötig. " +
+                    "Andere Recovery-Sperren bleiben bestehen."
+            }
+            // Record intent BEFORE sending the only mutating command. A crash,
+            // ambiguous ACK or quota failure must NEVER trigger a blind retry.
+            val next = minimalProbeUnconfirmed + ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey,next)
+                .putLong("music-takeover-attempt." + ip,wallNow)
+                .commit()) { "Music-Übernahme konnte vor dem LAN-Befehl nicht journalisiert werden." }
+            minimalProbeUnconfirmed=next
+            val observedAfter = withContext(Dispatchers.IO) {
+                try {
+                    YeelightLan.endUnownedMusicSessionOnce(device)
+                    YeelightLan.readRecoveryObservation(device).musicOn
+                } finally { YeelightLan.releaseMusicControlSlot(device) }
+            }
+            check(MusicSessionHandoffPolicy.verifiedStopped(true,observedAfter)) {
+                "set_music(0) quittiert, aber music_on=0 nicht bestätigt; " +
+                    "Sicherheitsjournal bleibt bestehen. Nicht erneut versuchen."
+            }
+            // Do not clear any other bulb's journal or an unrelated old
+            // global music-light-session/recovery snapshot.
+            val clear = minimalProbeUnconfirmed - ip
+            check(prefs.edit().putStringSet(minimalProbePreferenceKey,clear).commit()) {
+                "Firmware meldet Music aus, aber lokales Journal bleibt geschützt."
+            }
+            minimalProbeUnconfirmed=clear
+            displayName(device) + ": Music-Sitzung mit genau einem set_music(0) beendet " +
+                "und music_on=0 nachgelesen. Live-DJ nun manuell neu starten; " +
+                "weitere Schutzmarkierungen bleiben unverändert."
+        }
+    }
+
+    /** Older diagnostic entry point preserved for backwards compatibility. */
+    fun verifyMinimalProbeEnd() {
+        val single = selected().distinctBy { it.ip }.singleOrNull()
+        if (single == null) {
+            status = "Für die bisherige Einzelprüfung genau eine Lampe wählen; " +
+                "im Live-DJ können offene Music-Stopps einzeln geprüft werden."
+        } else verifyMusicEndFor(single.ip)
     }
 
 }

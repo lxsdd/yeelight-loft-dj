@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -45,6 +46,13 @@ fun MusicScreen(controller: LoftController) {
     var showColor4AcceptanceConfirm by remember { mutableStateOf(false) }
     var dualDialogSelectionKey by remember { mutableStateOf<String?>(null) }
     var liveDjStyle by remember { mutableStateOf(Color4LiveStyle.BEAT) }
+    var showMinimalProbeConfirm by remember { mutableStateOf(false) }
+    var showTempoProbeConfirm by remember { mutableStateOf(false) }
+    var showLiveDjConfirm by remember { mutableStateOf(false) }
+    var showMusicHandoffChooser by remember { mutableStateOf(false) }
+    var musicHandoffIp by remember { mutableStateOf<String?>(null) }
+    var showAudioDetails by rememberSaveable { mutableStateOf(false) }
+    var showAdvancedMusicTests by rememberSaveable { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -80,8 +88,188 @@ fun MusicScreen(controller: LoftController) {
     val reading = controller.musicFrame ?: InternalAudioBridge.frame
     val signal = reading?.let { AudioLevelDisplay.from(it.rms, it.peak) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text("Musik im Loft", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Musik im Loft", color = Color.White, fontSize = 24.sp,
+            fontWeight = FontWeight.Bold)
+        Surface(color = Color(0xFF1D2232), shape = RoundedCornerShape(22.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("Live-DJ · direkt starten", color = Color.White,
+                    fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("Ziel: ${controller.targetLabel(controller.target)} · " +
+                    "${controller.selectedCount()} Lampen",
+                    color = Color(0xFFAAB6CE), fontSize = 12.sp)
+                Text("BPM: " + (reading?.estimatedBpm?.toString() ?: "–") +
+                    "   ·   erkannte Beats: " + controller.musicBeatCount,
+                    color = Color(0xFF67E1C8), fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold)
+                OutlinedButton(onClick = controller::selectMusicCapableTargets,
+                    enabled = !controller.busy && !controller.color4LiveDjRunning,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text("Alle bestätigten Music-/RGB-Lampen auswählen")
+                }
+                Text("Lichtstil", color = Color.White, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Color4LiveStyle.entries.forEach { style ->
+                        FilterChip(
+                            selected = (controller.activeColor4LiveStyle ?: liveDjStyle) == style,
+                            enabled = !controller.color4LiveDjRunning && !controller.busy,
+                            onClick = { liveDjStyle = style },
+                            label = { Text(style.label) }
+                        )
+                    }
+                }
+                Text((controller.activeColor4LiveStyle ?: liveDjStyle).description,
+                    color = Color(0xFF98A6C0), fontSize = 11.sp)
+                if (!audioRunning) {
+                    Button(onClick = {
+                        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED) controller.startMicrophone()
+                        else permission.launch(Manifest.permission.RECORD_AUDIO)
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Mikrofonanalyse starten")
+                    }
+                } else {
+                    Text(if (controller.microphoneRunning) "Mikrofon aktiv"
+                        else "Interne Audioquelle aktiv",
+                        color = Color(0xFF67E1C8), fontSize = 12.sp)
+                }
+                if (controller.color4LiveDjRunning) {
+                    Button(onClick = controller::stopColor4LiveDj,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("Live-DJ STOPPEN")
+                    }
+                } else {
+                    val refusal = controller.liveDjRefusal(liveDjStyle)
+                    Button(onClick = { showLiveDjConfirm = true },
+                        enabled = audioRunning && refusal == null && !controller.busy,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("Live-DJ starten")
+                    }
+                    if (!audioRunning || refusal != null) {
+                        Text(
+                            if (!audioRunning) "Zuerst Mikrofonanalyse oder internes Audio starten."
+                            else refusal ?: "",
+                            color = Color(0xFFFFD38A), fontSize = 12.sp
+                        )
+                        controller.liveDjBlockerDetails()?.let { details ->
+                            Text(details, color = Color(0xFFFFD38A), fontSize = 12.sp)
+                        }
+                    }
+                }
+                if (!controller.color4LiveDjRunning &&
+                    controller.musicHandoffTargets().isNotEmpty()) {
+                    TextButton(onClick = { showMusicHandoffChooser = true },
+                        enabled = !controller.busy,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("Music-Modus blockiert? Sitzung kontrolliert übernehmen")
+                    }
+                }
+                if (controller.pendingMusicReadbackIps().isNotEmpty()) {
+                    Text("Ungeklärte Music-Stopps: nur betroffene Lampen prüfen",
+                        color = Color(0xFFFFD38A), fontSize = 12.sp)
+                    controller.pendingMusicReadbackIps().forEach { ip ->
+                        OutlinedButton(onClick = { controller.verifyMusicEndFor(ip) },
+                            enabled = controller.canReadMusicEnd(ip),
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(controller.musicReadbackLabel(ip) + " · music_on nur lesen")
+                        }
+                    }
+                }
+                Text(controller.minimalProbeReport,
+                    color = Color(0xFF98A6C0), fontSize = 11.sp,
+                    maxLines = 4)
+                TextButton(onClick = { showAudioDetails = !showAudioDetails },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(if (showAudioDetails) "Audioeinstellungen schließen"
+                        else "Audioquelle, Verstärkung und Spektrum")
+                }
+            }
+        }
+        if (showMusicHandoffChooser) {
+            AlertDialog(
+                onDismissRequest = { showMusicHandoffChooser = false },
+                title = { Text("Welche Music-Lampe prüfen?") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Nur ausdrücklich gewählte, bestätigte Music-/RGB-Lampen. " +
+                            "Die Auswahl allein sendet noch keinen Befehl.")
+                        controller.musicHandoffTargets().forEach { device ->
+                            OutlinedButton(
+                                onClick = {
+                                    showMusicHandoffChooser = false
+                                    musicHandoffIp = device.ip
+                                },
+                                enabled = controller.canRequestMusicHandoff(device),
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text(controller.displayName(device) +
+                                if (controller.isLampLanQuarantined(device))
+                                    " · Quota-Sperre" else "") }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showMusicHandoffChooser = false }) {
+                        Text("Schließen")
+                    }
+                }
+            )
+        }
+        musicHandoffIp?.let { ip ->
+            AlertDialog(
+                onDismissRequest = { musicHandoffIp = null },
+                title = { Text("Music-Sitzung bewusst neu übernehmen?") },
+                text = { Text(
+                    controller.musicReadbackLabel(ip) + ": Eine möglicherweise von " +
+                    "Yeelight Classic oder einer anderen App gesteuerte Music-Sitzung " +
+                    "würde unterbrochen. Zuerst wird nur music_on gelesen. Nur bei " +
+                    "bestätigtem music_on=1 folgt genau EIN set_music(0), danach " +
+                    "eine zweite Leseprüfung. Kein erneuter Versuch bei Fehlern, " +
+                    "kein automatischer DJ-Start und keine Quota-Umgehung."
+                ) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        musicHandoffIp = null
+                        controller.requestMusicHandoff(ip)
+                    }) { Text("Sitzung gezielt freigeben") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { musicHandoffIp = null }) {
+                        Text("Abbrechen")
+                    }
+                }
+            )
+        }
+        if (showLiveDjConfirm) {
+            AlertDialog(
+                onDismissRequest = { showLiveDjConfirm = false },
+                title = { Text("Live-DJ ausdrücklich starten?") },
+                text = { Text(
+                    "${controller.selectedCount()} ausgewählte, eingeschaltete Music-/RGB-Lampen. " +
+                    "Stil: ${liveDjStyle.label}. Jede Lampe erhält einen eigenen Music-Rückkanal. " +
+                    "Keine LAN-RGB-Fallbacks, keine parallele Classic-Steuerung. " +
+                    "STOP über die Benachrichtigung. Bei Quota oder ungeklärtem Music-Ende " +
+                    "nicht erneut starten."
+                ) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showLiveDjConfirm = false
+                        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                            PackageManager.PERMISSION_GRANTED) {
+                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else controller.startForegroundColor4LiveDjGroupAware(liveDjStyle)
+                    }) { Text("Starten") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLiveDjConfirm = false }) {
+                        Text("Abbrechen")
+                    }
+                }
+            )
+        }
+        if (showAudioDetails) {
+
         Text(
             "Analysiere erlaubte Wiedergabe anderer Apps direkt im Android-Audiosystem " +
                 "oder nutze das Mikrofon für Lautsprecher und Google Cast.",
@@ -123,10 +311,10 @@ fun MusicScreen(controller: LoftController) {
                 Text("Cast auf einen externen Empfänger oder durch die Quell-App " +
                     "gesperrtes Audio liefern möglicherweise Stille. Dafür Mikrofon nutzen.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
-                Text("Direkte Audioanalyse mit 64-ms-Fenstern. Die App benötigt " +
-                    "aktuell einen lebenden Loft-DJ-Controller für Lampenlicht: " +
-                    "Hintergrundbetrieb nach App-Wechsel oder Prozessende " +
-                    "ist noch nicht dauerhaft abgesichert.",
+                Text("32-ms-Analyseschritte (überlappend), 1024-Sample-FFT. " +
+                    "Ein ausdrücklich gestarteter Live-DJ läuft bei Displaysperre " +
+                    "im Vordergrunddienst; nach Android-Prozessende erfolgt kein " +
+                    "automatischer Neustart.",
                     color = Color(0xFF98A6C0), fontSize = 11.sp)
             }
         }
@@ -327,6 +515,13 @@ fun MusicScreen(controller: LoftController) {
             }
         }
 
+        } // End optional audio source, gain, spectrum settings.
+        TextButton(onClick = { showAdvancedMusicTests = !showAdvancedMusicTests },
+            modifier = Modifier.fillMaxWidth()) {
+            Text(if (showAdvancedMusicTests) "Diagnose und alte Tests schließen"
+                else "Diagnose und frühere Hardwaretests")
+        }
+        if (showAdvancedMusicTests) {
         Surface(color = Color(0xFF1D2232), shape = RoundedCornerShape(22.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -335,11 +530,9 @@ fun MusicScreen(controller: LoftController) {
                     Text("Musikreaktive Lichtsteuerung",
                         color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
-                Text(
-                    "Optional: Jeder erkannte Bassimpuls kann eine räumlich versetzte Farbe " +
-                        "über den ausdrücklich gewählten Zielbereich wandern lassen.",
-                    color = Color(0xFFAAB6CE), fontSize = 12.sp
-                )
+                Text("Alte Einzel-, Tempo- und Zwei-Lampen-Tests bleiben nur " +
+                    "für gezielte Diagnose verfügbar.", color = Color(0xFFAAB6CE),
+                    fontSize = 12.sp)
                 Text("Kompatible Lampen mit bestätigtem set_music erhalten Farbimpulse über " +
                     "den Yeelight-Musikrückkanal (maximal ca. 3 pro Sekunde). " +
                     "Andere Lampen bleiben bei höchstens einem RGB-Befehl je 1,5 Sekunden " +
@@ -347,83 +540,6 @@ fun MusicScreen(controller: LoftController) {
                     "Keine Stroboskop-Effekte.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
                 val probeRefusal = controller.minimalProbeRefusal()
-                val liveDjRefusal = controller.liveDjRefusal(liveDjStyle)
-                var showMinimalProbeConfirm by remember { mutableStateOf(false) }
-                var showTempoProbeConfirm by remember { mutableStateOf(false) }
-                var showLiveDjConfirm by remember { mutableStateOf(false) }
-
-                Text("Color4 Live-DJ · 1–4 Music-Rückkanäle",
-                    color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text("Lichtstil vor dem Start wählen",
-                    color = Color(0xFFAAB6CE), fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Color4LiveStyle.entries.forEach { style ->
-                        FilterChip(
-                            selected = (controller.activeColor4LiveStyle ?: liveDjStyle) == style,
-                            enabled = !controller.color4LiveDjRunning && !controller.busy,
-                            onClick = { liveDjStyle = style },
-                            label = { Text(style.label) }
-                        )
-                    }
-                }
-                Text((controller.activeColor4LiveStyle ?: liveDjStyle).description,
-                    color = Color(0xFF98A6C0), fontSize = 11.sp)
-                if (controller.color4LiveDjRunning) {
-                    Button(
-                        onClick = controller::stopColor4LiveDj,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Live-DJ STOPPEN · Music-Modus sicher beenden") }
-                } else {
-                    Button(
-                        onClick = { showLiveDjConfirm = true },
-                        enabled = audioRunning && liveDjRefusal == null && !controller.busy,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Live-DJ auf ausgewählten Color4 starten") }
-                }
-                Text(
-                    (liveDjRefusal ?: "Keine Zeitgrenze: eine bis vier bestätigte Color4 " +
-                        "mit eigenen Music-Rückkanälen und gemeinsamem Beat. " +
-                        "Läuft auch bei Displaysperre über den Vordergrunddienst. " +
-                        "Nur echte Beat-Ereignisse, " +
-                        "gemessene Akzente und gekennzeichnete BPM-Zwischentakte " +
-                        "über individuell bestätigte Music-Sockets, niemals normales LAN-RGB."),
-                    color = Color(0xFFAAB6CE), fontSize = 11.sp
-                )
-                if (showLiveDjConfirm) {
-                    AlertDialog(
-                        onDismissRequest = { showLiveDjConfirm = false },
-                        title = { Text("Ausgewählte Color4 im Live-DJ starten?") },
-                        text = { Text(
-                            "Lichtstil: ${liveDjStyle.label}. " +
-                                "Dynamisch nutzt erstmals sanfte Music-Übergänge und Helligkeit " +
-                                "(noch separat am Gerät zu prüfen). " +
-                                "Neue Funktion, noch nicht als Langzeitshow auf dieser Firmware " +
-                                "abgenommen. Nur 1–4 intakte, bereits eingeschaltete Color4 " +
-                                "mit bestätigtem Music-Modus; keine parallele Classic-Steuerung. " +
-                                "Jede Lampe erhält einen eigenen set_music-Rückkanal. " +
-                                "Stoppen hier oder (wenn erlaubt) über die Benachrichtigung. " +
-                                "Bei Quota/ungeklärtem music_on kein Neustart. " +
-                                "Vorherige Farben werden nicht automatisch zurückgesetzt."
-                        ) },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                showLiveDjConfirm = false
-                                if (android.os.Build.VERSION.SDK_INT >= 33 &&
-                                    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-                                    PackageManager.PERMISSION_GRANTED) {
-                                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    controller.startForegroundColor4LiveDjGroupAware(liveDjStyle)
-                                }
-                            }) { Text("Live-DJ ausdrücklich starten") }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { showLiveDjConfirm = false }) {
-                                Text("Abbrechen")
-                            }
-                        }
-                    )
-                }
                 OutlinedButton(
                     onClick = { showMinimalProbeConfirm = true },
                     enabled = audioRunning && probeRefusal == null &&
@@ -706,6 +822,7 @@ fun MusicScreen(controller: LoftController) {
                 }
             )
         }
+        } // End hidden diagnostic/legacy acceptance controls.
         Surface(color = Color(0xFF24283B), shape = RoundedCornerShape(18.dp)) {
             Text(
                 "Internes Audio: Android AudioPlaybackCapture mit ausdrücklicher Zustimmung. " +
