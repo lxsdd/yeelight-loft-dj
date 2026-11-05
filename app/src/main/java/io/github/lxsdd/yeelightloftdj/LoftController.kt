@@ -2837,6 +2837,72 @@ class LoftController(context: Context) {
         }
     }
 
+    /**
+     * Explicit owner recovery for an OLD stuck guard, e.g. after a lost
+     * Android process or a Color4 that omits music_on from get_prop.
+     *
+     * The UI requires a specific confirmation of mains disconnection since
+     * the failed session. We then use only ONE focused, quota-accounted
+     * get_prop. A valid power reply is NOT firmware proof of music_on=0:
+     * the resulting one-use permit is consumed *before* set_music(1).
+     * No set_music(0), scene writes or LAN RGB are sent here.
+     */
+    fun recoverMusicAfterPhysicalPowerCycle(ip: String) {
+        val device=devices.firstOrNull { it.ip == ip }
+        if (device == null || !YeelightLan.supportsMusicMode(device) ||
+            !canReadMusicEnd(ip)) {
+            status="Stromtrennungs-Freigabe verweigert: die Music-Lampe ist " +
+                "nicht eindeutig bekannt oder die Steuerung ist noch belegt."
+            return
+        }
+        val now=SystemClock.elapsedRealtime()
+        val last=lastRecoveryReadAt[ip]
+        if (last != null && now - last in 0 until 10_000L) {
+            status="Bitte frühestens nach zehn Sekunden erneut prüfen."
+            return
+        }
+        lastRecoveryReadAt[ip]=now
+        task("Prüfe bestätigte Stromtrennung für " + displayName(device) + " …") {
+            val observed=withContext(Dispatchers.IO) {
+                YeelightLan.readMusicEndStatus(device)
+            }
+            val safe=ip in minimalProbeUnconfirmed &&
+                !YeelightLan.isLanQuarantined(device) &&
+                !YeelightLan.musicChannelExists(device) &&
+                !color4LiveDjRunning && !musicLightArmed &&
+                !scannerRunning && !musicSending && !musicStopPending
+            val decision=MusicEndRecoveryPolicy.afterPhysicalPowerCycle(
+                observed, userConfirmedMainsDisconnection=true,
+                safeLocalDevice=safe && YeelightLan.isLocalIp(ip)
+            )
+            check(decision != MusicEndRelease.UNRESOLVED) {
+                if (observed.musicOn == true)
+                    "Firmware meldet music_on=1. Keine Freigabe; fremde Sitzung " +
+                        "oder nicht zurückgesetzte Color4 möglich."
+                else "Die Color4 antwortet noch nicht mit gültigem power/music_on. " +
+                    "Schutz bleibt bestehen; keine Steuerbefehle gesendet."
+            }
+            val pending=minimalProbeUnconfirmed - ip
+            val permits=if (decision == MusicEndRelease.OWNER_POWER_CYCLE)
+                musicUnknownPermitIps + ip else musicUnknownPermitIps - ip
+            check(prefs.edit()
+                .putStringSet(minimalProbePreferenceKey,pending)
+                .putStringSet(musicUnknownPermitPreferenceKey,permits)
+                .commit()) {
+                "Lokaler Sicherheitsstatus nicht gespeichert; Sperre bleibt bestehen."
+            }
+            minimalProbeUnconfirmed=pending
+            musicUnknownPermitIps=permits
+            if (decision == MusicEndRelease.OWNER_POWER_CYCLE)
+                displayName(device) + ": lokaler Music-Schutz nach bestätigter " +
+                    "Stromtrennung und gültiger Gerätestatusantwort freigegeben. " +
+                    "Firmware meldet music_on weiterhin nicht: genau EIN bewusster " +
+                    "neuer Music-Start wird zugelassen, danach normale Schutzprüfung."
+            else displayName(device) +
+                ": music_on=0 bestätigt. Nur dieser Music-Schutz wurde freigegeben."
+        }
+    }
+
     /** Visible, explicitly chosen handoff targets: no scans, no writes. */
     fun musicHandoffTargets(): List<YeelightDevice> =
         selected().distinctBy { it.ip }.filter(YeelightLan::supportsMusicMode)
