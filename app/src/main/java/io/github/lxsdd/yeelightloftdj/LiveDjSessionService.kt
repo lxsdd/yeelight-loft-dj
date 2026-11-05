@@ -77,10 +77,10 @@ class LiveDjSessionService : Service() {
         runCatching { wifiLock?.let { if (it.isHeld) it.release() } }
         wifiLock = null
         LoftControllerStore.current()?.let {
-            if (it.color4LiveDjRunning) {
-                it.stopColor4LiveDj()
-                it.stopMicrophone()
-            }
+            if (it.color4LiveDjRunning) it.stopColor4LiveDj()
+            // A microphone can never outlive the service after screen-lock.
+            if (it.microphoneRunning) it.stopMicrophone()
+            if (InternalAudioBridge.running) it.stopInternalAudio()
         }
         LoftControllerStore.serviceFinished()
         super.onDestroy()
@@ -106,6 +106,12 @@ class LiveDjSessionService : Service() {
             }
         }
         fun finish(context: Context) {
+            // Every explicit stop/error closes the microphone and internal
+            // capture before withdrawing Android foreground ownership.
+            LoftControllerStore.current()?.let {
+                it.stopMicrophone()
+                if (InternalAudioBridge.running) it.stopInternalAudio()
+            }
             requested = false
             context.stopService(Intent(context,LiveDjSessionService::class.java))
         }

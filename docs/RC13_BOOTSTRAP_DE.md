@@ -20,3 +20,7 @@ Quelle: RC12 c6eb038ddf7ef226db237c15939c16c247a3b273, hardwareseitig mehrminüt
 - Die bisherige einzelne Color4-Funktion und die begrenzten Referenztests bleiben erhalten.
 
 Dies ist ein RC13-Quellkandidat: erst SHA-genaue CI, dann ausdrücklich manuell signierte APK und anschließend echte kontrollierte Mehrlampen-/Standby-Abnahme; kein Merge, kein Release. Die eigentliche Integration in Yeelight Classic ist davon getrennt (Modifikation der Classic-App selbst, kein bloßer App-Wechsel).
+
+## Stopp- und Benachrichtigungs-Härtung
+
+Auf Android 13+ wird beim ausdrücklichen Live-DJ-Start die optionale Benachrichtigungsberechtigung angefragt, damit der Stopp-Knopf sichtbar sein kann. Auch bei Ablehnung bleibt die App-Stoppfunktion verfügbar; Android regelt den laufenden Vordergrunddienst weiterhin. Bei jedem regulären Musikende, Fehler oder Dienst-Ende werden Mikrofon und gegebenenfalls interne Audioaufnahme beendet, **bevor** der Vordergrunddienst freigegeben wird. Dadurch wird kein Mikrofon ohne aktiv überwachte Sitzung im gesperrten Zustand weiterbetrieben.

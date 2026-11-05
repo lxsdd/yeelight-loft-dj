@@ -50,6 +50,14 @@ fun MusicScreen(controller: LoftController) {
         if (granted) controller.startMicrophone()
         else controller.report("Mikrofonberechtigung nicht erteilt · keine Audioaufnahme")
     }
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        // A denied notification is not permission to do hidden capture.
+        // The service stays visible to Android's active-app manager and the
+        // in-app STOP remains available; no automatic background start.
+        controller.startForegroundColor4LiveDjGroupAware()
+    }
     val projection = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -375,14 +383,20 @@ fun MusicScreen(controller: LoftController) {
                                 "abgenommen. Nur 1–4 intakte, bereits eingeschaltete Color4 " +
                                 "mit bestätigtem Music-Modus; keine parallele Classic-Steuerung. " +
                                 "Jede Lampe erhält einen eigenen set_music-Rückkanal. " +
-                                "Stoppen hier oder über die Android-Benachrichtigung. " +
+                                "Stoppen hier oder (wenn erlaubt) über die Benachrichtigung. " +
                                 "Bei Quota/ungeklärtem music_on kein Neustart. " +
                                 "Vorherige Farben werden nicht automatisch zurückgesetzt."
                         ) },
                         confirmButton = {
                             TextButton(onClick = {
                                 showLiveDjConfirm = false
-                                controller.startForegroundColor4LiveDjGroupAware()
+                                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                                    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                                    PackageManager.PERMISSION_GRANTED) {
+                                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    controller.startForegroundColor4LiveDjGroupAware()
+                                }
                             }) { Text("Live-DJ ausdrücklich starten") }
                         },
                         dismissButton = {
