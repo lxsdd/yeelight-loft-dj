@@ -79,7 +79,7 @@ jobs:
             echo "::error::Unexpected APK signing certificate; artifact blocked"
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ success() && github.event_name == 'workflow_dispatch' && github.actor == 'lxsdd' && github.ref == 'refs/heads/main' }}
         with:
           name: yeelight-loft-dj-stable-signed
