@@ -1,0 +1,41 @@
+# Public-only preflight. No vault token, proprietary files, signing, or uploads.
+name: Classic source-only CI
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/classic-*.yml'
+      - 'classic_source/**'
+      - 'github_hosted/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: classic-source-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout public source only
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Python runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Parse workflow sources
+        run: python3 -m pip install 'PyYAML==6.0.3'
+      - name: Verify public/private source boundary
+        run: python3 github_hosted/check_public_boundary.py
+      - name: Run synthetic-only Classic tests (no original APK)
+        env:
+          CLASSIC_ORIGINAL_APK: ''
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s github_hosted/tests -q
+          (cd classic_source && python3 -m unittest discover -s tests -q)
+          (cd classic_source/checkpoint && python3 -m unittest discover -s tests -q)
+          bash -n github_hosted/vault.sh
+      # There is deliberately no upload-artifact, release, cache or APK build.

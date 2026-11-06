@@ -1,0 +1,104 @@
+"""Host-only Java type smoke using tiny test stubs. NOT a real Android SDK or DEX build."""
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parent.parent
+STUBS = {
+'android/Manifest.java': '''package android; public class Manifest { public static class permission { public static final String RECORD_AUDIO="android.permission.RECORD_AUDIO"; } }''',
+'android/R.java': '''package android; public final class R { public static class drawable { public static final int ic_media_play=1, ic_media_pause=2; }}''',
+'android/content/Context.java': '''package android.content; public class Context {
+  public void startActivity(Intent i) {} public void startService(Intent i){} public void startForegroundService(Intent i){}
+  public <T> T getSystemService(Class<T> serviceClass){return null;} public int checkSelfPermission(String p){return 0;}
+}''',
+'android/content/Intent.java': '''package android.content; public class Intent {
+ public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4;
+ public Intent(Context c, Class<?> k){} public Intent addFlags(int f){return this;}
+ public Intent setAction(String a){return this;} public String getAction(){return "";}
+}''',
+'android/content/pm/PackageManager.java': '''package android.content.pm; public class PackageManager { public static final int PERMISSION_GRANTED=0; }''',
+'android/app/Activity.java': '''package android.app; public class Activity extends android.content.Context {
+ protected void onCreate(android.os.Bundle b){} protected void onResume(){} protected void onPause(){} public void setContentView(android.view.View v){}
+ public void requestPermissions(String[] p,int r){} public void onRequestPermissionsResult(int code,String[] p,int[] results){}
+}''',
+'android/app/Service.java': '''package android.app; public class Service extends android.content.Context {
+ public static final int START_NOT_STICKY=2;
+ public android.os.IBinder onBind(android.content.Intent i){return null;}
+ public int onStartCommand(android.content.Intent i,int f,int s){return 0;}
+ public void onDestroy(){} public void stopSelf(){} public void startForeground(int id,Notification n){}
+ public void stopForeground(boolean remove){}
+}''',
+'android/app/PendingIntent.java': '''package android.app; public class PendingIntent {
+ public static final int FLAG_UPDATE_CURRENT=1, FLAG_IMMUTABLE=2;
+ public static PendingIntent getActivity(android.content.Context c,int i,android.content.Intent a,int f){return null;}
+ public static PendingIntent getService(android.content.Context c,int i,android.content.Intent a,int f){return null;}
+}''',
+'android/app/Notification.java': '''package android.app; public class Notification {
+ public static class Builder {
+ public Builder(android.content.Context c){} public Builder(android.content.Context c,String channel){}
+ public Builder setContentTitle(CharSequence x){return this;} public Builder setContentText(CharSequence x){return this;}
+ public Builder setSmallIcon(int x){return this;} public Builder setContentIntent(PendingIntent x){return this;}
+ public Builder setOngoing(boolean x){return this;}
+ public Builder addAction(int icon,CharSequence text,PendingIntent intent){return this;}
+ public Notification build(){return new Notification();}
+ }}''',
+'android/app/NotificationChannel.java': '''package android.app; public class NotificationChannel {
+ public NotificationChannel(String i,CharSequence name,int importance){}
+}''',
+'android/app/NotificationManager.java': '''package android.app; public class NotificationManager {
+ public static final int IMPORTANCE_LOW=2;
+ public void createNotificationChannel(NotificationChannel c){}
+}''',
+'android/os/Build.java': '''package android.os; public class Build {public static class VERSION {public static int SDK_INT=35;}}''',
+'android/os/Bundle.java': '''package android.os; public class Bundle {}''',
+'android/os/Looper.java': '''package android.os; public class Looper { public static Looper getMainLooper(){return null;} }''',
+'android/os/Handler.java': '''package android.os; public class Handler { public Handler(Looper l){} public void post(Runnable r){} public void postDelayed(Runnable r,long t){} public void removeCallbacks(Runnable r){} }''',
+'android/os/IBinder.java': '''package android.os; public interface IBinder {}''',
+'android/util/AttributeSet.java': '''package android.util; public interface AttributeSet {}''',
+'android/util/Log.java': '''package android.util; public class Log {
+ public static int w(String a,String b){return 0;} public static int i(String a,String b){return 0;}
+ public static int e(String a,String b,Throwable c){return 0;}
+ }''',
+'android/view/View.java': '''package android.view; public class View {
+ private final android.content.Context c; public View(android.content.Context c){this.c=c;}
+ public void setContentDescription(CharSequence a){} public void setOnClickListener(OnClickListener x){}
+ public android.content.Context getContext(){return c;}
+ public interface OnClickListener {void onClick(View v);} }''',
+'android/view/Gravity.java': '''package android.view; public class Gravity {public static final int TOP=48;}''',
+'android/widget/TextView.java': '''package android.widget; public class TextView extends android.view.View {
+ public TextView(android.content.Context c){super(c);} public TextView(android.content.Context c,android.util.AttributeSet a){super(c);}
+ public void setText(CharSequence c){} public void setTextSize(float s){}
+}''',
+'android/widget/Button.java': '''package android.widget; public class Button extends TextView {
+ public Button(android.content.Context c){super(c);} public Button(android.content.Context c,android.util.AttributeSet attrs){super(c,attrs);}
+ public void setAllCaps(boolean b){}
+}''',
+'android/widget/LinearLayout.java': '''package android.widget; public class LinearLayout extends android.view.View {
+ public static final int VERTICAL=1; public LinearLayout(android.content.Context c){super(c);}
+ public void setOrientation(int v){} public void setPadding(int a,int b,int c,int d){}
+ public void setGravity(int g){} public void addView(android.view.View v){}
+}''',
+}
+
+class BridgeCompileTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('javac'), 'javac not present')
+    def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            paths = []
+            for file, data in STUBS.items():
+                p = root / file
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(data)
+                paths.append(p)
+            sources = list((ROOT/'bridge/src').rglob('*.java'))
+            self.assertGreaterEqual(len(sources), 4)
+            result = subprocess.run(['javac', '-source', '8', '-target', '8', '-Xlint:all', '-d', str(root/'classes'), *(str(p) for p in paths+sources)], text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            klass = root/'classes/io/github/lxsdd/yeelightclassicdj/ui/ClassicDjService.class'
+            self.assertTrue(klass.exists())
+
+if __name__ == '__main__':
+    unittest.main()
