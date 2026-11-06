@@ -1,0 +1,98 @@
+# SAFE-TO-STAGE PUBLIC WORKFLOW: no owner secrets ever on PR/push.
+# This workflow MUST be reviewed on protected main and classic-private-build environment
+# MUST require the owner's approval, and restrict deployment branches to main.
+# It creates NO public artifact, cache of private files, signing or public release.
+name: Classic protected GitHub-hosted assembly
+run-name: Classic private structural preflight ${{ github.sha }}
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: yeelight-classic-private-assembly
+  cancel-in-progress: false
+jobs:
+  guarded-private-build:
+    if: ${{ github.actor == 'lxsdd' && github.ref == 'refs/heads/main' && github.repository == 'lxsdd/yeelight-loft-dj' && github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: classic-private-build
+      deployment: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout protected public source only
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Confirm controlled manual owner context
+        run: python3 github_hosted/policy.py
+      - name: Setup Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android SDK 36
+        uses: android-actions/setup-android@v4
+      - name: Setup pinned Gradle, no persistent private build cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.8.2'
+          cache-disabled: true
+      - name: Public source-only tests
+        run: |
+          set -euo pipefail
+          (cd classic_source && python3 -m unittest discover -s tests -q)
+          (cd classic_source/checkpoint && python3 -m unittest discover -s tests -q)
+          python3 -m unittest discover -s github_hosted/tests -q
+      - name: Pin Android build tools and Apktool
+        run: |
+          set -euo pipefail
+          umask 077
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' >/dev/null
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -f "$ANDROID_HOME/build-tools/36.0.0/d8"
+          mkdir -p "$RUNNER_TEMP/classic-tools"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 2 \
+            'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar' \
+            -o "$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar"
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  '"$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar" | sha256sum --check --status
+      - name: Download exact original privately from controlled vault
+        env:
+          GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/private-original"
+          bash github_hosted/vault.sh fetch "$RUNNER_TEMP/private-original" classic-original-3.5.4-v1
+      - name: Build and verify private unsigned APK; zero vault credentials
+        env:
+          CLASSIC_APKTOOL_JAR: ${{ runner.temp }}/classic-tools/apktool_3.0.3.jar
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/private-output"
+          python3 classic_source/build_private_unsigned.py \
+            --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+            --android-sdk "$ANDROID_HOME" \
+            --output "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk" \
+            > "$RUNNER_TEMP/private-output/build-result.log" 2>&1 || {
+              echo 'PRIVATE_CLASSIC_BUILD_BLOCKED_REVIEW_INTERNAL_LOG_ON_RUNNER_ONLY' >&2
+              exit 2
+            }
+          test -s "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk"
+          test -s "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk.preflight.json"
+      - name: Send unsigned output to PRIVATE draft Release only
+        env:
+          GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}
+        run: |
+          set -euo pipefail
+          bash github_hosted/vault.sh publish "$RUNNER_TEMP/private-output" \
+            "classic-unsigned-run-${GITHUB_RUN_ID}-${GITHUB_SHA:0:12}"
+      - name: Remove temporary private inputs and output
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf -- "$RUNNER_TEMP/private-original" "$RUNNER_TEMP/private-output" "$RUNNER_TEMP/classic-tools"

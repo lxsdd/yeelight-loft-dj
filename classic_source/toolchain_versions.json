@@ -1,0 +1,50 @@
+{
+  "as_of": "2026-11-06",
+  "source": {
+    "repo": "lxsdd/yeelight-loft-dj",
+    "rc17_head": "93a58be2c530f9faa7b74688692a4796b2a6dd71",
+    "base_files": {
+      "build.gradle.kts": "553a5c018e76008a1e87dd4b676645e11eb3d109",
+      "app/build.gradle.kts": "26b66cbb89f1b793aac656af4f3a0df22f493904",
+      ".github/workflows/android.yml": "6d69b4e2106ae2cfe2976cdbb9fc611e78aa5617"
+    }
+  },
+  "previous": {
+    "gradle": "8.13",
+    "agp": "8.13.2",
+    "kotlin": "2.2.20",
+    "checkout_action": "v4",
+    "java_action": "v4",
+    "upload_artifact_action": "v4",
+    "download_artifact_action": "v4"
+  },
+  "proposed": {
+    "gradle": "9.8.2",
+    "gradle_distribution_bin_sha256": "21bd5da2de49b642904077f38c0efdc7778e92b3ed0889392dca61b97e389607",
+    "agp": "9.5.1",
+    "kotlin": "2.4.21",
+    "checkout_action": "v7",
+    "java_action": "v6",
+    "android_action": "v4",
+    "gradle_action": "v6",
+    "apktool": "3.0.3",
+    "apktool_jar_sha256": "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423",
+    "compile_sdk": 36,
+    "build_tools": "36.0.0",
+    "java": 17,
+    "upload_artifact_action": "v7",
+    "download_artifact_action": "v8"
+  },
+  "qualification": "SOURCE_ONLY_NOT_ANDROID_OR_TRUSTED_RELEASE_ARTIFACT_CI",
+  "upstream": [
+    "https://docs.gradle.org/current/release-notes.html",
+    "https://gradle.org/release-checksums/",
+    "https://developer.android.com/reference/tools/gradle-api",
+    "https://developer.android.com/build/releases/agp-9-5-0-release-notes",
+    "https://developer.android.com/build/migrate-to-built-in-kotlin",
+    "https://kotlinlang.org/docs/releases.html",
+    "https://github.com/actions/checkout/releases",
+    "https://github.com/actions/setup-java",
+    "https://docs.gradle.org/current/userguide/github-actions.html"
+  ]
+}

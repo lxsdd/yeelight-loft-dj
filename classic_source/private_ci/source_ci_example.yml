@@ -1,0 +1,43 @@
+# SOURCE-ONLY example for a SEPARATE PRIVATE repository. Not installed on the
+# existing public Loft-DJ repository; not an executable approval to publish.
+name: Classic private source-only Android compilation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile-private-bridge:
+    if: ${{ github.event.repository.private == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.8.2'
+      - name: Reuse Android SDK 36 from Loft DJ
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -f "$ANDROID_HOME/build-tools/36.0.0/d8"
+      - name: Source-only Python regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -q
+          (cd checkpoint && python3 -m unittest discover -s tests -q)
+      - name: Compile source-only DJ Bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --project-dir private_gradle_bridge stageBridgeInputs
+          test -s private_gradle_bridge/build/dex-input/classic-bridge.jar
+      # Deliberately NO OEM APK download, no DEX clone, no signing, no upload,
+      # no artifacts, no application deployment, no release and no device I/O.
