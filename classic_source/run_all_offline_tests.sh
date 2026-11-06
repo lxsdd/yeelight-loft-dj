@@ -28,10 +28,10 @@ kotlinc -jvm-target 1.8 -cp "$WORK/classes" \
  "$ROOT"/checkpoint/tests/android-stubs/android/os/SystemClock.kt \
  "$ROOT/bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.kt" \
  -include-runtime -d "$WORK/classic-regressions.jar"
-for test in CoordinatorTest BeatAnalyzerTest DjEngineTest PcmBandsTest CaptureSessionTest AndroidAudioRecordInputTest; do
+for test in CoordinatorTest BeatAnalyzerTest DjEngineTest PcmBandsTest CaptureSessionTest AndroidAudioRecordInputTest YeelightReverseMusicTransportTest; do
   java -cp "$WORK/classic-regressions.jar:$WORK/classes" "loftdj.classic.${test}Kt"
 done
 java -cp "$WORK/classic-regressions.jar:$WORK/classes" \
   io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt
-printf 'SUCCESS: Python integration/toolchain + checkpoint regression suites, 7 Kotlin/JVM test mains, original APK statically audited.\n'
+printf 'SUCCESS: Python integration/toolchain + checkpoint regression suites, 8 Kotlin/JVM test mains, original APK statically audited.\n'
 printf 'NO Android SDK/DEX/apktool, hardware, cloud, account, signing or installation acceptance from this test.\n'

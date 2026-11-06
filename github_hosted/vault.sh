@@ -43,36 +43,31 @@ assert d['signed'] is False and d['installed'] is False
 assert d['apk_sha256']==actual
 PY
   # Draft release assets live in a PRIVATE repository, not in public Actions artifacts.
+  # The GitHub REST by-tag endpoint returns 404 for DRAFT releases.
+  # Authenticated release listing includes drafts; paginate and slurp all pages.
+  # Re-running the same workflow run may encounter an already uploaded draft:
+  # verify exact private bytes instead of creating duplicates or overwriting.
+  readonly release_json="$RUNNER_TEMP/classic-private-release-verify-${GITHUB_RUN_ID}.json"
+  [[ ! -e "$release_json" ]] || fail
+  trap 'rm -f -- "$release_json"' EXIT
+  receipt_check() {
+    gh api "repos/$VAULT/releases?per_page=100" --paginate --slurp > "$release_json" 2>/dev/null || return 2
+    python3 github_hosted/release_receipt.py "$release_json" "$OUT" "$REPORT" "$RELEASE_TAG" "$GITHUB_SHA"
+  }
+  if receipt_check; then
+    echo 'PRIVATE_DRAFT_RELEASE_VERIFIED_NO_PUBLIC_APK_ARTIFACT'
+    exit 0
+  else
+    receipt_status=$?
+    [[ "$receipt_status" == 3 ]] || fail
+  fi
+  # Tag is genuinely absent in the authenticated PRIVATE listing.
   gh release create "$RELEASE_TAG" "$OUT" "$REPORT" -R "$VAULT" --target main --draft --latest=false \
     --title "Private Classic unsigned structural build ${GITHUB_RUN_ID}" \
     --notes "Source SHA: ${GITHUB_SHA}. UNSIGNED. Structural preflight only; NOT installed or hardware approved." \
     >/dev/null 2>&1 || fail
-  # A successful gh exit code is not an independently verified private output.
-  # Read back the exact tag and asset digest while access is still constrained.
   assert_private_vault
-  readonly release_json="$RUNNER_TEMP/classic-private-release-verify-${GITHUB_RUN_ID}.json"
-  [[ ! -e "$release_json" ]] || fail
-  gh api "repos/$VAULT/releases/tags/$RELEASE_TAG" > "$release_json" 2>/dev/null || fail
-  python3 - "$release_json" "$OUT" "$REPORT" "$RELEASE_TAG" <<'PYVERIFY' || fail
-import hashlib, json, pathlib, sys
-try:
-    data = json.loads(pathlib.Path(sys.argv[1]).read_text('utf-8'))
-    assert data.get('tag_name') == sys.argv[4]
-    assert data.get('draft') is True
-    assets = data.get('assets')
-    assert isinstance(assets, list) and len(assets) == 2
-    expected = {pathlib.Path(p).name: pathlib.Path(p) for p in sys.argv[2:4]}
-    assert set(a.get('name') for a in assets) == set(expected)
-    for a in assets:
-        path = expected[a['name']]
-        digest = 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()
-        assert a.get('state') == 'uploaded'
-        assert a.get('size') == path.stat().st_size
-        assert a.get('digest') == digest
-except (AssertionError, KeyError, TypeError, ValueError, OSError):
-    sys.exit(2)
-PYVERIFY
-  rm -f -- "$release_json"
+  receipt_check || fail
   echo 'PRIVATE_DRAFT_RELEASE_VERIFIED_NO_PUBLIC_APK_ARTIFACT'
 else
   fail
