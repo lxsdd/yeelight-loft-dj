@@ -111,7 +111,10 @@ class InternalAudioCaptureService : Service() {
 
     private suspend fun capture(media: MediaProjection) = withContext(Dispatchers.IO) {
         val rate = 16000
-        val size = 2048
+        // 1,024 PCM samples at 16 kHz = 64 ms per analysis window.
+        // This decreases frame acquisition time without increasing the
+        // guarded reverse-channel or ordinary LAN command rate.
+        val size = 1024
         val config = AudioPlaybackCaptureConfiguration.Builder(media)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)

@@ -26,6 +26,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -64,10 +65,15 @@ private val lavender = Color(0xFFC3ACFF)
 private val muted = Color(0xFF9AA5BE)
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val ACTION_OPEN_MUSIC = "io.github.lxsdd.yeelightloftdj.OPEN_MUSIC"
+    }
     private lateinit var controller: LoftController
+    private var notificationMusicRequest by mutableIntStateOf(0)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        controller = LoftController(applicationContext)
+        controller = LoftControllerStore.attach(applicationContext)
+        if (intent?.action == ACTION_OPEN_MUSIC) notificationMusicRequest++
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(
                 primary = lavender,
@@ -75,28 +81,42 @@ class MainActivity : ComponentActivity() {
                 background = night,
                 surface = panel,
                 onBackground = Color.White,
-            )) { LoftApp(controller) }
+            )) { LoftApp(controller, notificationMusicRequest) }
         }
+    }
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_OPEN_MUSIC) notificationMusicRequest++
     }
     override fun onStop() {
         controller.requestStopScanner()
-        controller.stopMicrophone()
-        // Do not monopolize the device's four TCP slots when Yeelight/Home
-        // apps may need control. Active scanner cleanup owns its sockets.
-        if (!controller.scannerRunning) YeelightLan.releaseTcpConnections()
+        // Screen lock invokes onStop; an expressly started Live-DJ service
+        // keeps this controller and its Music socket alive.
+        if (!LiveDjSessionService.isHolding()) {
+            controller.stopMicrophone()
+            if (!controller.scannerRunning) YeelightLan.releaseTcpConnections()
+        }
         super.onStop()
     }
     override fun onDestroy() {
-        controller.close()
+        LoftControllerStore.detach(controller)
         super.onDestroy()
     }
 }
 
 @Composable
-private fun LoftApp(controller: LoftController) {
-    var page by remember { mutableIntStateOf(0) }
+private fun LoftApp(controller: LoftController, notificationMusicRequest: Int = 0) {
+    var page by rememberSaveable { mutableIntStateOf(if (notificationMusicRequest > 0) 3 else 0) }
     var detailRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var parentRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(notificationMusicRequest) {
+        if (notificationMusicRequest > 0) {
+            detailRoute = null
+            parentRoute = null
+            page = 3
+        }
+    }
     // Route-local editor controls must survive navigating to the target picker.
     val routeState = rememberSaveableStateHolder()
     val goBack: () -> Unit = {
@@ -166,21 +186,45 @@ private fun LoftApp(controller: LoftController) {
             }
             if (detailRoute != null) {
                 item(key = "detail-back") {
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        OutlinedButton(onClick = goBack) { Text("← Zurück") }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Compact Material navigation, not a prominent
+                        // outlined "← Zurück" action on every detail page.
+                        // Android's system back gesture continues using goBack.
+                        IconButton(
+                            onClick = goBack,
+                            modifier = Modifier.size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(panel)
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Zurück zur vorherigen Ansicht",
+                                tint = lavender,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                         Text(
                             when (detailRoute) {
                                 "chase" -> "Lichtlauf-Studio"
                                 "scanner" -> "Knight-Rider-Scanner"
                                 "transfer" -> "Szenenbibliothek"
+                                "google-home" -> "Google Home Export"
                                 "target" -> "Lampen auswählen"
                                 "groups" -> "Gruppen verwalten"
                                 "rooms" -> "Räume verwalten"
                                 "network" -> "Geräte & Netzwerk prüfen"
                                 else -> "Lampendetails"
                             },
-                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                            modifier = Modifier.weight(1f),
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -223,8 +267,16 @@ private fun LoftApp(controller: LoftController) {
                     "network" -> item(key = "network-diagnostics") {
                         DeviceTools(controller, initiallyExpanded = true)
                     }
-                    "transfer" -> item(key = "scene-import-export") {
-                        SceneExchangePanel(controller)
+                    "transfer" -> {
+                        item(key = "scene-import-export") {
+                            SceneExchangePanel(controller)
+                        }
+                        item(key = "portable-configuration") {
+                            PortableConfigPanel(controller)
+                        }
+                    }
+                    "google-home" -> item(key = "google-home-export") {
+                        GoogleHomeExportPanel(controller)
                     }
                     else -> {
                         val id = detailRoute?.removePrefix("device:")
@@ -268,6 +320,12 @@ private fun LoftApp(controller: LoftController) {
                             onScanner = { detailRoute = "scanner" },
                             onTransfer = { detailRoute = "transfer" },
                         )
+                    }
+                    item(key = "google-home-entry") {
+                        FilledTonalButton(
+                            onClick = { detailRoute = "google-home" },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Google Home · Szenen übertragen") }
                     }
                     item(key = "scene-lamp-report") { SceneLampReport(controller) }
                     if (!controller.recoveryPending) item { StopButton(controller) }
@@ -596,8 +654,9 @@ private fun RecoveryBanner(controller: LoftController) {
                         ". Dies entfernt ausschließlich den lokalen " +
                         "Lichtshow-/Wiederherstellungseintrag dieser Lampe. " +
                         "Es sendet KEINEN Stoppbefehl. Ein eventuell laufender " +
-                        "Lichtlauf wird dadurch nicht beendet. Der frühere Lichtzustand " +
-                        "kann anschließend nicht mehr automatisch wiederhergestellt werden.")
+                        "Lichtlauf oder Musikmodus wird dadurch nicht beendet. " +
+                        "Der frühere Lichtzustand kann anschließend nicht mehr " +
+                        "automatisch wiederhergestellt werden.")
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = acceptsRunningFlow,
                             onCheckedChange = { acceptsRunningFlow = it })
@@ -636,11 +695,24 @@ private fun RecoveryBanner(controller: LoftController) {
 @Composable
 private fun Status(controller: LoftController) {
     Surface(shape = RoundedCornerShape(17.dp), color = Color(0xFF252A3A)) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (controller.busy) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Rounded.Lightbulb, null, tint = Color(0xFF7EDBC7), modifier = Modifier.size(19.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(controller.status, color = Color.White, fontSize = 13.sp, maxLines = 3)
+        Column(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (controller.busy) CircularProgressIndicator(
+                    Modifier.size(17.dp), strokeWidth = 2.dp)
+                else Icon(Icons.Rounded.Lightbulb, null, tint = Color(0xFF7EDBC7),
+                    modifier = Modifier.size(19.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(controller.status, color = Color.White, fontSize = 13.sp, maxLines = 3)
+            }
+            val warning = FirmwareQuotaUiPolicy.quarantinedSummary(
+                controller.quarantinedLampLabels()
+            )
+            if (warning.isNotBlank()) {
+                Text(warning, color = Color(0xFFFFD38A), fontSize = 11.sp)
+            }
         }
     }
 }
@@ -950,11 +1022,29 @@ private fun DeviceSummaryCard(
                         fontSize = 12.sp
                     )
                 }
-                TextButton(onClick = onDetails) { Text("Steuern") }
+                TextButton(onClick = onDetails) { Text("Details") }
+            }
+            // Direct power commands, without first opening a detail editor.
+            // A Color4 receives only one budgeted set_power ACK (no extra
+            // automatic get_prop read), and per-lamp recovery stays protected.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Button(
+                    onClick = { controller.controlLamp(
+                        device,LampCommands.power(true),"Einschalten") },
+                    enabled = controller.canPowerLamp(device),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Ein") }
+                OutlinedButton(
+                    onClick = { controller.controlLamp(
+                        device,LampCommands.power(false),"Ausschalten") },
+                    enabled = controller.canPowerLamp(device),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Aus") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedButton(onClick = { controller.refreshLamp(device) },
-                    enabled = !controller.busy, modifier = Modifier.weight(1f)) {
+                    enabled = !controller.busy && !controller.isLampLanQuarantined(device),
+                    modifier = Modifier.weight(1f)) {
                     Text("Status")
                 }
                 OutlinedButton(onClick = { controller.identifyLamp(device) },
@@ -1329,6 +1419,39 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
     if (!expanded) return
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val lanQuarantined = controller.isLampLanQuarantined(device)
+        val lastQuotaEvidence = controller.lastLanQuotaEvidence(device)
+        if (lastQuotaEvidence != null) {
+            val whenObserved = java.text.DateFormat.getDateTimeInstance()
+                .format(java.util.Date(lastQuotaEvidence.observedAtEpochMs))
+            Text(
+                "Historischer LAN-Quota-Fehler: " + lastQuotaEvidence.method +
+                    " · " + lastQuotaEvidence.appAdmittedLastMinute +
+                    " von Loft DJ gezählte Befehle in 60 s · " + whenObserved +
+                    ". Befehle anderer Apps und Firmware-Ursache nicht messbar.",
+                color = Color(0xFFFFD38A), fontSize = 11.sp
+            )
+        }
+        if (device.model.equals("color4", ignoreCase = true)) {
+            Text(
+                "Steuerweg: lokales Yeelight-LAN (TCP 55443) · " +
+                    "Hersteller-Cloud in Loft DJ nicht gekoppelt · " +
+                    if (YeelightLan.supportsMusicMode(device))
+                        "Music Mode laut Gerätemeldung unterstützt"
+                    else "Music Mode noch nicht bestätigt",
+                color = muted, fontSize = 11.sp,
+            )
+        }
+        if (lanQuarantined) {
+            Note("LAN-Steuerung dieser Lampe geschützt: Die Firmware hat " +
+                "'client quota exceeded' gemeldet. Es werden keine regulären " +
+                "LAN-Kommandos mehr gesendet. Kein automatischer Neustart oder Retry.")
+            OutlinedButton(
+                onClick = { controller.verifyLampLanRecovery(device) },
+                enabled = !controller.busy,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("LAN-Wiederherstellung prüfen (1 Leseabfrage)") }
+        }
         if (device.methods.isEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
@@ -1351,7 +1474,8 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                 fontSize = 12.sp,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = { controller.refreshLamp(device) }, enabled = !controller.busy) {
+            TextButton(onClick = { controller.refreshLamp(device) },
+                enabled = !controller.busy && !lanQuarantined) {
                 Text("Aktualisieren")
             }
         }

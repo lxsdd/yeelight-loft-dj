@@ -18,6 +18,10 @@ data class MusicFrame(
     val beat: Boolean,
     val estimatedBpm: Int?,
     val timeMs: Long,
+    // A measured spectral-band rise, distinct from a detected bass beat.
+    // It is for on-screen diagnostics; it does not produce any lamp command.
+    val accent: MusicAccent? = null,
+    val displayBands: List<Float> = bands,
 ) {
     init { require(bands.size == 6) }
 }
@@ -32,9 +36,23 @@ class MusicAnalyzer(private val sampleRate: Int = 16000, val fftSize: Int = 2048
         require(fftSize in 512..8192 && fftSize.countOneBits() == 1)
     }
 
-    private val history = ArrayDeque<Long>()
-    private var baselineBass = 0.025f
+    private val tempo = ObservedBeatTempo()
+    private val accents = MusicAccentDetector()
+    private val spectrumDisplay = AudioSpectrumDisplay()
+    private var baselineBass = .025f
     private var lastBass = 0f
+    private var lastLowMid = 0f
+    private var suppressOneOnset = false
+
+    /**
+     * A digital gain change must not erase a valid rhythmic tempo history.
+     * Suppress one transitory PCM frame, then resume measuring real onsets.
+     */
+    @Synchronized
+    fun onAnalysisGainChanged() {
+        suppressOneOnset = true
+        accents.reset()
+    }
     private var lastBeatAt = Long.MIN_VALUE / 2
     private var lastFrameAt = Long.MIN_VALUE / 2
     private val bounds = intArrayOf(35, 120, 250, 600, 1400, 3200, 7800)
@@ -70,33 +88,40 @@ class MusicAnalyzer(private val sampleRate: Int = 16000, val fftSize: Int = 2048
         }
         val bass = levels[0] * 0.7f + levels[1] * 0.3f
         val rms = sqrt(squares / fftSize).toFloat()
-        val meaningful = rms >= 0.016f && bass >= 0.075f
-        val transient = meaningful &&
-            bass > max(0.115f, baselineBass * 1.65f) &&
-            bass > lastBass * 1.16f
         val monotonic = timeMs >= lastFrameAt
-        val beat = monotonic && transient && timeMs - lastBeatAt >= 300L
-        if (!monotonic || timeMs - lastFrameAt > 5000L) history.clear()
+        if (!monotonic || timeMs - lastFrameAt > 5_000L) {
+            tempo.reset()
+            baselineBass = .025f
+            lastBass = 0f
+            lastLowMid = 0f
+        }
+        val lowMid = levels[1] * .65f + levels[2] * .35f
+        val bassSlope = bass - lastBass
+        val lowMidSlope = lowMid - lastLowMid
+        // A real positive spectral rise (bass OR measured low-mid kick) rather
+        // than a very high fixed threshold. Sustained tones cannot retrigger.
+        val bassAttack = bass > max(.07f, baselineBass * 1.13f) &&
+            bassSlope > max(.018f, baselineBass * .16f)
+        val lowMidAttack = lowMid > .095f && bass > .05f &&
+            lowMidSlope > .038f && bassSlope > .008f
+        val meaningful = rms >= .011f && peak >= .04f
+        val transient = meaningful && (bassAttack || lowMidAttack)
+        val beat = monotonic && !suppressOneOnset && transient &&
+            timeMs - lastBeatAt >= 275L
         if (beat) {
             lastBeatAt = timeMs
-            history.addLast(timeMs)
-            while (history.size > 8) history.removeFirst()
+            tempo.observeOnset(timeMs)
         }
-        if (timeMs - lastBeatAt > 4000L) history.clear()
-        baselineBass = baselineBass * 0.90f + bass * 0.10f
+        suppressOneOnset = false
+        baselineBass = baselineBass * .93f + bass * .07f
         lastBass = bass
+        lastLowMid = lowMid
         lastFrameAt = timeMs
-        return MusicFrame(rms, peak, levels, bass, beat, bpm(), timeMs)
-    }
-
-    private fun bpm(): Int? {
-        if (history.size < 4) return null
-        val gaps = history.zipWithNext { a, b -> b - a }
-            .filter { it in 320L..1300L }
-        if (gaps.size < 3 || gaps.size != history.size - 1) return null
-        val median = gaps.sorted()[gaps.size / 2].toDouble()
-        if (gaps.any { kotlin.math.abs(it - median) > median * 0.17 }) return null
-        return (60000.0 / median).roundToInt().takeIf { it in 45..188 }
+        val measured = MusicFrame(rms, peak, levels, bass, beat, tempo.bpm(timeMs), timeMs)
+        return measured.copy(
+            accent = accents.observe(measured),
+            displayBands = spectrumDisplay.observe(levels,rms,timeMs)
+        )
     }
 
     /** In-place iterative radix-2 FFT. */
