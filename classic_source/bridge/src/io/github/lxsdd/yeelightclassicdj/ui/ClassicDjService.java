@@ -21,7 +21,8 @@ public final class ClassicDjService extends Service implements DjRuntime.Listene
     private static final int NOTIFICATION_ID = 4812;
     private DjRuntime runtime;
     private boolean running;
-    private static volatile String currentState = "Bereit · keine Lampensteuerung";
+    private Thread startupWorker;
+    private static volatile String currentState = "Bereit · ausgewählte Color4-Lampen";
     private static volatile double lastBpm = 0.0;
     private static volatile float lastLevel = 0f;
 
@@ -57,6 +58,12 @@ public final class ClassicDjService extends Service implements DjRuntime.Listene
             stopSelf();
             return START_NOT_STICKY;
         }
+        final String[] selectedIps = intent.getStringArrayExtra(ClassicDjActivity.EXTRA_SELECTED_IPS);
+        final java.util.List<String> ips = selectedIps == null ? java.util.Collections.emptyList()
+            : java.util.Arrays.asList(selectedIps);
+        if (ips.size() > 4 || new java.util.HashSet<>(ips).size() != ips.size()) {
+            currentState = "Ungültige Lampenauswahl"; stopSelf(); return START_NOT_STICKY;
+        }
         runtime = obtainExistingCheckpoint();
         if (runtime == null) { currentState = "Runtime fehlt · keine Lampensteuerung"; stopSelf(); return START_NOT_STICKY; }
         try {
@@ -67,7 +74,17 @@ public final class ClassicDjService extends Service implements DjRuntime.Listene
             }
             startForeground(NOTIFICATION_ID, notification());
             running = true; // Set first: a synchronous error callback must not be undone.
-            runtime.start(this, "microphone", this);
+            final DjRuntime session = runtime;
+            startupWorker = new Thread(() -> {
+                try { session.start(this, "microphone", ips, this); }
+                catch (Throwable error) {
+                    Log.e("ClassicDJ", "Music handshake or microphone start failed", error);
+                    currentState = "DJ-Start fehlgeschlagen; Lampenstatus prüfen";
+                    finishSession();
+                }
+            }, "Classic-DJ-Session-Start");
+            startupWorker.setDaemon(true);
+            startupWorker.start();
         } catch (Exception error) {
             Log.e("ClassicDJ", "Session start failed; stopping safely", error);
             finishSession();
@@ -85,7 +102,7 @@ public final class ClassicDjService extends Service implements DjRuntime.Listene
         PendingIntent stopPi = PendingIntent.getService(this, 33, stop, flags);
         Notification.Builder n = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         return n.setContentTitle("Loft DJ · Classic")
-            .setContentText("Mikrofon-Analyse (ohne Lampen) · Tippen öffnet die App")
+            .setContentText("DJ läuft · Tippen öffnet Classic")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(open)
             .setOngoing(true)
@@ -94,7 +111,7 @@ public final class ClassicDjService extends Service implements DjRuntime.Listene
     }
 
     private void finishSession() {
-        currentState = "Gestoppt · keine Lampensteuerung";
+        currentState = "Gestoppt";
         lastBpm = 0.0; lastLevel = 0f;
         DjRuntime instance = runtime;
         runtime = null;
@@ -112,7 +129,8 @@ public final class ClassicDjService extends Service implements DjRuntime.Listene
     }
     @Override public void onState(String value) {
         if ("MIC_ANALYSIS_ONLY_NO_LAMPS".equals(value)) currentState = "Mikrofonanalyse · keine Lampensteuerung";
-        else if ("STOPPED".equals(value)) currentState = "Gestoppt · keine Lampensteuerung";
+        else if (value.startsWith("DJ_ACTIVE_")) currentState = "Music-Rückkanal aktiv · " + value.substring(10).replace('_',' ').toLowerCase(java.util.Locale.ROOT);
+        else if ("STOPPED".equals(value)) currentState = "Gestoppt";
         Log.i("ClassicDJ", "Session state updated");
     }
     @Override public void onBeat(double bpm, float level) {
@@ -122,6 +140,6 @@ public final class ClassicDjService extends Service implements DjRuntime.Listene
     @Override public void onError(String error) {
         Log.w("ClassicDJ", "Capture failure; session halted");
         finishSession();
-        currentState = "Mikrofonfehler · keine Lampensteuerung";
+        currentState = "Mikrofonfehler · bitte Lampenstatus prüfen";
     }
 }

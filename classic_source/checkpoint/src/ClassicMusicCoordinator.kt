@@ -35,8 +35,16 @@ class ClassicMusicCoordinator(private val transport: Transport) {
             return d.state
         }
         val ack = safe(d, "start") { transport.requestStart(id) }
-        if (d.state == State.QUARANTINED) return d.state
-        if (ack != true) return quarantine(d, "start not acknowledged; completion uncertain")
+        if (d.state == State.QUARANTINED) {
+            // requestStart can throw AFTER opening a reverse listener. Close local resources
+            // even though the remote music state remains uncertain. Never send blind STOP.
+            closeTracked(d)
+            return d.state
+        }
+        if (ack != true) {
+            closeTracked(d)
+            return quarantine(d, "start not acknowledged; completion uncertain")
+        }
         d.startAccepted = true
         val connected = safe(d, "reverse handshake") { transport.reverseConnected(id) }
         if (d.state == State.QUARANTINED) {
