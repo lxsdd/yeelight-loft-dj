@@ -3,6 +3,10 @@ package io.github.lxsdd.yeelightloftdj
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class DeviceCommandGateTest {
     @Test fun commandsArePacedAndNeverBurstWithinRollingBudget() {
@@ -150,6 +154,90 @@ class DeviceCommandGateTest {
         assertEquals(20, gate.remaining("B"))
         now += 60_001L
         assertEquals(20, gate.remaining("A"))
+    }
+
+    @Test fun musicSocketCleanupCannotCloseUnderAnInFlightLanRequest() {
+        val gate = DeviceCommandGate(nowMs = { 10_000L }, minSpacingMs = 0)
+        val inFlight = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val startedCleanup = CountDownLatch(1)
+        val actions = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val failures = AtomicReference<Throwable?>()
+        val writer = thread(name = "fixture-same-lamp-command") {
+            try {
+                gate.run("lamp-a") {
+                    inFlight.countDown()
+                    check(release.await(3, TimeUnit.SECONDS)) { "Fixture command never released" }
+                    actions.add("lan-finished")
+                }
+            } catch (ex: Throwable) { failures.set(ex) }
+        }
+        val cleanup = try {
+            assertTrue(inFlight.await(2, TimeUnit.SECONDS))
+            val cleaner = thread(name = "fixture-music-slot-cleanup") {
+                try {
+                    startedCleanup.countDown()
+                    gate.closeSessionSlot("lamp-a") { actions.add("slot-closed") }
+                } catch (ex: Throwable) { failures.set(ex) }
+            }
+            assertTrue(startedCleanup.await(2, TimeUnit.SECONDS))
+            // A different lamp proceeds while the first lamp is in flight.
+            gate.run("lamp-b") { actions.add("other-lamp") }
+            assertFalse("Cleanup must wait for the in-flight request",
+                actions.contains("slot-closed"))
+            cleaner
+        } finally {
+            release.countDown()
+        }
+        writer.join(3_000)
+        cleanup.join(3_000)
+        assertFalse(writer.isAlive)
+        assertFalse(cleanup.isAlive)
+        assertNull(failures.get())
+        assertTrue(actions.indexOf("lan-finished") < actions.indexOf("slot-closed"))
+        assertEquals(1, gate.consumed("lamp-a"))
+        assertEquals(1, gate.consumed("lamp-b"))
+    }
+
+    @Test fun quarantinedLampCanReleaseTcpSlotWithoutSendingAnyCommand() {
+        val gate = DeviceCommandGate(nowMs = { 15_000L }, minSpacingMs = 0)
+        gate.markQuarantined("lamp-a")
+        var closed = 0
+        gate.closeSessionSlot("lamp-a") { closed++ }
+        gate.closeSessionSlot("lamp-a") { closed++ }
+        assertEquals(2, closed)
+        assertTrue(gate.isQuarantined("lamp-a"))
+        assertEquals(0, gate.consumed("lamp-a"))
+        assertEquals(0, gate.remaining("lamp-a"))
+        assertTrue(runCatching { gate.run("lamp-a") { error("must not send") } }
+            .exceptionOrNull() is DeviceCommandGate.Deferred)
+    }
+
+    @Test fun fourteenLampMixedSceneAndMusicOnlyAffectExplicitParticipants() {
+        val gate = DeviceCommandGate(nowMs = { 100_000L }, minSpacingMs = 0)
+        val all = (1..14).map { "fixture-lamp-$it" }
+        val musicParticipants = all.take(4)
+        val sceneParticipants = all.subList(4, 8)
+        val quarantined = all[5]
+        gate.markQuarantined(quarantined)
+        val sent = mutableListOf<String>()
+        // Four requested Music preflights, with independent slot cleanup.
+        musicParticipants.forEach { ip ->
+            gate.run(ip) { sent.add("music:$ip") }
+            gate.closeSessionSlot(ip) { }
+        }
+        // A Scene cannot bypass the local quarantine of its second bulb;
+        // failure of that bulb does not block other selected participants.
+        sceneParticipants.forEach { ip ->
+            runCatching { gate.run(ip) { sent.add("scene:$ip") } }
+        }
+        assertEquals(7, sent.size)
+        assertFalse(sent.any { it.endsWith(quarantined) })
+        assertTrue(gate.isQuarantined(quarantined))
+        assertEquals(0, gate.consumed(quarantined))
+        assertEquals(0, gate.consumed(all.last())) // nonparticipant untouched
+        assertEquals(1, gate.consumed(all.first()))
+        assertEquals(1, gate.consumed(sceneParticipants.first()))
     }
 
     @Test fun concurrentTrafficStillSharesThePerBulbQuota() {

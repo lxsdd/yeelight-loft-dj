@@ -3031,4 +3031,171 @@ class LoftController(context: Context) {
         } else verifyMusicEndFor(single.ip)
     }
 
+    /** Purely local export; no socket, Cloud account or Android device write. */
+    fun exportPortableBackup(): String {
+        val refs = orderedDevices().mapIndexed { index, device ->
+            device.id to ("lamp-" + (index + 1))
+        }.toMap()
+        val inventory = orderedDevices().map { device ->
+            val shown = displayName(device).let { name ->
+                if (Regex("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}").containsMatchIn(name))
+                    "Lampe" else name
+            }
+            PortableLampRef(
+                ref = refs.getValue(device.id),
+                hardwareId = PortableConfigArchive.stableHardwareId(device.id),
+                model = device.model,
+                name = shown,
+            )
+        }
+        return PortableConfigArchive.encode(
+            PortableBackupData(
+                devices = inventory,
+                rooms = roomNames.filter { it != "Nicht zugeordnet" },
+                assignments = assignments.mapNotNull { (id, room) ->
+                    refs[id]?.takeIf { room != "Nicht zugeordnet" }?.let { it to room }
+                }.toMap(),
+                groups = namedGroups.mapValues { (_, ids) -> ids.mapNotNull(refs::get).toSet() },
+                order = lampOrder.mapNotNull(refs::get).distinct(),
+                selected = customSelectedIds.mapNotNull(refs::get).distinct().sorted(),
+                scenes = SceneArchiveData(importedFlows, savedChases),
+                restoreAfterStop = restoreAfterStop,
+            )
+        )
+    }
+
+    private fun portableMatches(snapshot: PortableBackupData): Map<String, YeelightDevice> {
+        val byStable = devices.mapNotNull { device ->
+            PortableConfigArchive.stableHardwareId(device.id)?.let { it to device }
+        }.toMap()
+        return snapshot.devices.mapNotNull { entry ->
+            entry.hardwareId?.let(byStable::get)?.let { entry.ref to it }
+        }.toMap()
+    }
+
+    /** Preview never mutates any preferences and never sends network messages. */
+    fun previewPortableBackup(text: String): PortableBackupPreview {
+        val snapshot = PortableConfigArchive.decode(text)
+        val mapping = portableMatches(snapshot)
+        val existingFlows = allScenes()
+        val moreFlows = snapshot.scenes.flows.filterNot { candidate ->
+            existingFlows.any { it.name == candidate.name && it.frames == candidate.frames }
+        }.distinctBy { it.name to it.frames }
+        val moreChases = snapshot.scenes.chases.filterNot { candidate ->
+            savedChases.any { it.name == candidate.name && it.config == candidate.config }
+        }.distinctBy { it.name to it.config }
+        val newRooms = snapshot.rooms.count { room ->
+            roomNames.none { it.equals(room, true) }
+        }
+        val newGroups = snapshot.groups.keys.count { group ->
+            namedGroups.keys.none { it.equals(group, true) }
+        }
+        val conflicts = snapshot.assignments.count { (ref, room) ->
+            mapping[ref]?.let { device ->
+                val previous = roomFor(device)
+                previous != "Nicht zugeordnet" && previous != room
+            } ?: false
+        } + snapshot.groups.count { (name, ids) ->
+            val matched = ids.mapNotNull(mapping::get).map { it.id }.toSet()
+            val old = namedGroups.entries.firstOrNull { it.key.equals(name, true) }?.value
+            old != null && old != matched
+        }
+        return PortableBackupPreview(newRooms, newGroups, moreFlows.size, moreChases.size,
+            mapping.size, snapshot.devices.size - mapping.size, conflicts)
+    }
+
+    /**
+     * One local SharedPreferences commit. This is additive only: existing rooms/groups,
+     * names and populated assignments win. Missing devices are intentionally not
+     * auto-provisioned or mapped by IP. No lamp action, Cloud write or recovery call.
+     */
+    fun importPortableBackup(text: String): String {
+        require(canOrganizeLamps) { "Import während einer Lichtshow nicht erlaubt" }
+        val snapshot = PortableConfigArchive.decode(text)
+        val plan = previewPortableBackup(text)
+        val mapping = portableMatches(snapshot)
+        val updatedRooms = (roomNames + snapshot.rooms.filter { room ->
+            roomNames.none { it.equals(room, ignoreCase = true) }
+        }).distinct()
+        require(updatedRooms.size <= 32) { "Maximal 32 Räume" }
+        val updatedGroups = namedGroups.toMutableMap()
+        snapshot.groups.forEach { (name, refs) ->
+            if (updatedGroups.keys.none { it.equals(name, true) }) {
+                updatedGroups[name] = refs.mapNotNull(mapping::get).map { it.id }.toSet()
+            }
+        }
+        require(updatedGroups.size <= 24) { "Maximal 24 Gruppen" }
+        val existingFlows = allScenes()
+        val newFlows = snapshot.scenes.flows.filterNot { incoming ->
+            existingFlows.any { it.name == incoming.name && it.frames == incoming.frames }
+        }.distinctBy { it.name to it.frames }.map {
+            it.copy(id = "import-" + java.util.UUID.randomUUID())
+        }
+        val newChases = snapshot.scenes.chases.filterNot { incoming ->
+            savedChases.any { it.name == incoming.name && it.config == incoming.config }
+        }.distinctBy { it.name to it.config }.map {
+            it.copy(id = "import-" + java.util.UUID.randomUUID())
+        }
+        val nextFlows = importedFlows + newFlows
+        val nextChases = savedChases + newChases
+        require(nextFlows.size + nextChases.size + SceneLibrary.scenes.size <= 64) {
+            "Maximal 64 Szenen"
+        }
+        val sceneText = SceneArchive.encode(SceneArchiveData(nextFlows, nextChases))
+        val updatedAssignments = assignments.toMutableMap()
+        val updatedAliases = aliases.toMutableMap()
+        val nextSelection = customSelectedIds.toMutableSet()
+        val nextOrder = lampOrder.toMutableList()
+        val editor = prefs.edit()
+        snapshot.assignments.forEach { (ref, room) ->
+            val device = mapping[ref] ?: return@forEach
+            if (updatedAssignments[device.id].isNullOrBlank() ||
+                updatedAssignments[device.id] == "Nicht zugeordnet") {
+                val canonicalRoom = updatedRooms.firstOrNull { it.equals(room, true) }
+                    ?: return@forEach
+                updatedAssignments[device.id] = canonicalRoom
+                editor.putString("room." + device.id, canonicalRoom)
+            }
+        }
+        snapshot.devices.forEach { entry ->
+            val device = mapping[entry.ref] ?: return@forEach
+            if (aliasFor(device).isBlank()) {
+                editor.putString("alias." + device.ip, entry.name)
+                updatedAliases[device.ip] = entry.name
+            }
+        }
+        snapshot.selected.forEach { ref ->
+            mapping[ref]?.let { nextSelection.add(it.id) }
+        }
+        snapshot.order.forEach { ref ->
+            mapping[ref]?.id?.let { if (it !in nextOrder) nextOrder.add(it) }
+        }
+        val groupJson = JSONArray()
+        updatedGroups.forEach { (name, ids) ->
+            groupJson.put(JSONObject().put("name", name).put("ids", JSONArray(ids.toList())))
+        }
+        editor.putString("room-list", JSONArray(updatedRooms).toString())
+            .putString("named-lamp-groups", groupJson.toString())
+            .putString("selected-lamp-ids", JSONArray(nextSelection.toList()).toString())
+            .putString("lamp-order", JSONArray(nextOrder).toString())
+            .putString("custom-scene-archive", sceneText)
+            .putBoolean("restore-after-stop", snapshot.restoreAfterStop)
+        check(editor.commit()) { "Lokaler Import konnte nicht atomar gespeichert werden" }
+        roomNames = updatedRooms
+        namedGroups = updatedGroups
+        assignments = updatedAssignments
+        aliases = updatedAliases
+        customSelectedIds = nextSelection
+        lampOrder = nextOrder
+        importedFlows = nextFlows
+        savedChases = nextChases
+        restoreAfterStop = snapshot.restoreAfterStop
+        val message = "Konfiguration lokal importiert: " + plan.newRooms + " Räume, " +
+            plan.newGroups + " Gruppen, " + newFlows.size + " Farbverläufe, " +
+            newChases.size + " Lichtläufe. " + plan.unmatchedLamps +
+            " Lampen müssen ggf. neu zugeordnet werden."
+        status = message
+        return message
+    }
+
 }

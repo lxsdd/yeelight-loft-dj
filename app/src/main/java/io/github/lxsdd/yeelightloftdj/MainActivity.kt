@@ -267,8 +267,13 @@ private fun LoftApp(controller: LoftController, notificationMusicRequest: Int = 
                     "network" -> item(key = "network-diagnostics") {
                         DeviceTools(controller, initiallyExpanded = true)
                     }
-                    "transfer" -> item(key = "scene-import-export") {
-                        SceneExchangePanel(controller)
+                    "transfer" -> {
+                        item(key = "scene-import-export") {
+                            SceneExchangePanel(controller)
+                        }
+                        item(key = "portable-configuration") {
+                            PortableConfigPanel(controller)
+                        }
                     }
                     "google-home" -> item(key = "google-home-export") {
                         GoogleHomeExportPanel(controller)
