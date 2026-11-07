@@ -24,6 +24,28 @@ class PolicyTests(unittest.TestCase):
         return {'repository':{'full_name':policy.SOURCE_REPO,'private':False},'ref':'refs/heads/main'}
     def test_owner_protected_main_passes(self):
         self.assertEqual(policy.require_approved_dispatch(self.valid(),self.event())['source_sha'],'a'*40)
+    def test_exact_both_private_classic_workflows_allowed(self):
+        for path in (policy.WORKFLOW_FILE, policy.SIGNED_WORKFLOW_FILE):
+            with self.subTest(path=path):
+                e=self.valid()
+                e['GITHUB_WORKFLOW_REF']=policy.SOURCE_REPO+'/'+path+'@refs/heads/main'
+                self.assertEqual(policy.require_approved_dispatch(e,self.event())['source_sha'], 'a'*40)
+    def test_unlisted_workflows_and_unprotected_refs_rejected(self):
+        forbidden=(
+            policy.SOURCE_REPO+'/.github/workflows/not-classic.yml@refs/heads/main',
+            policy.SOURCE_REPO+'/'+policy.SIGNED_WORKFLOW_FILE+'@refs/heads/test',
+            policy.SOURCE_REPO+'/'+policy.SIGNED_WORKFLOW_FILE+'@refs/tags/v1',
+            policy.SOURCE_REPO+'/'+policy.SIGNED_WORKFLOW_FILE+'@refs/heads/main/',
+            policy.SOURCE_REPO+'/'+policy.SIGNED_WORKFLOW_FILE.upper()+'@refs/heads/main',
+            'attacker/yeelight-loft-dj/'+policy.SIGNED_WORKFLOW_FILE+'@refs/heads/main',
+            policy.SOURCE_REPO+'/'+policy.WORKFLOW_FILE+'@refs/heads/feature',
+        )
+        for ref in forbidden:
+            with self.subTest(ref=ref):
+                e=self.valid()
+                e['GITHUB_WORKFLOW_REF']=ref
+                with self.assertRaises(policy.PolicyFailure):
+                    policy.require_approved_dispatch(e,self.event())
     def test_evil_event_rejected(self):
         for key,value in [('GITHUB_EVENT_NAME','pull_request_target'),('GITHUB_EVENT_NAME','pull_request'),('GITHUB_EVENT_NAME','push'),('GITHUB_REF','refs/heads/evil'),('GITHUB_ACTOR','other'),('GITHUB_REPOSITORY','lxsdd/other'),('RUNNER_ENVIRONMENT','self-hosted'),('GITHUB_WORKFLOW_REF','modified'),('GITHUB_ACTIONS','false'),('GITHUB_SERVER_URL','https://evil.invalid')]:
             with self.subTest(key=key,value=value):
