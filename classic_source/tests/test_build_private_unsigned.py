@@ -7,7 +7,7 @@ import zipfile
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from build_private_unsigned import verify_unsigned
+from build_private_unsigned import verify_unsigned, verify_final_firebase_boundary
 from classic_first import GateFailure, NEW_PACKAGE
 
 class FakeRun:
@@ -59,5 +59,45 @@ class FinalVerification(unittest.TestCase):
         self.make_output({'classes3.dex': b'different-bytecode'})
         with self.assertRaisesRegex(GateFailure,'SIDECAR_DEX_MISMATCH'):
             self.verified()
+
+class FirebaseFinalManifestGate(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.candidate = Path(self.temp.name)/'test.apk'
+        with zipfile.ZipFile(self.candidate, 'w') as z:
+            z.writestr('AndroidManifest.xml', b'synthetic')
+
+    def model(self, count, firebase=False, authority=False):
+        ns = '{http://schemas.android.com/apk/res/android}'
+        return {'elements': [{'tag': 'provider', 'attributes': {
+            ns+'name': 'com.google.firebase.provider.FirebaseInitProvider' if firebase and i == count-1 else f'com.yeelight.cherry.P{i}',
+            ns+'authorities': 'io.lxsdd.yeelightdj.firebaseinitprovider' if authority and i == count-1 else f'io.lxsdd.yeelightdj.p{i}'}}
+            for i in range(count)]}
+
+    def test_six_other_original_providers_preserved(self):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6)):
+            r = verify_final_firebase_boundary(self.candidate)
+        self.assertEqual(r['status'], 'PRIVATE_FIREBASE_AUTO_INIT_DISABLED')
+        self.assertEqual(r['android_startup'], 'NOT_TESTED')
+
+    def test_firebase_class_reintroduced_rejected(self):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6, firebase=True)):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_FIREBASE_INIT_REINTRODUCED'):
+                verify_final_firebase_boundary(self.candidate)
+
+    def test_firebase_authority_reintroduced_rejected(self):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6, authority=True)):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_FIREBASE_AUTHORITY_REINTRODUCED'):
+                verify_final_firebase_boundary(self.candidate)
+
+    def test_wrong_original_provider_count_rejected(self):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5)):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_PROVIDER_COUNT_NOT_SIX'):
+                verify_final_firebase_boundary(self.candidate)
+
+    def test_corrupt_final_binary_xml_rejected(self):
+        with self.assertRaisesRegex(GateFailure, 'FINAL_BINARY_MANIFEST_INVALID'):
+            verify_final_firebase_boundary(self.candidate)
 
 if __name__ == '__main__': unittest.main()

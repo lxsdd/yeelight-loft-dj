@@ -103,6 +103,19 @@ def patch_manifest(path: Path) -> dict:
                 if corrected != value:
                     elem.set(A(key), corrected)
                     count += 1
+    # Real Pixel 6a FATAL EXCEPTION (2026-11-07): FirebaseInitProvider
+    # invokes Crashlytics before any Activity. Its DataTransport/Dagger
+    # dependency cannot be resolved in the original OEM runtime. For this
+    # PRIVATE LAN-first clone only, disable exactly that early-init provider.
+    # No OEM bytecode, alternative analytics, cloud credentials or lamp writes.
+    firebase = [p for p in app.findall("provider")
+                if p.get(A("name")) == "com.google.firebase.provider.FirebaseInitProvider"]
+    require(len(firebase) == 1, "FIREBASE_INIT_PROVIDER_NOT_UNIQUE")
+    require(firebase[0].get(A("authorities")) == OLD_PACKAGE + ".firebaseinitprovider",
+            "FIREBASE_INIT_AUTHORITY_MISMATCH")
+    require(firebase[0].get(A("exported"), "false") == "false",
+            "FIREBASE_INIT_UNEXPECTED_EXPORT")
+    app.remove(firebase[0])
     # Keep original code package classes; only namespace providers and self-defined permissions.
     providers = []
     for provider in app.findall("provider"):
@@ -155,7 +168,9 @@ def patch_manifest(path: Path) -> dict:
     # This component is declared, but only the existing checkpoint runtime may implement it.
     # No exported services, cloud API, or remote actor permissions are added.
     tree.write(path, encoding="utf-8", xml_declaration=True)
-    return {"new_package": NEW_PACKAGE, "canonicalized_component_refs": count, "providers": providers, "permissions_renamed": permissions, "min_sdk": 23, "activity_exported": False}
+    return {"new_package": NEW_PACKAGE, "canonicalized_component_refs": count, "providers": providers, "permissions_renamed": permissions, "min_sdk": 23, "activity_exported": False,
+            "firebase_auto_init": "DISABLED_FOR_PRIVATE_CLONE",
+            "cloud_login": "NOT_TESTED"}
 
 
 def patch_layout(path: Path) -> None:

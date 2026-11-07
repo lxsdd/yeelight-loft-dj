@@ -19,6 +19,7 @@ import zipfile
 from classic_first import GateFailure, NEW_PACKAGE, digest_file, inspect_original, prepare
 from dex_authority_remap import remap_dex, DexRemapError, assert_self_consistent_dex
 from bridge.build_bridge import build as build_sidecar, ToolError, find_sdk_tools, no_oem_class_collisions
+from apk_readonly_audit import parse_binary_xml, AxmlError
 
 ROOT = Path(__file__).resolve().parent
 
@@ -81,6 +82,26 @@ def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str
     }
 
 
+def verify_final_firebase_boundary(candidate: Path) -> dict:
+    """The rebuilt private APK must not accidentally re-enable OEM Firebase auto-init."""
+    try:
+        with zipfile.ZipFile(candidate) as z:
+            root = parse_binary_xml(z.read("AndroidManifest.xml"))
+    except (AxmlError, KeyError, zipfile.BadZipFile) as exc:
+        raise GateFailure("FINAL_BINARY_MANIFEST_INVALID") from exc
+    providers = [e["attributes"] for e in root["elements"] if e["tag"] == "provider"]
+    if len(providers) != 6:
+        raise GateFailure("FINAL_PROVIDER_COUNT_NOT_SIX")
+    for p in providers:
+        if p.get("{http://schemas.android.com/apk/res/android}name") == \
+                "com.google.firebase.provider.FirebaseInitProvider":
+            raise GateFailure("FINAL_FIREBASE_INIT_REINTRODUCED")
+        if p.get("{http://schemas.android.com/apk/res/android}authorities", "").endswith(".firebaseinitprovider"):
+            raise GateFailure("FINAL_FIREBASE_AUTHORITY_REINTRODUCED")
+    return {"status": "PRIVATE_FIREBASE_AUTO_INIT_DISABLED", "remaining_oem_providers": 6,
+            "android_startup": "NOT_TESTED", "cloud_login": "NOT_TESTED"}
+
+
 def build(original: Path, output: Path, sdk: Path):
     inspect_original(original)
     android_jar, d8, aapt = find_sdk_tools(sdk)
@@ -114,6 +135,7 @@ def build(original: Path, output: Path, sdk: Path):
         (staged/'classic_first_preparation.json').unlink()
         run([*apktool, 'b', '-o', unsigned, staged])
         report = verify_unsigned(unsigned, original, dex, str(aapt))
+        report["firebase_early_init_boundary"] = verify_final_firebase_boundary(unsigned)
         report['class_collision_check'] = collision_report
         report['runtime_resolution'] = json.loads((bridge / 'runtime_resolution.json').read_text(encoding='utf-8'))
         report['sdk_platform'] = str(android_jar.relative_to(sdk))

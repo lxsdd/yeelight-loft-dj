@@ -45,3 +45,35 @@ möglicher Pfad und **nicht** ohne konkreten Stacktrace bewiesen.
 
 Die nächste signierte private APK benötigt ihren eigenen Owner-Freigabeweg;
 der vorherige private Draft-Release bleibt unverändert und nicht öffentlich.
+
+## Bestätigter Startfehler aus Eigentümer-ADB (07.11.2026)
+
+Das zweite signierte private APK aus Workflow `42415686872` (main `73ead136`)
+startet trotz vorheriger Root-Layout-Korrektur nicht. Der Stacktrace wiederholt
+über zahlreiche Starts dieselbe `NoClassDefFoundError` /`ClassNotFoundException`
+für `com.google.android.datatransport.runtime.dagger.internal.b`. Der Aufrufpfad
+ist `CrashlyticsRegistrar` → `FirebaseInitProvider.onCreate` → Android
+`ActivityThread.installContentProviders`, **vor** jeder Activity. Die vorherige
+Layout-Hypothese erklärt den beobachteten Crash nicht.
+
+**Zielgerichtete private Anpassung:** Entferne ausschließlich den früh startenden
+`com.google.firebase.provider.FirebaseInitProvider` aus dem privaten Klon, nur bei
+bekannter originaler Authority und genau einer nicht-exportierten Instanz. Alle
+anderen sechs OEM-Provider, originalen ausführbaren DEX und Quell-Anker bleiben
+unverändert. Der neu gebaute binäre Manifest-Baum wird nochmals geprüft:
+sechs Provider, keinerlei Firebase-Autostart-Eintrag/Authority. Negative synthetische
+Tests verhindern unbemerkte Erweiterung. Es gibt **keine** vorgetäuschte Ersatzklasse.
+
+Dies verhindert den belegten *frühesten* Absturzpfad, beweist aber keinen vollständig
+funktionierenden App-Start. Firebase-Crashlytics/Analytics sowie eventuell davon
+abhängige Yeelight-Cloudfunktionen sind bei dieser isolierten LAN-first-Abnahme
+nicht unterstützt; optionale Anmeldung braucht eigene explizite Init-Integration
+und Hardware-Abnahme. Neue private APK nur nach bestehender manueller
+Owner-Freigabekette, niemals öffentliche OEM-Artefakte.
+
+**Getrennter Befund:** Couchtisch zeigte `music_on=1`, bis der Nutzer Music in
+Yeelight Classic pausierte; danach zeigte Loft DJ `music_on=0`. Nach Yeelight-LAN-
+Spezifikation beendet explizites `set_music([0])` oder das Schließen des
+Reverse-TCP-Kanals die Session; während Music werden keine Property-Notifications
+gesendet. Dieser Zustands-/Recovery-Fall gehört in die bestehende Color4-/RC16-
+Entwicklung, nicht in den Firebase-Startfix. Kein Hardwarekommando aus CI.

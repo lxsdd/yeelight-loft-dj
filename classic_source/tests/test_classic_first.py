@@ -21,6 +21,7 @@ MANIFEST = '''<?xml version="1.0" encoding="utf-8"?>
     <activity-alias android:name=".Alias" android:targetActivity=".MainActivity" android:exported="false"/>
     <service android:name="com.yeelight.cherry.existing.Sync" android:exported="false"/>
     <provider android:name=".Provider" android:authorities="com.yeelight.cherry.device;com.yeelight.cherry.landevice" android:permission="com.yeelight.cherry.PERMISSION" android:exported="false"/>
+    <provider android:name="com.google.firebase.provider.FirebaseInitProvider" android:authorities="com.yeelight.cherry.firebaseinitprovider" android:exported="false"/>
   </application>
 </manifest>'''
 LAYOUT = '''<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -107,6 +108,39 @@ class ClassicTests(unittest.TestCase):
         self.assertTrue(any(s.get(x.A('name')) == x.BRIDGE_SERVICE and s.get(x.A('exported')) == 'false' for s in app.findall('service')))
         self.assertTrue(any(p.get(x.A('name')) == 'android.permission.FOREGROUND_SERVICE_MICROPHONE' for p in doc.findall('uses-permission')))
         self.assertEqual(len(info['providers']), 1)
+        self.assertEqual(info['firebase_auto_init'], 'DISABLED_FOR_PRIVATE_CLONE')
+        self.assertEqual(len(app.findall('provider')), 1)
+        self.assertFalse(any(p.get(x.A('name')) == 'com.google.firebase.provider.FirebaseInitProvider' for p in app.findall('provider')))
+
+    def test_firebase_provider_missing_refused_without_mutation(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        p.write_text(MANIFEST.replace('    <provider android:name="com.google.firebase.provider.FirebaseInitProvider" android:authorities="com.yeelight.cherry.firebaseinitprovider" android:exported="false"/>\n', ''))
+        prior = p.read_bytes()
+        with self.assertRaisesRegex(x.GateFailure, 'FIREBASE_INIT_PROVIDER_NOT_UNIQUE'):
+            x.patch_manifest(p)
+        self.assertEqual(p.read_bytes(), prior)
+
+    def test_firebase_authority_mismatch_refused_without_mutation(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        p.write_text(MANIFEST.replace('com.yeelight.cherry.firebaseinitprovider', 'foreign.firebaseinitprovider'))
+        prior = p.read_bytes()
+        with self.assertRaisesRegex(x.GateFailure, 'FIREBASE_INIT_AUTHORITY_MISMATCH'):
+            x.patch_manifest(p)
+        self.assertEqual(p.read_bytes(), prior)
+
+    def test_duplicate_firebase_provider_refused(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        duplicate = '    <provider android:name="com.google.firebase.provider.FirebaseInitProvider" android:authorities="com.yeelight.cherry.firebaseinitprovider" android:exported="false"/>\n'
+        p.write_text(MANIFEST.replace(duplicate, duplicate + duplicate))
+        with self.assertRaisesRegex(x.GateFailure, 'FIREBASE_INIT_PROVIDER_NOT_UNIQUE'):
+            x.patch_manifest(p)
+
+    def test_exported_firebase_provider_refused(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        p.write_text(MANIFEST.replace('com.yeelight.cherry.firebaseinitprovider" android:exported="false"',
+                                      'com.yeelight.cherry.firebaseinitprovider" android:exported="true"'))
+        with self.assertRaisesRegex(x.GateFailure, 'FIREBASE_INIT_UNEXPECTED_EXPORT'):
+            x.patch_manifest(p)
 
     def test_unknown_authority_fails_closed(self):
         p = self.decoded / 'AndroidManifest.xml'
