@@ -30,14 +30,34 @@ class Color4ChromaEvidenceGateTest {
         assertEquals(Color4ChromaEvidenceGate.Evidence.EXPERIMENTAL_METHOD_ONLY, g.evidence("lamp-a"))
     }
 
-    @Test fun tokenWrongMethodNumericIdAndReplayRejected() {
+    @Test fun tokenWrongIdIsIgnoredButCorrelatedWrongMethodFailsClosed() {
         val g = Color4ChromaEvidenceGate()
         val t = g.beginExplicitOneShot("lamp-a", Color4ChromaEvidenceGate.Variant.V1_UDP_NEW)!!
         assertFalse(g.onTokenReply(t, 1, 2, "udp_token", token))
+        assertFalse(g.onTokenReply(t, 2, 2, "udp_token", token))
+        assertEquals(Color4ChromaEvidenceGate.Evidence.AWAITING_HANDSHAKE, g.evidence("lamp-a"))
         assertFalse(g.onTokenReply(t, 1, 1, "udp_sess_token", token))
-        assertFalse(g.onTokenReply(t, 1, 1, "udp_token", token.lowercase().dropLast(1)))
-        assertTrue(g.onTokenReply(t, 1, 1, "udp_token", token))
-        assertFalse(g.onTokenReply(t, 1, 1, "udp_token", token))
+        assertEquals(Color4ChromaEvidenceGate.Evidence.REJECTED_OR_UNCERTAIN, g.evidence("lamp-a"))
+        assertFalse(g.onTokenReply(t, 1, 1, "udp_token", token)) // cannot replay after fail-closed
+        assertNull(g.beginExplicitOneShot("lamp-a", Color4ChromaEvidenceGate.Variant.V1_UDP_NEW))
+        assertTrue(g.clearOnlyByOperator("lamp-a"))
+        val retry = g.beginExplicitOneShot("lamp-a", Color4ChromaEvidenceGate.Variant.V1_UDP_NEW)!!
+        assertTrue(g.onTokenReply(retry, 1, 1, "udp_token", token))
+        assertFalse(g.onTokenReply(retry, 1, 1, "udp_token", token))
+    }
+
+    @Test fun invalidCorrelatedTokenCannotBeReplacedByLaterValidReplay() {
+        val g = Color4ChromaEvidenceGate()
+        val t = g.beginExplicitOneShot("lamp-a", Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW)!!
+        assertFalse(g.onTokenReply(t, 1, 1, "udp_sess_token", token.dropLast(1)))
+        assertFalse(g.onTokenReply(t, 1, 1, "udp_sess_token", token))
+        assertFalse(g.recordOneColorFrame(t, 2))
+        assertFalse(g.confirmVisibleColorByOperator(t, true))
+        assertFalse(g.close(t))
+        assertEquals(Color4ChromaEvidenceGate.Evidence.REJECTED_OR_UNCERTAIN, g.evidence("lamp-a"))
+        assertNull(g.confirmedClosedVariant("lamp-a"))
+        assertTrue(g.clearOnlyByOperator("lamp-a"))
+        assertNull(g.confirmedClosedVariant("lamp-a"))
     }
 
     @Test fun oneFrameOnlyAndNoAutomaticRepeatAfterClose() {
@@ -69,12 +89,70 @@ class Color4ChromaEvidenceGateTest {
     @Test fun wrongGenerationAndUnknownBulbNeverAdvance() {
         val g = Color4ChromaEvidenceGate()
         val t = g.beginExplicitOneShot("a", Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW)!!
-        val fake = t.copy(generation = t.generation + 1)
+        val fake = Color4ChromaEvidenceGate.Attempt(t.deviceKey, t.generation + 1, t.variant)
         assertFalse(g.onTokenReply(fake, 1, 1, "udp_sess_token", token))
-        assertFalse(g.onTokenReply(t.copy(deviceKey = "b"), 1, 1, "udp_sess_token", token))
+        assertFalse(g.onTokenReply(Color4ChromaEvidenceGate.Attempt("b", t.generation, t.variant), 1, 1, "udp_sess_token", token))
         assertFalse(g.confirmVisibleColorByOperator(fake, true))
         assertEquals(Color4ChromaEvidenceGate.Evidence.UNTESTED, g.evidence("b"))
         assertEquals(Color4ChromaEvidenceGate.Evidence.AWAITING_HANDSHAKE, g.evidence("a"))
+    }
+
+    @Test fun forgedMatchingTicketCannotMintOrRevokeHardwareProof() {
+        val g = Color4ChromaEvidenceGate()
+        val real = g.beginExplicitOneShot("bulb", Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW)!!
+        // A caller in the same Kotlin module can instantiate an identical public
+        // ticket without owning the object actually issued by the gate.
+        val counterfeit = Color4ChromaEvidenceGate.Attempt(real.deviceKey, real.generation, real.variant)
+        assertFalse(g.onTokenReply(counterfeit, 1, 1, "udp_sess_token", token))
+        assertFalse(g.recordOneColorFrame(counterfeit, 2))
+        assertFalse(g.confirmVisibleColorByOperator(counterfeit, true))
+        assertFalse(g.onCorrelatedDeviceError(counterfeit, 1))
+        assertFalse(g.onAmbiguousSendOrTimeout(counterfeit, 1))
+        assertFalse(g.close(counterfeit))
+        assertEquals(Color4ChromaEvidenceGate.Evidence.AWAITING_HANDSHAKE, g.evidence("bulb"))
+        assertTrue(g.onTokenReply(real, 1, 1, "udp_sess_token", token))
+        assertTrue(g.recordOneColorFrame(real, 2))
+        assertTrue(g.confirmVisibleColorByOperator(real, true))
+        assertTrue(g.close(real))
+        assertEquals(Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW, g.confirmedClosedVariant("bulb"))
+        assertFalse(g.onCorrelatedDeviceError(counterfeit, 2))
+        assertEquals(Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW, g.confirmedClosedVariant("bulb"))
+    }
+
+    @Test fun manyCounterfeitTicketsDoNotCauseCrossDeviceOrGenerationReplay() {
+        val g = Color4ChromaEvidenceGate()
+        val a = g.beginExplicitOneShot("a", Color4ChromaEvidenceGate.Variant.V1_UDP_NEW)!!
+        val b = g.beginExplicitOneShot("b", Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW)!!
+        repeat(5000) {
+            val fakeA = Color4ChromaEvidenceGate.Attempt(a.deviceKey, a.generation, a.variant)
+            val fakeB = Color4ChromaEvidenceGate.Attempt(b.deviceKey, b.generation, b.variant)
+            assertFalse(g.onTokenReply(fakeA, 1, 1, "udp_token", token))
+            assertFalse(g.onTokenReply(fakeB, 1, 1, "udp_sess_token", token))
+            assertFalse(g.onCorrelatedDeviceError(fakeA, 1))
+        }
+        assertTrue(g.onTokenReply(a, 1, 1, "udp_token", token))
+        assertTrue(g.onTokenReply(b, 1, 1, "udp_sess_token", token))
+        assertTrue(g.close(a))
+        assertTrue(g.clearOnlyByOperator("a"))
+        val newer = g.beginExplicitOneShot("a", Color4ChromaEvidenceGate.Variant.V1_UDP_NEW)!!
+        assertFalse(g.onCorrelatedDeviceError(a, 1))
+        assertFalse(g.onCorrelatedDeviceError(Color4ChromaEvidenceGate.Attempt(newer.deviceKey, newer.generation, newer.variant), 1))
+        assertEquals(Color4ChromaEvidenceGate.Evidence.AWAITING_HANDSHAKE, g.evidence("a"))
+    }
+
+    @Test fun attemptFromDifferentGateWithIdenticalSequenceIsNotAccepted() {
+        val firstGate = Color4ChromaEvidenceGate()
+        val otherGate = Color4ChromaEvidenceGate()
+        val a = firstGate.beginExplicitOneShot("bulb", Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW)!!
+        val foreign = otherGate.beginExplicitOneShot("bulb", Color4ChromaEvidenceGate.Variant.V2_UDP_SESS_NEW)!!
+        assertEquals(a.generation, foreign.generation)
+        assertEquals(a.deviceKey, foreign.deviceKey)
+        assertEquals(a.variant, foreign.variant)
+        assertFalse(firstGate.onTokenReply(foreign, 1, 1, "udp_sess_token", token))
+        assertFalse(firstGate.close(foreign))
+        assertFalse(firstGate.onCorrelatedDeviceError(foreign, 1))
+        assertTrue(firstGate.onTokenReply(a, 1, 1, "udp_sess_token", token))
+        assertEquals(Color4ChromaEvidenceGate.Evidence.HANDSHAKE_ONLY, firstGate.evidence("bulb"))
     }
 
     @Test fun oneOfFourteenLampsDoesNotGloballyEnableOthers() {

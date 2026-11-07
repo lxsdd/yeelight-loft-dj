@@ -21,7 +21,12 @@ class Color4ChromaEvidenceGate {
         EXPERIMENTAL_METHOD_ONLY, COLOR_SENT_UNCONFIRMED,
         COLOR_VISUALLY_CONFIRMED, REJECTED_OR_UNCERTAIN
     }
-    data class Attempt(val deviceKey: String, val generation: Long, val variant: Variant)
+    /**
+     * A capability by object identity, not a serializable/destructurable tuple.
+     * Even an in-module counterfeit with identical fields cannot authorize a
+     * token, color confirmation, device error, or closure. Never persist it.
+     */
+    class Attempt internal constructor(val deviceKey: String, val generation: Long, val variant: Variant)
     private data class Lane(
         var attempt: Attempt? = null,
         var evidence: Evidence = Evidence.UNTESTED,
@@ -60,10 +65,20 @@ class Color4ChromaEvidenceGate {
             // experimental reply is NOT an endorsement to send set_scene.
             Variant.EXPERIMENTAL_CHROMA_METHOD -> null
         }
-        if (requestId != 1 || replyId != requestId || !hexToken.matches(opaqueToken) ||
+        // A wrong request/reply ID can be an unrelated datagram: ignore it.
+        // Once a transport-validated reply DOES correlate to this one-shot
+        // handshake, an invalid token/method is terminal. Continuing to wait
+        // could falsely promote a later replay into hardware proof.
+        if (requestId != 1 || replyId != requestId) return false
+        if (!hexToken.matches(opaqueToken) ||
             (method == null && replyMethod !in setOf(
                 "udp_sess_token", "udp_chroma_sess_token", "udp_token"
-            )) || (method != null && replyMethod != method)) return false
+            )) || (method != null && replyMethod != method)) {
+            lane.evidence = Evidence.REJECTED_OR_UNCERTAIN
+            lane.sessionClosed = true
+            lane.operatorResetRequired = true
+            return false
+        }
         lane.evidence = if (method == null) Evidence.EXPERIMENTAL_METHOD_ONLY
             else Evidence.HANDSHAKE_ONLY
         return true
@@ -173,7 +188,7 @@ class Color4ChromaEvidenceGate {
 
     private fun matching(attempt: Attempt): Lane? {
         val lane = lanes[attempt.deviceKey] ?: return null
-        return if (lane.attempt == attempt) lane else null
+        return if (lane.attempt === attempt) lane else null
     }
 
     private fun active(attempt: Attempt): Lane? {
