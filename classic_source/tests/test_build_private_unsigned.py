@@ -7,7 +7,7 @@ import zipfile
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from build_private_unsigned import verify_unsigned, verify_final_firebase_boundary
+from build_private_unsigned import verify_unsigned, verify_final_firebase_boundary, verify_final_component_classes
 from classic_first import GateFailure, NEW_PACKAGE
 
 class FakeRun:
@@ -75,29 +75,101 @@ class FirebaseFinalManifestGate(unittest.TestCase):
             ns+'authorities': 'io.lxsdd.yeelightdj.firebaseinitprovider' if authority and i == count-1 else f'io.lxsdd.yeelightdj.p{i}'}}
             for i in range(count)]}
 
-    def test_six_other_original_providers_preserved(self):
-        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6)):
+    def test_five_retained_providers_in_private_clone(self):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5)):
             r = verify_final_firebase_boundary(self.candidate)
-        self.assertEqual(r['status'], 'PRIVATE_FIREBASE_AUTO_INIT_DISABLED')
+        self.assertEqual(r['status'], 'PRIVATE_EARLY_STARTUP_PROVIDERS_RECONCILED')
         self.assertEqual(r['android_startup'], 'NOT_TESTED')
 
     def test_firebase_class_reintroduced_rejected(self):
-        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6, firebase=True)):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5, firebase=True)):
             with self.assertRaisesRegex(GateFailure, 'FINAL_FIREBASE_INIT_REINTRODUCED'):
                 verify_final_firebase_boundary(self.candidate)
 
     def test_firebase_authority_reintroduced_rejected(self):
-        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6, authority=True)):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5, authority=True)):
             with self.assertRaisesRegex(GateFailure, 'FINAL_FIREBASE_AUTHORITY_REINTRODUCED'):
                 verify_final_firebase_boundary(self.candidate)
 
+    def test_legacy_device_provider_reintroduced_is_rejected(self):
+        names = [f'com.yeelight.cherry.P{i}' for i in range(4)] + ['com.yeelight.yeelib.data.DeviceInteractionProvider']
+        with patch('build_private_unsigned.parse_binary_xml', return_value={
+            'elements': [{'tag':'provider', 'attributes':{
+                '{http://schemas.android.com/apk/res/android}name': n,
+                '{http://schemas.android.com/apk/res/android}authorities': f'io.lxsdd.yeelightdj.p{i}'}}
+                for i,n in enumerate(names)]}):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_MISSING_DEVICE_PROVIDER_REINTRODUCED'):
+                verify_final_firebase_boundary(self.candidate)
+
     def test_wrong_original_provider_count_rejected(self):
-        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5)):
-            with self.assertRaisesRegex(GateFailure, 'FINAL_PROVIDER_COUNT_NOT_SIX'):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(4)):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_PROVIDER_COUNT_NOT_FIVE'):
                 verify_final_firebase_boundary(self.candidate)
 
     def test_corrupt_final_binary_xml_rejected(self):
         with self.assertRaisesRegex(GateFailure, 'FINAL_BINARY_MANIFEST_INVALID'):
             verify_final_firebase_boundary(self.candidate)
+
+class PrivateStartupClassResolutionGate(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.candidate = Path(self.temp.name) / "clone.apk"
+        with zipfile.ZipFile(self.candidate, "w") as archive:
+            archive.writestr("AndroidManifest.xml", b"synthetic")
+            for name in ("classes.dex","classes2.dex","classes3.dex"):
+                archive.writestr(name, b"synthetic-dex")
+
+    def manifest(self, missing=False, app_missing=False, providers=5):
+        ns = "{http://schemas.android.com/apk/res/android}name"
+        app = "com.yeelight.cherry.App"
+        names = [f"com.yeelight.cherry.Provider{i}" for i in range(providers)]
+        if missing:
+            names[-1] = "com.yeelight.yeelib.data.DeviceInteractionProvider"
+        elements = [{"tag": "application", "attributes": {ns: app}}]
+        elements += [{"tag": "provider", "attributes": {ns: name}} for name in names]
+        all_defined = {"L"+name.replace(".","/")+";" for name in names+[app]}
+        if missing:
+            all_defined.discard("L"+names[-1].replace(".","/")+";")
+        if app_missing:
+            all_defined.discard("L"+app.replace(".","/")+";")
+        return {"elements":elements}, all_defined
+
+    def test_all_retained_classes_are_defined(self):
+        manifest, definitions = self.manifest()
+        with patch('build_private_unsigned.parse_binary_xml', return_value=manifest), \
+             patch('build_private_unsigned.dex_descriptors', side_effect=[definitions, set(), set()]):
+            result = verify_final_component_classes(self.candidate)
+        self.assertEqual(result['status'], 'FINAL_PROVIDER_AND_APPLICATION_CLASSES_PRESENT')
+        self.assertEqual(result['verified_component_classes'], 6)
+        self.assertEqual(result['android_startup'], 'NOT_TESTED')
+
+    def test_missing_oem_provider_fails_before_signing(self):
+        manifest, definitions = self.manifest(missing=True)
+        with patch('build_private_unsigned.parse_binary_xml', return_value=manifest), \
+             patch('build_private_unsigned.dex_descriptors', side_effect=[definitions, set(), set()]):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_APP_OR_PROVIDER_CLASS_NOT_IN_APK'):
+                verify_final_component_classes(self.candidate)
+
+    def test_missing_application_class_fails_before_signing(self):
+        manifest, definitions = self.manifest(app_missing=True)
+        with patch('build_private_unsigned.parse_binary_xml', return_value=manifest), \
+             patch('build_private_unsigned.dex_descriptors', side_effect=[definitions, set(), set()]):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_APP_OR_PROVIDER_CLASS_NOT_IN_APK'):
+                verify_final_component_classes(self.candidate)
+
+    def test_duplicate_classes_across_dex_fail(self):
+        manifest, definitions = self.manifest()
+        with patch('build_private_unsigned.parse_binary_xml', return_value=manifest), \
+             patch('build_private_unsigned.dex_descriptors', side_effect=[definitions, definitions, set()]):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_CLONE_DUPLICATE_DEX_CLASS'):
+                verify_final_component_classes(self.candidate)
+
+    def test_component_provider_count_changed_fails(self):
+        manifest, definitions = self.manifest(providers=4)
+        with patch('build_private_unsigned.parse_binary_xml', return_value=manifest), \
+             patch('build_private_unsigned.dex_descriptors', side_effect=[definitions, set(), set()]):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_COMPONENT_DECLARATIONS_CHANGED'):
+                verify_final_component_classes(self.candidate)
 
 if __name__ == '__main__': unittest.main()
