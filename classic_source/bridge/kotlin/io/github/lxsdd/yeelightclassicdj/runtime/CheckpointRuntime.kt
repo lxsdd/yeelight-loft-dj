@@ -7,6 +7,7 @@ import loftdj.classic.ClassicDjEngine
 import loftdj.classic.ClassicMusicCoordinator
 import loftdj.classic.ClassicPcmCaptureSession
 import loftdj.classic.ClassicPcmDjBridge
+import loftdj.classic.ClassicYeelightMusicTransport
 
 /**
  * Concrete private Classic/Loft-DJ adapter, binding the *existing* tested DSP checkpoint.
@@ -34,26 +35,45 @@ class CheckpointRuntime : DjRuntime {
     }
     internal var clock: () -> Long = { SystemClock.elapsedRealtime() }
     internal var idle: () -> Unit = { Thread.sleep(12L) }
+    /** Injected by deterministic JVM tests. Production creates REAL private-LAN reverse sockets only after user selection. */
+    internal var wifiAddress: () -> String? = { ClassicYeelightMusicTransport.wifiPrivateIpv4() }
+    internal var transportFactory: (String, Set<String>) -> ClassicMusicCoordinator.Transport =
+        { ip, ids -> ClassicYeelightMusicTransport(ip, ids) }
 
-    override fun start(context: Context, source: String, listener: DjRuntime.Listener) {
+    override fun start(context: Context, source: String, selectedLampIps: List<String>, listener: DjRuntime.Listener) {
         require(source == "microphone") { "Only explicit microphone capture is supported" }
+        require(selectedLampIps.size <= 4 && selectedLampIps.distinct().size == selectedLampIps.size)
+        require(selectedLampIps.all(ClassicYeelightMusicTransport::validLanIp))
         synchronized(lock) {
             check(state == State.NEW) { "Session cannot be restarted" }
             state = State.STARTING
             this.listener = listener
         }
         var createdInput: ClassicPcmCaptureSession.Input? = null
+        var stagedEngine: ClassicDjEngine? = null
         try {
-            createdInput = inputFactory()
-            val coordinator = ClassicMusicCoordinator(DENY_ALL_LAMP_TRANSPORT)
-            // No devices registered: there is no way to issue LAN/Cloud/Music commands.
+            val localIp = if (selectedLampIps.isEmpty()) null else
+                wifiAddress()
+                    ?: error("Wi-Fi IPv4 address not found; no device commands sent")
+            val coordinator = if (selectedLampIps.isEmpty()) ClassicMusicCoordinator(DENY_ALL_LAMP_TRANSPORT)
+                              else ClassicMusicCoordinator(transportFactory(localIp!!, selectedLampIps.toSet()))
+            for (ip in selectedLampIps) coordinator.register(ip, musicSupported = true)
             val newEngine = ClassicDjEngine(coordinator)
-            val bridge = ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE)
+            stagedEngine = newEngine
+            // The user manually chooses participants; NOTHING starts by discovery/notification.
+            val states = if (selectedLampIps.isEmpty()) emptyMap() else newEngine.select(selectedLampIps)
+            val owned = states.filterValues { it == ClassicMusicCoordinator.State.OWNED }.keys
+            if (selectedLampIps.isNotEmpty() && owned.isEmpty()) {
+                error("No confirmed reverse channel; leave remote state untouched and stop")
+            }
+            synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
+            createdInput = inputFactory()
+            val bridge = ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = ClassicPcmCaptureSession(bridge, createdInput, clock) { output ->
                 val current = synchronized(lock) {
                     if (state == State.RUNNING) this.listener else null
                 }
-                if (current != null) current.onBeat(output.bpm ?: 0.0, output.level.toFloat())
+                current?.onBeat(output.bpm ?: 0.0, output.level.toFloat())
             }
             newCapture.start()
             synchronized(lock) {
@@ -67,9 +87,12 @@ class CheckpointRuntime : DjRuntime {
                     it.start()
                 }
             }
-            listener.onState("MIC_ANALYSIS_ONLY_NO_LAMPS")
+            listener.onState(if (owned.isEmpty()) "MIC_ANALYSIS_ONLY_NO_LAMPS"
+                             else "DJ_ACTIVE_${owned.size}_LAMPS")
         } catch (error: Throwable) {
-            synchronized(lock) { state = State.CLOSED; listener.let { this.listener = null } }
+            // Canceling during a network handshake must not leave an owned music session.
+            try { stagedEngine?.stop() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
+            synchronized(lock) { state = State.CLOSED; this.listener = null }
             try { createdInput?.close() } catch (close: Throwable) { error.addSuppressed(close) }
             throw error
         }

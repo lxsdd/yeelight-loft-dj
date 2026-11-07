@@ -17,6 +17,7 @@ STUBS = {
  public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4;
  public Intent(Context c, Class<?> k){} public Intent addFlags(int f){return this;}
  public Intent setAction(String a){return this;} public String getAction(){return "";}
+ public Intent putExtra(String k,String[] a){return this;} public String[] getStringArrayExtra(String k){return null;}
 }''',
 'android/content/pm/PackageManager.java': '''package android.content.pm; public class PackageManager { public static final int PERMISSION_GRANTED=0; }''',
 'android/app/Activity.java': '''package android.app; public class Activity extends android.content.Context {
@@ -70,6 +71,12 @@ STUBS = {
 'android/widget/TextView.java': '''package android.widget; public class TextView extends android.view.View {
  public TextView(android.content.Context c){super(c);} public TextView(android.content.Context c,android.util.AttributeSet a){super(c);}
  public void setText(CharSequence c){} public void setTextSize(float s){}
+}''',
+'android/widget/EditText.java': '''package android.widget; public class EditText extends TextView {
+ public EditText(android.content.Context c){super(c);} public void setSingleLine(boolean v){} public void setHint(CharSequence x){} public CharSequence getText(){return "";}
+}''',
+'android/widget/CheckBox.java': '''package android.widget; public class CheckBox extends Button {
+ public CheckBox(android.content.Context c){super(c);} public boolean isChecked(){return false;}
 }''',
 'android/widget/Button.java': '''package android.widget; public class Button extends TextView {
  public Button(android.content.Context c){super(c);} public Button(android.content.Context c,android.util.AttributeSet attrs){super(c,attrs);}

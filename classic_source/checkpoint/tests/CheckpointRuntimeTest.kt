@@ -37,24 +37,57 @@ fun main() {
     runtime.clock = { now += 64; now }
     runtime.idle = { Thread.sleep(1) }
     val result = Listener()
-    check(runCatching { runtime.start(Context(), "internal", result) }.isFailure)
-    runtime.start(Context(), "microphone", result)
+    check(runCatching { runtime.start(Context(), "internal", emptyList(), result) }.isFailure)
+    runtime.start(Context(), "microphone", emptyList(), result)
     check(result.beat.await(4, TimeUnit.SECONDS)) { "No PCM output" }
     check(result.lastLevel.isFinite() && result.lastLevel in 0f..1f)
-    check(runCatching { runtime.start(Context(), "microphone", result) }.isFailure)
+    check(runCatching { runtime.start(Context(), "microphone", emptyList(), result) }.isFailure)
     runtime.stop(); runtime.stop()
     check(sample.closed)
     check(result.states.contains("MIC_ANALYSIS_ONLY_NO_LAMPS"))
     check(result.states.contains("STOPPED"))
-    check(runCatching { runtime.start(Context(), "microphone", result) }.isFailure)
+    check(runCatching { runtime.start(Context(), "microphone", emptyList(), result) }.isFailure)
 
     val failure = CheckpointRuntime()
     val broken = MockMic(throwRead = true)
     failure.inputFactory = { broken }
     val cb = Listener()
-    failure.start(Context(), "microphone", cb)
+    failure.start(Context(), "microphone", emptyList(), cb)
     check(cb.error.await(4, TimeUnit.SECONDS)) { "Capture exception not delivered" }
     failure.stop()
     check(broken.closed)
-    println("PASS Classic runtime PCM/FFT lifecycle, no-device guard, double-start, and failure path")
+    // Integration acceptance: user-picked one Color4 is registered, owned and stopped.
+    // No sockets or actual lamp writes: injected in-memory reverse transport.
+    val selected = CheckpointRuntime()
+    val mic = MockMic()
+    selected.inputFactory = { mic }
+    selected.clock = { System.nanoTime() / 1_000_000L }
+    selected.wifiAddress = { "192.168.0.12" }
+    val transport = object : loftdj.classic.ClassicMusicCoordinator.Transport {
+        var active = false
+        var starts = 0
+        var stops = 0
+        override fun readMusic(id: String): Boolean? = active
+        override fun requestStart(id: String): Boolean { starts++; active=true; return true }
+        override fun reverseConnected(id: String) = true
+        override fun requestStop(id: String): Boolean { stops++; active=false; return true }
+        override fun closeReverse(id: String) {}
+        override fun sendReverseFrame(id: String, generation: Long, rgb: Int, brightness: Int)=true
+    }
+    selected.transportFactory = { local, ids ->
+        check(local == "192.168.0.12" && ids == setOf("192.168.55.42"))
+        transport
+    }
+    val userStatus = Listener()
+    selected.start(Context(), "microphone", listOf("192.168.55.42"), userStatus)
+    check(userStatus.beat.await(4,TimeUnit.SECONDS))
+    check(userStatus.states.contains("DJ_ACTIVE_1_LAMPS"))
+    selected.stop()
+    check(mic.closed && transport.starts == 1 && transport.stops == 1 && !transport.active)
+    // Invalid/non-private participants never reach transport or mic acquisition.
+    val unsafe = CheckpointRuntime()
+    unsafe.inputFactory = { error("Input MUST NOT be opened for public IP") }
+    check(runCatching { unsafe.start(Context(), "microphone", listOf("8.8.8.8"), Listener()) }.isFailure)
+    check(runCatching { unsafe.start(Context(), "microphone", listOf("192.168.1.2", "192.168.1.2"), Listener()) }.isFailure)
+    println("PASS Classic runtime PCM/FFT lifecycle, explicit 1-lamp transport lifecycle, denied IPs, double-start, and failure path")
 }
