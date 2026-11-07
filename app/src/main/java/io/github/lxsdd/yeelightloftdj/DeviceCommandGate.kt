@@ -85,6 +85,21 @@ class DeviceCommandGate(
         synchronized(s) { return s.quarantined }
     }
 
+    /**
+     * Release a normal LAN TCP client slot under the SAME per-IP monitor as
+     * status, scene, power and Music handshake commands. The callback must
+     * ONLY close the socket; it must never send a command.
+     *
+     * Cleanup must remain possible during firmware quarantine, never consume
+     * command quota, and never trigger a delayed retry. Another bulb's lock
+     * is independent, so closing one slot cannot freeze the whole loft.
+     */
+    internal fun closeSessionSlot(ip: String, close: () -> Unit) {
+        require(ip.isNotBlank())
+        val s = state(ip)
+        synchronized(s) { close() }
+    }
+
     fun <T> run(ip: String, requests: Int = 1, action: () -> T): T {
         require(ip.isNotBlank() && requests in 1..maxCommandsPerMinute)
         val s = state(ip)

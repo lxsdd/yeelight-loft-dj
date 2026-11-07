@@ -822,9 +822,18 @@ object YeelightLan {
         return true
     }
 
-    /** Release this lamp's normal LAN socket after the one-time music handshake. */
-    fun releaseMusicControlSlot(device: YeelightDevice) =
-        tcp.closeTarget(device.ip, device.port)
+    /**
+     * Release the normal LAN client after the one-time Music handshake.
+     * Closing outside the shared per-IP command gate could otherwise race
+     * with a concurrent status/scene/power RPC for this same lamp. This is
+     * socket cleanup only: no LAN write, no retry and no quota debit.
+     */
+    fun releaseMusicControlSlot(device: YeelightDevice) {
+        require(isLocalIp(device.ip))
+        commandGate.closeSessionSlot(device.ip) {
+            tcp.closeTarget(device.ip, device.port)
+        }
+    }
 
     /** Explicit user-approved release of an existing Music session that
      * does not belong to any live socket in this process.
