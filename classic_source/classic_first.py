@@ -159,26 +159,27 @@ def patch_manifest(path: Path) -> dict:
 
 
 def patch_layout(path: Path) -> None:
+    """Add the DJ entry without changing Classic's verified root ViewGroup.
+
+    The pinned OEM main layout is a LinearLayout. A FrameLayout wrapper can
+    break OEM code that retrieves or casts the actual inflated root. Preserve
+    original root attributes and every pre-existing child index instead.
+    """
     require(path.is_file() and not path.is_symlink(), "CLASSIC_MAIN_LAYOUT_MISSING")
     tree = ET.parse(path)
-    old_root = tree.getroot()
-    require(old_root.tag not in ("layout", "merge", "include"), "CLASSIC_LAYOUT_UNSAFE_ROOT")
-    require(old_root.tag != "FrameLayout" or old_root.get(A("id")) != "@+id/loft_dj_shell", "LAYOUT_ALREADY_PATCHED")
-    wrapper = ET.Element("FrameLayout", {
-        A("layout_width"): "match_parent", A("layout_height"): "match_parent",
-        A("id"): "@+id/loft_dj_shell",
-    })
-    # Preserve original children and event handlers completely; original root fills wrapper.
-    old_root.set(A("layout_width"), "match_parent")
-    old_root.set(A("layout_height"), "match_parent")
-    wrapper.append(old_root)
-    ET.SubElement(wrapper, BRIDGE_BUTTON, {
+    root = tree.getroot()
+    require(root.tag == "LinearLayout", "CLASSIC_LAYOUT_ROOT_CHANGED_FAIL_CLOSED")
+    require(not any(node.tag == BRIDGE_BUTTON or node.get(A("id")) == "@+id/loft_dj_button"
+                    for node in root.iter()), "LAYOUT_ALREADY_PATCHED")
+    # Appending retains the original five children in their exact positions.
+    ET.SubElement(root, BRIDGE_BUTTON, {
         A("id"): "@+id/loft_dj_button",
-        A("layout_width"): "wrap_content", A("layout_height"): "wrap_content",
-        A("layout_gravity"): "top|end", A("layout_marginTop"): "60dp", A("layout_marginEnd"): "12dp",
+        A("layout_width"): "wrap_content",
+        A("layout_height"): "wrap_content",
+        A("layout_gravity"): "end",
         A("contentDescription"): "Loft DJ öffnen",
     })
-    ET.ElementTree(wrapper).write(path, encoding="utf-8", xml_declaration=True)
+    tree.write(path, encoding="utf-8", xml_declaration=True)
 
 
 def check_decoded_safety(directory: Path) -> None:
