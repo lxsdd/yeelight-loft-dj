@@ -68,6 +68,12 @@ jobs:
           umask 077
           mkdir -p "$RUNNER_TEMP/private-original"
           bash github_hosted/vault.sh fetch "$RUNNER_TEMP/private-original" classic-original-3.5.4-v1
+      - name: Require ALL real original APK tests (NO skips)
+        env:
+          CLASSIC_ORIGINAL_APK: ${{ runner.temp }}/private-original/com.yeelight.cherry_3.5.4.apk
+        run: |
+          set -euo pipefail
+          python3 classic_source/run_real_oem_tests.py
       - name: Build and verify private unsigned APK; zero vault credentials
         env:
           CLASSIC_APKTOOL_JAR: ${{ runner.temp }}/classic-tools/apktool_3.0.3.jar
@@ -85,6 +91,12 @@ jobs:
             }
           test -s "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk"
           test -s "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk.preflight.json"
+      - name: Compare original / built startup components and DEX dependencies BEFORE signing
+        run: |
+          set -euo pipefail
+          python3 classic_source/private_startup_audit.py \
+            --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+            --candidate "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk"
       - name: Sign one private test APK with a fresh ephemeral certificate
         run: |
           set -euo pipefail
@@ -100,6 +112,15 @@ jobs:
             }
           test -s "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
           test -s "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk.test-signing.json"
+      - name: Independently audit FINAL signed classes and verify unsigned/signed payload parity
+        run: |
+          set -euo pipefail
+          python3 classic_source/private_payload_parity.py \
+            --unsigned "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk" \
+            --signed "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
+          python3 classic_source/private_startup_audit.py \
+            --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+            --candidate "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
       - name: Send TEST-SIGNED APK to PRIVATE draft Release only
         env:
           GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}

@@ -1,0 +1,97 @@
+# Owner-only PRIVATE original APK audit; no APK signing, release or artifacts.
+name: Classic PRIVATE original/startup qualification (no APK release)
+run-name: Classic private startup audit ${ github.sha }}
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: yeelight-classic-private-startup-audit
+  cancel-in-progress: false
+jobs:
+  private-startup-audit:
+    if: ${ github.actor == 'lxsdd' && github.ref == 'refs/heads/main' && github.repository == 'lxsdd/yeelight-loft-dj' && github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: classic-private-build
+      deployment: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout protected source without credentials
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify owner-only context
+        run: python3 github_hosted/policy.py
+      - name: Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Gradle without private cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.8.2'
+          cache-disabled: true
+      - name: Source tests (synthetic only at this point)
+        run: |
+          set -euo pipefail
+          (cd classic_source && python3 -m unittest discover -s tests -q)
+          (cd classic_source/checkpoint && python3 -m unittest discover -s tests -q)
+          python3 -m unittest discover -s github_hosted/tests -q
+      - name: Pin SDK and Apktool
+        run: |
+          set -euo pipefail
+          umask 077
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' >/dev/null
+          mkdir -p "$RUNNER_TEMP/classic-tools"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 2 \
+            'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar' \
+            -o "$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar"
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  '"$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar" | sha256sum --check --status
+      - name: Download pinned original from PRIVATE vault
+        env:
+          GH_TOKEN: ${ secrets.CLASSIC_VAULT_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/classic-original"
+          bash github_hosted/vault.sh fetch "$RUNNER_TEMP/classic-original" classic-original-3.5.4-v1
+      - name: ALL real-OEM tests (zero skips allowed)
+        env:
+          CLASSIC_ORIGINAL_APK: ${ runner.temp }}/classic-original/com.yeelight.cherry_3.5.4.apk
+        run: |
+          set -euo pipefail
+          python3 classic_source/run_real_oem_tests.py
+      - name: Build PRIVATE unsigned candidate; never sign or publish
+        env:
+          CLASSIC_APKTOOL_JAR: ${ runner.temp }}/classic-tools/apktool_3.0.3.jar
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/classic-qualification"
+          python3 classic_source/build_private_unsigned.py \
+            --original "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk" \
+            --android-sdk "$ANDROID_HOME" \
+            --output "$RUNNER_TEMP/classic-qualification/unsigned.apk" \
+            > "$RUNNER_TEMP/classic-qualification/internal-build.log" 2>&1 || {
+              echo "PRIVATE_UNSIGNED_AUDIT_BUILD_BLOCKED"
+              exit 2
+            }
+      - name: Independently reconcile original and unsigned manifest DEX inheritance
+        run: |
+          set -euo pipefail
+          python3 classic_source/private_startup_audit.py \
+            --original "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk" \
+            --candidate "$RUNNER_TEMP/classic-qualification/unsigned.apk"
+          echo "PRIVATE_STATIC_STARTUP_AUDIT_COMPLETE_NO_APK_PUBLISHED"
+      - name: Remove all private materials
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf -- "$RUNNER_TEMP/classic-original" "$RUNNER_TEMP/classic-qualification" "$RUNNER_TEMP/classic-tools"
