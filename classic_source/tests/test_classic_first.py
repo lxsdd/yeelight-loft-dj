@@ -23,10 +23,10 @@ MANIFEST = '''<?xml version="1.0" encoding="utf-8"?>
     <provider android:name=".Provider" android:authorities="com.yeelight.cherry.device;com.yeelight.cherry.landevice" android:permission="com.yeelight.cherry.PERMISSION" android:exported="false"/>
   </application>
 </manifest>'''
-LAYOUT = '''<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+LAYOUT = '''<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
  android:layout_width="match_parent" android:layout_height="match_parent">
  <TextView android:id="@+id/old" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Original Classic"/>
-</androidx.constraintlayout.widget.ConstraintLayout>'''
+</LinearLayout>'''
 DEX = b'dex\n039\0' + b'X'*200 + (b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;'
@@ -121,15 +121,32 @@ class ClassicTests(unittest.TestCase):
         with self.assertRaisesRegex(x.GateFailure, 'SHARED_USER_ID'):
             x.patch_manifest(p)
 
-    def test_layout_wraps_but_retains_original_content(self):
+    def test_layout_preserves_original_root_and_child_indices(self):
         p = self.decoded / 'res/layout/activity_main_new.xml'
+        before = ET.parse(p).getroot()
+        original_attributes = dict(before.attrib)
+        original_children = [ET.tostring(child) for child in before]
         x.patch_layout(p)
         root = ET.parse(p).getroot()
-        self.assertEqual(root.tag, 'FrameLayout')
-        self.assertEqual(root[0].tag, 'androidx.constraintlayout.widget.ConstraintLayout')
-        self.assertEqual(root[0][0].get(x.A('text')), 'Original Classic')
-        self.assertEqual(root[1].tag, x.BRIDGE_BUTTON)
-        self.assertEqual(root[1].get(x.A('layout_gravity')), 'top|end')
+        self.assertEqual(root.tag, 'LinearLayout')
+        self.assertEqual(root.attrib, original_attributes)
+        self.assertEqual([ET.tostring(child) for child in root[:-1]], original_children)
+        self.assertEqual(root[0].get(x.A('text')), 'Original Classic')
+        self.assertEqual(root[-1].tag, x.BRIDGE_BUTTON)
+        self.assertEqual(root[-1].get(x.A('layout_gravity')), 'end')
+        self.assertEqual(root[-1].get(x.A('contentDescription')), 'Loft DJ öffnen')
+        with self.assertRaisesRegex(x.GateFailure, 'LAYOUT_ALREADY_PATCHED'):
+            x.patch_layout(p)
+
+    def test_layout_rejects_unverified_root_without_modifying_it(self):
+        p = self.decoded / 'res/layout/activity_main_new.xml'
+        wrong = p.read_text().replace('<LinearLayout ', '<FrameLayout ').replace(
+            '</LinearLayout>', '</FrameLayout>')
+        p.write_text(wrong)
+        original_bytes = p.read_bytes()
+        with self.assertRaisesRegex(x.GateFailure, 'CLASSIC_LAYOUT_ROOT_CHANGED_FAIL_CLOSED'):
+            x.patch_layout(p)
+        self.assertEqual(p.read_bytes(), original_bytes)
 
     def test_patch_is_atomic_and_does_not_touch_source(self):
         baseline = x.digest_file(self.decoded / 'AndroidManifest.xml')
