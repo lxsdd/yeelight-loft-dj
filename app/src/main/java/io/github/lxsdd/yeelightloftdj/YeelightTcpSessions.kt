@@ -148,6 +148,17 @@ class YeelightTcpSessions(
         synchronized(session) { invalidate(key, session) }
     }
 
+    /**
+     * Used by whole-app shutdown: snapshot endpoints and let the caller take
+     * the same per-IP command gate before closing each slot. No request or
+     * reconnect is issued. Closing remains per bulb, not a global monitor.
+     */
+    fun closeAllCoordinated(closeUnderDeviceGate: (String, () -> Unit) -> Unit) {
+        sessions.keys.toList().forEach { key ->
+            closeUnderDeviceGate(key.ip) { closeTarget(key.ip, key.port) }
+        }
+    }
+
     fun closeAll() {
         sessions.entries.toList().forEach { (key, session) ->
             synchronized(session) { invalidate(key, session) }

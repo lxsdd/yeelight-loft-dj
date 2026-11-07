@@ -133,8 +133,16 @@ object YeelightLan {
                 ?: error("LAN-Recovery: keine gültige Statusantwort; Sperre bleibt bestehen")
         }
     }
-    /** Release LAN slots when the user leaves the app, including for Yeelight itself. */
-    fun releaseTcpConnections() = tcp.closeAll()
+    /**
+     * On app exit release each open normal LAN slot under its device gate.
+     * This avoids competing with a still-finishing read/scene/Music handshake
+     * and leaves unrelated bulbs independent. Cleanup sends no LAN commands.
+     */
+    fun releaseTcpConnections() {
+        tcp.closeAllCoordinated { ip, close ->
+            commandGate.closeSessionSlot(ip, close)
+        }
+    }
     private const val HOST = "239.255.255.250"
     private const val PORT = 1982
     private val seq = AtomicInteger(1)

@@ -200,6 +200,57 @@ class YeelightTcpSessionsTest {
         }
     }
 
+    @Test fun appShutdownClosesEveryLanSlotUnderItsPerDeviceGate() {
+        ServerSocket(0).use { first ->
+            ServerSocket(0).use { second ->
+                val closed = AtomicInteger()
+                val workers = listOf(first, second).map { server ->
+                    thread {
+                        server.accept().use { socket ->
+                            socket.soTimeout = 2500
+                            val request = org.json.JSONObject(
+                                socket.getInputStream().bufferedReader().readLine())
+                            val ack = org.json.JSONObject().put("id", request.getInt("id"))
+                                .put("result", org.json.JSONArray().put("on"))
+                            socket.getOutputStream().write((ack.toString() + "\r\n").toByteArray())
+                            socket.getOutputStream().flush()
+                            if (socket.getInputStream().read() == -1) closed.incrementAndGet()
+                        }
+                    }
+                }
+                val gate = DeviceCommandGate(nowMs = { 10_000L }, minSpacingMs = 0)
+                val tcp = YeelightTcpSessions(trace = {},
+                    connect = { ip, port -> Socket(ip, port).apply { soTimeout = 2000 } })
+                try {
+                    listOf(first.localPort, second.localPort).forEachIndexed { index, port ->
+                        gate.run("127.0.0.1") {
+                            val response = tcp.request("127.0.0.1", port, index + 10,
+                                "get_prop", listOf("power"))
+                            assertEquals("on", response.getJSONArray("result").getString(0))
+                        }
+                    }
+                    assertEquals(2, tcp.openCount())
+                    val closedUnderGate = mutableListOf<String>()
+                    tcp.closeAllCoordinated { ip, close ->
+                        gate.closeSessionSlot(ip) {
+                            closedUnderGate.add(ip)
+                            close()
+                        }
+                    }
+                    assertEquals(0, tcp.openCount())
+                    assertEquals(listOf("127.0.0.1", "127.0.0.1"), closedUnderGate)
+                    assertEquals(2, gate.consumed("127.0.0.1"))
+                    workers.forEach { it.join(2700) }
+                    assertEquals("Both client slots must be released", 2, closed.get())
+                } finally {
+                    tcp.closeAll()
+                    workers.forEach { it.join(3000) }
+                    assertTrue(workers.none { it.isAlive })
+                }
+            }
+        }
+    }
+
     @Test fun firmwareQuotaIsQuarantinedEvenWhenCallerIgnoresErrorJson() {
         ServerSocket(0).use { server ->
             val worker = thread {
