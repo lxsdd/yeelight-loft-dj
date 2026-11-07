@@ -77,3 +77,27 @@ Spezifikation beendet explizites `set_music([0])` oder das Schließen des
 Reverse-TCP-Kanals die Session; während Music werden keine Property-Notifications
 gesendet. Dieser Zustands-/Recovery-Fall gehört in die bestehende Color4-/RC16-
 Entwicklung, nicht in den Firebase-Startfix. Kein Hardwarekommando aus CI.
+
+## Dritter Pixel-6a-Startabsturz nach PR74 (07.11.2026, 23:46)
+
+Der Owner-Build `42421751285` ist auf main `49b73cd18e34cf4776a9d2534b9ab9b02c6cbab2`
+korrekt signiert und als PRIVATE DRAFT `437891624` abgelegt. Der neue
+`AndroidRuntime`-Stacktrace nennt **nicht mehr** Firebase, sondern
+`java.lang.ClassNotFoundException: com.yeelight.yeelib.data.DeviceInteractionProvider`
+beim Installieren der Manifest-`ContentProvider` vor `Application.onCreate`.
+
+Neue source-only Reparatur für den privaten LAN-first Klon: genau diesen
+legacy Provider nur bei eindeutiger OEM-Klasse, einer einzigen Instanz,
+keiner exportierten Komponente und einer original bekannten Authority
+entfernen. Andere Provider und OEM DEX bleiben unverändert. Der
+finale private APK-Build prüft nun **alle verbleibenden Provider und die
+Application** gegen echte `class_def`-Deskriptoren **aller** DEX-Dateien in
+der signaturfreien APK. Bei fehlender Klasse wird der PRIVATE Bau vor der
+Signierung abgebrochen, statt erneut einen fehlerhaften APK-Kandidaten
+zu erstellen. Positive/negative Testfixtures ergänzen die statischen CI-Gates.
+
+Diese Vorsichtsmaßnahme kann die Yeelight-eigene `DeviceInteractionProvider`-
+IPC-Schnittstelle einschränken; lokale Geräte-/Cloudfunktionen sind deshalb
+nicht als funktionsfähig behauptet. Bei weiteren fehlenden DEX-Klassen ist
+die Original-APK-/Split-Kompatibilität zu überprüfen. Ein grüner Build ist
+immer noch kein realer Android-Start- oder LAN-Hardwaretest.

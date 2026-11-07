@@ -18,7 +18,7 @@ import zipfile
 
 from classic_first import GateFailure, NEW_PACKAGE, digest_file, inspect_original, prepare
 from dex_authority_remap import remap_dex, DexRemapError, assert_self_consistent_dex
-from bridge.build_bridge import build as build_sidecar, ToolError, find_sdk_tools, no_oem_class_collisions
+from bridge.build_bridge import build as build_sidecar, ToolError, find_sdk_tools, no_oem_class_collisions, dex_descriptors
 from apk_readonly_audit import parse_binary_xml, AxmlError
 
 ROOT = Path(__file__).resolve().parent
@@ -90,16 +90,68 @@ def verify_final_firebase_boundary(candidate: Path) -> dict:
     except (AxmlError, KeyError, zipfile.BadZipFile) as exc:
         raise GateFailure("FINAL_BINARY_MANIFEST_INVALID") from exc
     providers = [e["attributes"] for e in root["elements"] if e["tag"] == "provider"]
-    if len(providers) != 6:
-        raise GateFailure("FINAL_PROVIDER_COUNT_NOT_SIX")
+    if len(providers) != 5:
+        raise GateFailure("FINAL_PROVIDER_COUNT_NOT_FIVE")
     for p in providers:
         if p.get("{http://schemas.android.com/apk/res/android}name") == \
                 "com.google.firebase.provider.FirebaseInitProvider":
             raise GateFailure("FINAL_FIREBASE_INIT_REINTRODUCED")
         if p.get("{http://schemas.android.com/apk/res/android}authorities", "").endswith(".firebaseinitprovider"):
             raise GateFailure("FINAL_FIREBASE_AUTHORITY_REINTRODUCED")
-    return {"status": "PRIVATE_FIREBASE_AUTO_INIT_DISABLED", "remaining_oem_providers": 6,
+        if p.get("{http://schemas.android.com/apk/res/android}name") == \
+                "com.yeelight.yeelib.data.DeviceInteractionProvider":
+            raise GateFailure("FINAL_MISSING_DEVICE_PROVIDER_REINTRODUCED")
+    return {"status": "PRIVATE_EARLY_STARTUP_PROVIDERS_RECONCILED", "remaining_oem_providers": 5,
             "android_startup": "NOT_TESTED", "cloud_login": "NOT_TESTED"}
+
+
+def verify_final_component_classes(candidate: Path) -> dict:
+    """Static preflight: every retained ContentProvider AND Application must resolve.
+
+    Android installs ContentProviders before Activities. Checking only their
+    authorities or DEX file hashes missed a real ClassNotFoundException.
+    Fail this PRIVATE build rather than sign another APK with an absent class.
+    No OEM code or identities are logged; output is only count/status.
+    """
+    android_name = "{http://schemas.android.com/apk/res/android}name"
+    try:
+        with zipfile.ZipFile(candidate) as archive:
+            manifest = parse_binary_xml(archive.read("AndroidManifest.xml"))
+            dex_names = sorted(n for n in archive.namelist()
+                               if re.fullmatch(r"classes(?:\d+)?\.dex", n))
+            if len(dex_names) < 3:
+                raise GateFailure("FINAL_CLONE_MISSING_DEX")
+            defined = set()
+            for name in dex_names:
+                current = dex_descriptors(archive.read(name))
+                if defined & current:
+                    raise GateFailure("FINAL_CLONE_DUPLICATE_DEX_CLASS")
+                defined.update(current)
+    except (AxmlError, zipfile.BadZipFile, KeyError, ToolError) as exc:
+        raise GateFailure("FINAL_COMPONENT_SCAN_FAILED") from exc
+    declarations = [e for e in manifest["elements"] if e["tag"] in ("application", "provider")]
+    apps = [e for e in declarations if e["tag"] == "application"]
+    providers = [e for e in declarations if e["tag"] == "provider"]
+    if len(apps) != 1 or len(providers) != 5:
+        raise GateFailure("FINAL_COMPONENT_DECLARATIONS_CHANGED")
+    verified = 0
+    for e in declarations:
+        clazz = e["attributes"].get(android_name)
+        if not clazz:
+            if e["tag"] == "provider":
+                raise GateFailure("FINAL_PROVIDER_CLASS_UNNAMED")
+            continue  # platform default Application
+        if clazz.startswith("android."):
+            continue  # platform-provided Android class
+        if clazz.startswith(".") or "." not in clazz:
+            raise GateFailure("FINAL_COMPONENT_NAME_NOT_CANONICAL")
+        descriptor = "L" + clazz.replace(".", "/") + ";"
+        if descriptor not in defined:
+            raise GateFailure("FINAL_APP_OR_PROVIDER_CLASS_NOT_IN_APK")
+        verified += 1
+    return {"status": "FINAL_PROVIDER_AND_APPLICATION_CLASSES_PRESENT",
+            "verified_component_classes": verified,
+            "provider_count": len(providers), "android_startup": "NOT_TESTED"}
 
 
 def build(original: Path, output: Path, sdk: Path):
@@ -136,6 +188,7 @@ def build(original: Path, output: Path, sdk: Path):
         run([*apktool, 'b', '-o', unsigned, staged])
         report = verify_unsigned(unsigned, original, dex, str(aapt))
         report["firebase_early_init_boundary"] = verify_final_firebase_boundary(unsigned)
+        report["component_resolution_gate"] = verify_final_component_classes(unsigned)
         report['class_collision_check'] = collision_report
         report['runtime_resolution'] = json.loads((bridge / 'runtime_resolution.json').read_text(encoding='utf-8'))
         report['sdk_platform'] = str(android_jar.relative_to(sdk))

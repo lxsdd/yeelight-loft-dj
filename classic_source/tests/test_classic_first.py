@@ -22,6 +22,7 @@ MANIFEST = '''<?xml version="1.0" encoding="utf-8"?>
     <service android:name="com.yeelight.cherry.existing.Sync" android:exported="false"/>
     <provider android:name=".Provider" android:authorities="com.yeelight.cherry.device;com.yeelight.cherry.landevice" android:permission="com.yeelight.cherry.PERMISSION" android:exported="false"/>
     <provider android:name="com.google.firebase.provider.FirebaseInitProvider" android:authorities="com.yeelight.cherry.firebaseinitprovider" android:exported="false"/>
+    <provider android:name="com.yeelight.yeelib.data.DeviceInteractionProvider" android:authorities="com.yeelight.cherry.database.interaction" android:exported="false"/>
   </application>
 </manifest>'''
 LAYOUT = '''<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -109,6 +110,8 @@ class ClassicTests(unittest.TestCase):
         self.assertTrue(any(p.get(x.A('name')) == 'android.permission.FOREGROUND_SERVICE_MICROPHONE' for p in doc.findall('uses-permission')))
         self.assertEqual(len(info['providers']), 1)
         self.assertEqual(info['firebase_auto_init'], 'DISABLED_FOR_PRIVATE_CLONE')
+        self.assertEqual(info['legacy_device_interaction_provider'], 'DISABLED_PRIVATE_CLONE_ONLY')
+        self.assertFalse(any(p.get(x.A('name')) == 'com.yeelight.yeelib.data.DeviceInteractionProvider' for p in app.findall('provider')))
         self.assertEqual(len(app.findall('provider')), 1)
         self.assertFalse(any(p.get(x.A('name')) == 'com.google.firebase.provider.FirebaseInitProvider' for p in app.findall('provider')))
 
@@ -140,6 +143,36 @@ class ClassicTests(unittest.TestCase):
         p.write_text(MANIFEST.replace('com.yeelight.cherry.firebaseinitprovider" android:exported="false"',
                                       'com.yeelight.cherry.firebaseinitprovider" android:exported="true"'))
         with self.assertRaisesRegex(x.GateFailure, 'FIREBASE_INIT_UNEXPECTED_EXPORT'):
+            x.patch_manifest(p)
+
+    def test_legacy_device_provider_missing_refused_without_mutation(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        p.write_text(MANIFEST.replace('    <provider android:name="com.yeelight.yeelib.data.DeviceInteractionProvider" android:authorities="com.yeelight.cherry.database.interaction" android:exported="false"/>\n', ''))
+        prior = p.read_bytes()
+        with self.assertRaisesRegex(x.GateFailure, 'DEVICE_PROVIDER_NOT_UNIQUE'):
+            x.patch_manifest(p)
+        self.assertEqual(p.read_bytes(), prior)
+
+    def test_legacy_device_provider_duplicate_refused(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        old = '    <provider android:name="com.yeelight.yeelib.data.DeviceInteractionProvider" android:authorities="com.yeelight.cherry.database.interaction" android:exported="false"/>\n'
+        p.write_text(MANIFEST.replace(old, old + old))
+        with self.assertRaisesRegex(x.GateFailure, 'DEVICE_PROVIDER_NOT_UNIQUE'):
+            x.patch_manifest(p)
+
+    def test_legacy_device_provider_unknown_authority_refused_without_mutation(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        p.write_text(MANIFEST.replace('com.yeelight.cherry.database.interaction', 'com.other.example.invalid'))
+        prior = p.read_bytes()
+        with self.assertRaisesRegex(x.GateFailure, 'DEVICE_PROVIDER_AUTHORITY_UNKNOWN'):
+            x.patch_manifest(p)
+        self.assertEqual(p.read_bytes(), prior)
+
+    def test_legacy_device_provider_exported_refused(self):
+        p = self.decoded / 'AndroidManifest.xml'
+        p.write_text(MANIFEST.replace('database.interaction" android:exported="false"',
+                                      'database.interaction" android:exported="true"'))
+        with self.assertRaisesRegex(x.GateFailure, 'DEVICE_PROVIDER_UNEXPECTED_EXPORT'):
             x.patch_manifest(p)
 
     def test_unknown_authority_fails_closed(self):

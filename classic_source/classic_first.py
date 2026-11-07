@@ -116,6 +116,21 @@ def patch_manifest(path: Path) -> dict:
     require(firebase[0].get(A("exported"), "false") == "false",
             "FIREBASE_INIT_UNEXPECTED_EXPORT")
     app.remove(firebase[0])
+    # Pixel 6a owner traceback after Firebase fix (private run 42421751285):
+    # Android cannot instantiate the OEM DeviceInteractionProvider because its
+    # declared class is missing at runtime. This old provider is explicitly
+    # excluded ONLY in our independent private clone. Other providers remain.
+    # Never use a fabricated provider class or rewrite the OEM DEX.
+    offline_only = [p for p in app.findall("provider")
+                    if p.get(A("name")) == "com.yeelight.yeelib.data.DeviceInteractionProvider"]
+    require(len(offline_only) == 1, "DEVICE_PROVIDER_NOT_UNIQUE")
+    old_authorities = offline_only[0].get(A("authorities"), "").split(";")
+    require(old_authorities and all(a in AUTHORITIES and
+            a != OLD_PACKAGE + ".firebaseinitprovider" for a in old_authorities),
+            "DEVICE_PROVIDER_AUTHORITY_UNKNOWN")
+    require(offline_only[0].get(A("exported"), "false") == "false",
+            "DEVICE_PROVIDER_UNEXPECTED_EXPORT")
+    app.remove(offline_only[0])
     # Keep original code package classes; only namespace providers and self-defined permissions.
     providers = []
     for provider in app.findall("provider"):
@@ -170,7 +185,8 @@ def patch_manifest(path: Path) -> dict:
     tree.write(path, encoding="utf-8", xml_declaration=True)
     return {"new_package": NEW_PACKAGE, "canonicalized_component_refs": count, "providers": providers, "permissions_renamed": permissions, "min_sdk": 23, "activity_exported": False,
             "firebase_auto_init": "DISABLED_FOR_PRIVATE_CLONE",
-            "cloud_login": "NOT_TESTED"}
+            "cloud_login": "NOT_TESTED",
+            "legacy_device_interaction_provider": "DISABLED_PRIVATE_CLONE_ONLY"}
 
 
 def patch_layout(path: Path) -> None:
