@@ -11,6 +11,12 @@ from pathlib import Path
 SOURCE_REPO = 'lxsdd/yeelight-loft-dj'
 VAULT_REPO = 'lxsdd/yeelight-classic-vault'
 WORKFLOW_FILE = '.github/workflows/classic-protected-assembly.yml'
+SIGNED_WORKFLOW_FILE = '.github/workflows/classic-private-test-signed.yml'
+# Exact allowlist. Both workflows also enforce owner-only workflow_dispatch on protected main.
+ALLOWED_WORKFLOW_REFS = frozenset(
+    SOURCE_REPO + '/' + path + '@refs/heads/main'
+    for path in (WORKFLOW_FILE, SIGNED_WORKFLOW_FILE)
+)
 INPUT_RELEASE = 'classic-original-3.5.4-v1'
 INPUT_APK = 'com.yeelight.cherry_3.5.4.apk'
 INPUT_SHA256 = 'abdcffbcf118e5d5c48088a478c8ea49f4c3fa911db1f1bc5013fed1d61fb7f2'
@@ -36,7 +42,7 @@ def require_approved_dispatch(env: dict[str,str] | None = None, event: dict | No
     if re.fullmatch(r'[a-f0-9]{40}', sha) is None:
         raise PolicyFailure('DISPATCH_DENIED_SOURCE_SHA')
     ref = e.get('GITHUB_WORKFLOW_REF', '')
-    if ref != SOURCE_REPO+'/'+WORKFLOW_FILE+'@refs/heads/main':
+    if ref not in ALLOWED_WORKFLOW_REFS:
         raise PolicyFailure('DISPATCH_DENIED_WORKFLOW_REF')
     if e.get('GITHUB_HEAD_REF') or e.get('GITHUB_BASE_REF'):
         raise PolicyFailure('DISPATCH_DENIED_PR_CONTEXT')
