@@ -30,6 +30,26 @@ class Color4OfflineCoordinatorTest {
         assertFalse(c.isQuarantined("one"))
     }
 
+    @Test fun cleanDisconnectDiscardsPendingValuesAcrossSocketGenerations() {
+        val c = Color4OfflineCoordinator()
+        val a = c.openSession("one", true)!!
+        val b = c.openSession("two", true)!!
+        assertTrue(c.offer("one", rgb, 0xabcdef, true))
+        assertTrue(c.offer("one", brightness, 55, true))
+        assertTrue(c.offer("two", rgb, 0x123456, true))
+        assertFalse(c.closeSession("one", b))
+        assertTrue(c.closeSession("one", a))
+        assertFalse(c.isQuarantined("one"))
+        val fresh = c.openSession("one", true)!!
+        assertNull(c.takeOnExplicitUiEvent("one", rgb, 10_000, true, fresh, 1))
+        assertNull(c.takeOnExplicitUiEvent("one", brightness, 10_000, true, fresh, 1))
+        assertNotNull(c.takeOnExplicitUiEvent("two", rgb, 10_000, true, b, 1))
+        assertTrue(c.onReply("two", b, 1, true, false))
+        assertTrue(c.offer("one", rgb, 0x111111, true))
+        assertEquals(0x111111, c.takeOnExplicitUiEvent("one", rgb, 10_000, true, fresh, 1)!!.value)
+        assertTrue(c.onReply("one", fresh, 1, true, false))
+    }
+
     @Test fun failedLedgerBeginConsumesBudgetAndMustRecover() {
         val c = Color4OfflineCoordinator()
         val s = c.openSession("one", true)!!
