@@ -24,6 +24,12 @@ REMOVED=("com.google.firebase.provider.FirebaseInitProvider","com.yeelight.yeeli
 ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity"),
        ("service","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjService"))
 
+FRAMEWORK_MANIFEST=("Landroid/","Lcom/android/")
+REQUIRED_MANIFEST_ROLES=("application","activity","service","receiver","provider",
+                         "instrumentation","appComponentFactory")
+STARTUP_MANIFEST_ROLES=("application","activity","service","receiver","provider","appComponentFactory")
+MANIFEST_ROLES=set(COMPONENTS)|{role for group in EXTRA.values() for role in group}
+
 class AuditBlocked(ValueError): pass
 
 def require(value,reason):
@@ -87,20 +93,28 @@ def manifest_index(parsed):
     require(len(roots)==1,"MANIFEST_ROOT")
     pkg=roots[0]["attributes"].get("package")
     require(pkg in (OLD,NEW),"MANIFEST_PACKAGE")
-    components=Counter(); entries=set()
+    components=Counter(); entries=set(); refs=Counter()
     for node in parsed["elements"]:
         tag=node["tag"]
-        if tag not in COMPONENTS:continue
-        attrs=node["attributes"];n=attrs.get(A+"name")
+        if tag not in COMPONENTS: continue
+        attrs=node["attributes"]; n=attrs.get(A+"name")
         require(n is not None or tag=="application","MANIFEST_UNNAMED")
         name=canonical(n,pkg) if n is not None else "<default>"
         components[(tag,name)]+=1
-        if n is not None and tag!="activity-alias":entries.add("L"+name.replace(".","/")+";")
+        if n is not None:
+            desc="L"+name.replace(".","/")+";"
+            refs[(tag,desc)]+=1
+            if tag!="activity-alias": entries.add(desc)
+        if tag=="activity-alias":
+            require(attrs.get(A+"targetActivity"),"MANIFEST_ALIAS_TARGET_MISSING")
         for key in EXTRA.get(tag,()):
-            v=attrs.get(A+key)
-            if v:entries.add("L"+canonical(v,pkg).replace(".","/")+";")
+            value=attrs.get(A+key)
+            if value:
+                desc="L"+canonical(value,pkg).replace(".","/")+";"
+                refs[(key,desc)]+=1
+                entries.add(desc)
     require(all(v==1 for v in components.values()),"MANIFEST_DUPLICATE")
-    return pkg,components,entries
+    return pkg,components,entries,refs
 
 def inspect_apk(path):
     with ZipFile(path) as z:
@@ -114,9 +128,58 @@ def inspect_apk(path):
             found=dex_index(z.read(filename))
             require(not defs.keys()&found.keys(),"DUPLICATE_MULTIDEX_CLASS")
             defs.update(found)
-    pkg,components,entrypoints=manifest_index(parsed)
+    pkg,components,entrypoints,refs=manifest_index(parsed)
+    uses_libraries=sum(node["tag"] in
+                       ("uses-library","uses-static-library","uses-native-library")
+                       for node in parsed["elements"])
     return {"package":pkg,"components":components,"entrypoints":entrypoints,
+            "manifest_references":refs,"declared_shared_libraries":uses_libraries,
             "definitions":defs,"dex_count":len(files)}
+
+def classify_manifest_references(data, *, exempt_providers=()):
+    """Separate manifest identities, executable classes, helpers and framework.
+
+    An alias name is NOT a class. Framework references may live outside DEX,
+    but availability on Android 17 is not inferred. All non-platform gaps stay
+    unqualified, with role counters only (no proprietary class names).
+    """
+    refs=data.get("manifest_references")
+    require(isinstance(refs,Counter),"MANIFEST_REFERENCE_METADATA_REQUIRED")
+    definitions=data["definitions"]
+    declared_activities={d for (role,d),n in refs.items() if role=="activity" and n}
+    omitted={"L"+name.replace(".","/")+";" for name in exempt_providers}
+    roles=Counter();missing=Counter();framework=Counter()
+    invalid_alias=0;exempted=0;roots=set()
+    for (role,desc),n in refs.items():
+        require(role in MANIFEST_ROLES and isinstance(desc,str) and
+                desc.startswith("L") and desc.endswith(";") and
+                type(n) is int and n>0,"MANIFEST_REFERENCE_INVALID")
+        roles[role]+=n
+        if role=="activity-alias":
+            continue
+        if role=="provider" and desc in omitted:
+            exempted+=n
+            continue
+        if role=="targetActivity" and desc not in declared_activities:
+            invalid_alias+=n
+        if desc in definitions:
+            if role in STARTUP_MANIFEST_ROLES: roots.add(desc)
+        elif desc.startswith(FRAMEWORK_MANIFEST):
+            framework[role]+=n
+        else:
+            missing[role]+=n
+    required=sum(n for role,n in missing.items() if role in REQUIRED_MANIFEST_ROLES)
+    supporting=sum(n for role,n in missing.items() if role not in REQUIRED_MANIFEST_ROLES)
+    return {"reference_count":sum(roles.values()),
+            "roles":dict(sorted(roles.items())),
+            "missing_by_role":dict(sorted(missing.items())),
+            "framework_by_role":dict(sorted(framework.items())),
+            "missing_required":required,
+            "missing_supporting":supporting,
+            "undeclared_alias_targets":invalid_alias,
+            "exempted_removed_providers":exempted,
+            "resolved_startup_roots":roots}
+
 
 def reachable(data, *, missing_parents=None):
     """Validate manifest roots; optionally record absent non-platform parent edges.
@@ -169,56 +232,104 @@ def qualify_report(result):
     return True
 
 def original_prebuild_report(original):
-    """Qualify immutable OEM classgraph before making any private clone.
+    """Classify every manifest class role before a private clone is assembled.
 
-    Original vendor bytes must remain in the private runner. These counters
-    intentionally reveal no class names or hierarchy details.
+    All original OEM names remain in memory only; the serialized report contains
+    role labels, counts and sanitized status codes. Missing classes are NOT
+    inferred to exist from a library name or framework-looking vendor prefix.
     """
     inspect_original(Path(original))
     baseline=inspect_apk(original)
     require(baseline["package"]==OLD,"ORIGINAL_PREBUILD_PACKAGE")
     require(baseline["dex_count"]==2,"ORIGINAL_PREBUILD_DEX_SHAPE")
     providers={n for kind,n in baseline["components"] if kind=="provider"}
-    activity_count=sum(1 for kind,_ in baseline["components"] if kind=="activity")
-    require(len(providers)==7 and activity_count==185,
+    activities={n for kind,n in baseline["components"] if kind=="activity"}
+    require(len(providers)==7 and len(activities)==185,
             "ORIGINAL_PREBUILD_COMPONENT_COUNTS")
     require(set(REMOVED)<=providers,"ORIGINAL_PREBUILD_PROVIDER_CONTRACT")
-    removed={"L"+name.replace(".","/")+";" for name in REMOVED}
-    retained=baseline["entrypoints"]-removed
-    require(retained<=set(baseline["definitions"]),
-            "ORIGINAL_PREBUILD_RETAINED_ENTRYPOINT_MISSING")
+    summary=classify_manifest_references(baseline,exempt_providers=REMOVED)
     missing_start=set()
     try:
-        n=reachable(dict(baseline,entrypoints=retained),
-                    missing_parents=missing_start)
+        reachable(dict(baseline,entrypoints=summary["resolved_startup_roots"]),
+                  missing_parents=missing_start)
     except AuditBlocked as exc:
         raise AuditBlocked("ORIGINAL_PREBUILD_INHERITANCE_INVALID") from exc
     missing_all=unresolved_edges(baseline["definitions"])
     require(missing_start<=missing_all,"ORIGINAL_PREBUILD_GRAPH_COUNTER_INVALID")
-    return {"status":("PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED"
-                     if missing_all else "PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED"),
-            "original_retained_startup_entrypoints":n,
+    if summary["undeclared_alias_targets"]:
+        status="PRIVATE_ORIGINAL_ALIAS_TARGET_UNDECLARED_BLOCKED"
+    elif summary["missing_required"]:
+        status="PRIVATE_ORIGINAL_REQUIRED_MANIFEST_CLASS_MISSING_BLOCKED"
+    elif summary["missing_supporting"]:
+        status="PRIVATE_ORIGINAL_SUPPORT_MANIFEST_CLASS_MISSING_BLOCKED"
+    elif missing_all:
+        status="PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED"
+    else:
+        status="PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED"
+    return {"status":status,
+            "manifest_reference_count":summary["reference_count"],
+            "manifest_roles":summary["roles"],
+            "manifest_missing_by_role":summary["missing_by_role"],
+            "manifest_framework_by_role":summary["framework_by_role"],
+            "manifest_missing_required_count":summary["missing_required"],
+            "manifest_missing_support_count":summary["missing_supporting"],
+            "manifest_invalid_alias_target_count":summary["undeclared_alias_targets"],
+            "original_retained_startup_entrypoints":len(summary["resolved_startup_roots"]),
             "original_missing_startup_parent_edges":len(missing_start),
             "original_total_missing_parent_edges":len(missing_all),
-            "original_declared_removed_providers":len(removed),
+            "original_declared_removed_providers":len(REMOVED),
+            "original_exempt_removed_provider_references":summary["exempted_removed_providers"],
+            "original_declared_shared_libraries":baseline["declared_shared_libraries"],
             "real_oem_read":True,"runtime":"NOT_TESTED"}
 
 def qualify_original_prebuild(report):
-    """Never treat unknown inherited OEM types as a complete startup PASS."""
+    """Only fully classified and internally consistent original graphs pass."""
     start=report.get("original_missing_startup_parent_edges")
     total=report.get("original_total_missing_parent_edges")
-    require(type(start) is int and type(total) is int and
-            0<=start<=total and report.get("real_oem_read") is True and
-            report.get("runtime")=="NOT_TESTED" and
-            report.get("original_declared_removed_providers")==len(REMOVED),
+    required=report.get("manifest_missing_required_count")
+    support=report.get("manifest_missing_support_count")
+    alias=report.get("manifest_invalid_alias_target_count")
+    count=report.get("manifest_reference_count")
+    roots=report.get("original_retained_startup_entrypoints")
+    libraries=report.get("original_declared_shared_libraries")
+    missing=report.get("manifest_missing_by_role")
+    framework=report.get("manifest_framework_by_role")
+    roles=report.get("manifest_roles")
+    require(all(type(x) is int and x>=0 for x in
+                (start,total,required,support,alias,count,roots,libraries)) and
+            start<=total and
+            report.get("real_oem_read") is True and report.get("runtime")=="NOT_TESTED" and
+            report.get("original_declared_removed_providers")==len(REMOVED) and
+            report.get("original_exempt_removed_provider_references")==len(REMOVED) and
+            all(isinstance(x,dict) and
+                all(key in MANIFEST_ROLES and type(n) is int and n>0
+                    for key,n in x.items())
+                for x in (missing,framework,roles)) and
+            sum(missing.values())==required+support and
+            sum(roles.values())==count and
+            sum(n for role,n in missing.items() if role in REQUIRED_MANIFEST_ROLES)==required,
             "ORIGINAL_PREBUILD_REPORT_INVALID")
-    if report.get("status")=="PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED":
-        require(total>0,"ORIGINAL_PREBUILD_REPORT_INVALID")
+    status=report.get("status")
+    if alias:
+        require(status=="PRIVATE_ORIGINAL_ALIAS_TARGET_UNDECLARED_BLOCKED",
+                "ORIGINAL_PREBUILD_REPORT_INVALID")
+        raise AuditBlocked("ORIGINAL_PREBUILD_ALIAS_TARGET_UNDECLARED")
+    if required:
+        require(status=="PRIVATE_ORIGINAL_REQUIRED_MANIFEST_CLASS_MISSING_BLOCKED",
+                "ORIGINAL_PREBUILD_REPORT_INVALID")
+        raise AuditBlocked("ORIGINAL_PREBUILD_REQUIRED_CLASS_UNVERIFIED")
+    if support:
+        require(status=="PRIVATE_ORIGINAL_SUPPORT_MANIFEST_CLASS_MISSING_BLOCKED",
+                "ORIGINAL_PREBUILD_REPORT_INVALID")
+        raise AuditBlocked("ORIGINAL_PREBUILD_SUPPORT_CLASS_UNVERIFIED")
+    if total:
+        require(status=="PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED",
+                "ORIGINAL_PREBUILD_REPORT_INVALID")
         raise AuditBlocked("ORIGINAL_PREBUILD_PARENT_UNVERIFIED")
-    require(report.get("status")=="PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED" and
-            total==0 and start==0,
-            "ORIGINAL_PREBUILD_REPORT_INVALID")
+    require(status=="PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED"
+            and start==0,"ORIGINAL_PREBUILD_REPORT_INVALID")
     return True
+
 
 def audit_pair(original,candidate):
     inspect_original(Path(original))
@@ -239,6 +350,15 @@ def audit_pair(original,candidate):
     added={"L"+n.replace(".","/")+";" for _,n in ADDED}
     require(o["entrypoints"]-c["entrypoints"]==removed,"REMOVED_PROVIDER_ENTRYPOINT_DRIFT")
     require(c["entrypoints"]-o["entrypoints"]==added,"ADDED_BRIDGE_ENTRYPOINT_DRIFT")
+    expected_roles=o["manifest_references"].copy()
+    for name in REMOVED:
+        expected_roles[("provider","L"+name.replace(".","/")+";")]-=1
+        if expected_roles[("provider","L"+name.replace(".","/")+";")]==0:
+            del expected_roles[("provider","L"+name.replace(".","/")+";")]
+    for kind,name in ADDED:
+        expected_roles[(kind,"L"+name.replace(".","/")+";")]+=1
+    require(expected_roles==c["manifest_references"],
+            "CLONE_MANIFEST_REFERENCE_ROLE_DRIFT")
     # Exact OEM class definitions and their parent/interface relationships
     # must survive the rebuild. A missing retained OEM class is never waived.
     for descriptor,parents in o["definitions"].items():
@@ -277,6 +397,15 @@ def audit_pair(original,candidate):
         if str(exc) in ("STARTUP_ENTRYPOINT_CLASS_MISSING","STARTUP_CLASS_OR_SUPER_MISSING"):
             raise AuditBlocked("BRIDGE_ENTRYPOINT_OR_PARENT_MISSING") from exc
         raise
+    old_roles=classify_manifest_references(o,exempt_providers=REMOVED)
+    new_roles=classify_manifest_references(c)
+    require(not old_roles["undeclared_alias_targets"] and
+            not new_roles["undeclared_alias_targets"],
+            "ORIGINAL_OR_CLONE_ALIAS_TARGET_INVALID")
+    require(not old_roles["missing_required"] and
+            not old_roles["missing_supporting"],"ORIGINAL_MANIFEST_REFERENCES_UNVERIFIED")
+    require(not new_roles["missing_required"] and
+            not new_roles["missing_supporting"],"CANDIDATE_MANIFEST_REFERENCES_UNVERIFIED")
     # Also inspect dormant OEM classes: reflection and later navigation can
     # load types that are not reachable from immediate manifest entrypoints.
     full_original_missing=unresolved_edges(o["definitions"])

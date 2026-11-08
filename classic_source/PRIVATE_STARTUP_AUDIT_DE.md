@@ -235,3 +235,68 @@ Ungeklärte OEM-Originalabhängigkeiten brechen beide Routen früh ab.
 Einen sinnvollen privaten Hardware-Kandidaten darf es erst nach
 separater Android-17-Offline-Startqualifikation geben; die
 Signierroute allein liefert diesen Laufzeitbeleg weiterhin nicht.
+
+
+## 2026-11-08: Manifest-/DEX-Rollenvertrag nach privatem Lauf #42508592902
+
+Der echte eigentümergeführte Audit #42508592902 (geschützter Main-Commit
+dc81dcb7d649b0c2227ce93af786822a8ec71fe6) hat Original-Hash,
+alle vier realen OEM-Tests ohne Skip und die privaten Dateibereinigungen
+bestanden. Die Prebuild-Prüfung brach mit
+\`ORIGINAL_PREBUILD_RETAINED_ENTRYPOINT_MISSING\` ab, **bevor**
+Gradle/Apktool-Pakete geladen oder irgendeine Clone-APK gebaut wurde.
+
+Die bisherige Bedingung verlangte für alle in \`entrypoints\` gesammelten
+Manifest-Verweise gleichartig lokale OEM-DEX-Klassendefinitionen. Das
+vermischt unterschiedliche Android-Rollen und war diagnostisch
+unzureichend. Der verbesserte rein öffentliche Prüfer erstellt jetzt
+eine vollständige Klassifizierung:
+
+- **Deklarierte Java-Klassen:** \`application\`, \`activity\`, \`service\`,
+  \`receiver\`, \`provider\`, \`instrumentation\`. Fehlende nicht-
+  plattformgebundene Definitionen bleiben hart blockiert; die zwei
+  zuvor autorisiert aus dem *Clone-Manifest* entfernten Provider
+  werden nur an dieser einen Original-zu-Clone-Grenze ausgenommen.
+- **Framework-Klassen:** Android-Plattformreferenzen unter
+  \`android.\` bzw. \`com.android.\` müssen nicht im Hersteller-DEX
+  definiert sein. Sie werden separat gezählt, nicht als fehlender
+  Herstellerquellcode behandelt. Eine tatsächliche Auflösung durch
+  Android 17 ist damit **nicht** bewiesen.
+- **Alias-Identitäten:** Ein \`activity-alias\`-Name ist keine eigene
+  Java-Klasse. Sein \`targetActivity\`-Ziel ist hingegen eine
+  Klassenreferenz und muss auf eine tatsächlich deklarierte Activity
+  weisen; fehlende oder fremde Ziele blockieren.
+- **Bootstrap- und Hilfsreferenzen:** \`appComponentFactory\` wird als
+  startrelevant geprüft; \`backupAgent\`, \`parentActivityName\`,
+  \`manageSpaceActivity\`, \`zygotePreloadName\` und Alias-Zielklassen
+  erhalten eigene Fehlerspalten. Nicht nachgewiesene Herstellerklassen
+  bleiben offen und verhindern eine vollständige Qualifikation, ohne
+  einen Startfehler vorzutäuschen.
+- **Externe Bibliotheken:** \`uses-library\`/native/statische
+  Bibliotheksdeklarationen werden nur als Anzahl registriert.
+  Eine Deklaration ist **kein** Nachweis für eine vorhandene Klasse.
+  AndroidX, Google und Herstellerpakete werden niemals pauschal als
+  Android-Framework freigestellt.
+- **Original/Clone-Vergleich:** Neben Komponenten, tatsächlichen
+  DEX-Klassendefinitionen und vorhandenen Oberklassen/Schnittstellen
+  muss die genaue Rollenmenge übereinstimmen, ausgenommen die
+  exakt zwei genehmigten Provider-Entfernungen und die DJ-Activity/
+  den DJ-Service. Ein stillschweigender Wechsel eines Attributs von
+  \`backupAgent\` zu \`parentActivityName\` ist damit ein harter Fehler.
+
+Der originale Prebuild gibt **einmalig einen vollständigen
+sanitisierten Befund** aus: Referenzzahlen nach Rolle, fehlende
+Klassen nach Rolle, Plattformreferenzen, unbekannte Alias-Ziele,
+offene DEX-Oberklassen/Interfaces und die Anzahl deklarierter
+Bibliotheken. Die Diagnose enthält **keine** OEM-Klassen-/Package-
+Deskriptoren, Strings, DEX-Bytes, IP-Adressen oder Secrets.
+Jeder ungeklärte nichtplattformgebundene Verweis führt weiterhin zu
+Exitcode 2. Auch ein vollständig grünes statisches Ergebnis bedeutet
+\`RUNTIME_NOT_TESTED\`, nicht Android-17-ART-Startfähigkeit.
+
+Die neue Klassifizierung ist anhand ausschließlich synthetischer
+Manifestdaten und DEX-Fixtures mit Positiv-/Negativtests prüfbar.
+Kein neues privates Original, kein geschützter Workflow, kein
+Signierschlüssel und keine neue Test-APK werden für diese
+öffentliche Quell- und CI-Qualifikation benötigt. Es werden
+**keine** weiteren Provider ohne nachweisliche Ursache entfernt.
