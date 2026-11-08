@@ -96,7 +96,7 @@ class TestPrivatePairs(unittest.TestCase):
         o,c=model()
         descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
         o["definitions"].pop(descriptor)
-        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_ENTRYPOINT_CLASS_MISSING"):
             self.checked(o,c)
     def test_no_provider_deletion_guess_accepted(self):
         o,c=model();del c["components"][("provider","com.yeelight.yeelib.data.DeviceBrowserProvider")]
@@ -145,18 +145,19 @@ class TestPrivatePairs(unittest.TestCase):
         c["entrypoints"].add("Lunreviewed/Extra;")
         with self.assertRaisesRegex(audit.AuditBlocked,"ADDED_BRIDGE_ENTRYPOINT_DRIFT"):
             self.checked(o,c)
-    def test_original_retained_parent_remains_mandatory(self):
+    def test_original_retained_parent_gap_is_reported_not_assumed_fixed(self):
         o,c=model()
         descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
         o["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
         c["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
-        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
-            self.checked(o,c)
+        result=self.checked(o,c)
+        self.assertEqual(result["original_baseline_unresolved_parent_edges"],1)
+        self.assertEqual(result["status"],"PRIVATE_STATIC_PARITY_WITH_UNRESOLVED_OEM_BASELINE_RUNTIME_NOT_TESTED")
     def test_clone_sidecar_parent_remains_mandatory(self):
         o,c=model()
         descriptor="L"+audit.ADDED[0][1].replace(".","/")+";"
         c["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
-        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_UNRESOLVED_PARENT_DRIFT"):
             self.checked(o,c)
     def test_removed_provider_as_retained_super_is_still_required(self):
         o,c=model()
@@ -166,13 +167,54 @@ class TestPrivatePairs(unittest.TestCase):
         c["definitions"].pop(removed)
         o["definitions"][retained]=[removed]
         c["definitions"][retained]=[removed]
-        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_INHERITS_REMOVED_PROVIDER"):
             self.checked(o,c)
     def test_oem_class_graph_mutation_remains_blocked(self):
         o,c=model()
         descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
         c["definitions"][descriptor]=["Ljava/lang/String;"]
         with self.assertRaisesRegex(audit.AuditBlocked,"OEM_DEX_GRAPH_DRIFT"):
+            self.checked(o,c)
+
+    def test_new_dj_class_cannot_be_missing_from_dex(self):
+        o,c=model()
+        dj="L"+audit.ADDED[0][1].replace(".","/")+";"
+        c["definitions"].pop(dj)
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_ENTRYPOINT_CLASS_MISSING"):
+            self.checked(o,c)
+
+    def test_clone_cannot_introduce_missing_nonplatform_parent(self):
+        o,c=model()
+        dj="L"+audit.ADDED[0][1].replace(".","/")+";"
+        c["definitions"][dj]=["Lvendor/clone/OnlyMissing;"]
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_UNRESOLVED_PARENT_DRIFT"):
+            self.checked(o,c)
+
+    def test_new_dj_cannot_inherit_original_baseline_gap(self):
+        o,c=model()
+        original="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        missing="Lvendor/unknown/Baseline;"
+        dj="L"+audit.ADDED[0][1].replace(".","/")+";"
+        o["definitions"][original]=[missing]
+        c["definitions"][original]=[missing]
+        c["definitions"][dj]=[original]
+        with self.assertRaisesRegex(audit.AuditBlocked,"BRIDGE_ENTRYPOINT_OR_PARENT_MISSING"):
+            self.checked(o,c)
+
+    def test_unresolved_parent_count_deduplicates_identical_edges(self):
+        o,c=model()
+        original="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        o["definitions"][original]=["Lvendor/unknown/Baseline;","Lvendor/unknown/Baseline;"]
+        c["definitions"][original]=o["definitions"][original][:]
+        result=self.checked(o,c)
+        self.assertEqual(result["original_baseline_unresolved_parent_edges"],1)
+
+    def test_missing_retained_activity_start_class_always_fatal(self):
+        o,c=model()
+        d="Lcom/yeelight/cherry/Activity0;"
+        o["definitions"].pop(d)
+        c["definitions"].pop(d)
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_ENTRYPOINT_CLASS_MISSING"):
             self.checked(o,c)
 
 if __name__=="__main__":unittest.main()

@@ -60,3 +60,29 @@ oder Pixel-6a-Starttest für den neuen Quellstand durchgeführt.
 Private Original-APK, signierte Test-APK, Geheimnisse oder App-Sitzungsdaten
 dürfen niemals in öffentliche Repositories, Actions-Artefakte oder Logs
 gelangen. Originalpaket com.yeelight.cherry bleibt unangetastet.
+
+## Privater Audit #42493590593: Original-Baseline und Klon unterscheiden
+
+Auf Original-Main `a2e80c8` waren der geschützte Download, vier echte
+OEM-Tests ohne Skips und der unsignierte Build erfolgreich. Die
+Original-Startgraf-Prüfung meldete
+`RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING`, bevor die Klon-Prüfung lief.
+
+Der neue Quellcode macht **keine** automatische Ausnahme für fehlende
+Manifest-Startklassen. Diese bleiben im Original und im Klon ein harter Fehler.
+Eine geerbte, im unveränderten Original nicht definierte Klasse kann aus einer
+getrennten Laufzeitbibliothek stammen: Eine solche *Elternkante* wird nur bei
+exakter Gleichheit im Klon als **unaufgelöstes Baseline-Risiko** ausgegeben,
+niemals als Nachweis, dass die Klasse auf Android vorhanden ist.
+Zusätzliche Klon-Elternkanten, Vererbungsbezüge auf absichtlich entfernte
+Provider sowie jede ungeklärte Kette aus der neuen DJ-Activity oder
+dem DJ-Service bleiben harte Fehler.
+
+Die Original-/Klon-DEX-Klassen samt direkten Eltern/Interfaces müssen
+weiterhin vollständig übereinstimmen; der Manifest-Vergleich bleibt strikt.
+Die öffentliche Diagnose zeigt nur einen Risikozähler und bereinigte Codes,
+keine Originalklassennamen oder proprietäre Herstellerdaten. Der Status
+`PRIVATE_STATIC_PARITY_WITH_UNRESOLVED_OEM_BASELINE_RUNTIME_NOT_TESTED`
+ist keine Android-Startfreigabe. Vor einer privaten signierten
+Besitzerprüfung bleiben reale OEM-Qualifikation und ein isolierter
+Offline-Android-17-Emulatorstart erforderlich.

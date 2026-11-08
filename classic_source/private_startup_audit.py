@@ -118,15 +118,27 @@ def inspect_apk(path):
     return {"package":pkg,"components":components,"entrypoints":entrypoints,
             "definitions":defs,"dex_count":len(files)}
 
-def reachable(data):
+def reachable(data, *, missing_parents=None):
+    """Validate manifest roots; optionally record absent non-platform parent edges.
+
+    An absent manifest entrypoint never qualifies as a pre-existing baseline gap.
+    Original parent gaps may be compared, not presumed resolved at runtime.
+    """
     defs=data["definitions"];state={}
+    for root in data["entrypoints"]:
+        if not root.startswith(SYSTEM):
+            require(root in defs,"STARTUP_ENTRYPOINT_CLASS_MISSING")
     def walk(d):
         if d.startswith(SYSTEM):return
         require(d in defs,"STARTUP_CLASS_OR_SUPER_MISSING")
         if state.get(d)==2:return
         require(state.get(d)!=1,"STARTUP_INHERITANCE_CYCLE")
         state[d]=1
-        for parent in defs[d]:walk(parent)
+        for parent in defs[d]:
+            if not parent.startswith(SYSTEM) and parent not in defs and missing_parents is not None:
+                missing_parents.add((d,parent))
+                continue
+            walk(parent)
         state[d]=2
     for d in data["entrypoints"]:walk(d)
     return len(data["entrypoints"])
@@ -157,20 +169,40 @@ def audit_pair(original,candidate):
     # A removed provider is no longer a startup entrypoint of the clone.
     # However if any retained class inherits from it, reachable() still visits
     # it and refuses an unresolved superclass. No blanket third-party bypass.
+    # All OEM class defs + direct parents/interfaces were already checked for
+    # byte-identical structure. A missing inherited type in the *original*
+    # can reflect a separately supplied classpath, but runtime is NOT verified.
     retained=dict(o,entrypoints=o["entrypoints"] & c["entrypoints"])
+    inherited_missing=set()
+    clone_missing=set()
     try:
-        old_n=reachable(retained)
+        old_n=reachable(retained,missing_parents=inherited_missing)
     except AuditBlocked as exc:
-        if str(exc)=="STARTUP_CLASS_OR_SUPER_MISSING":
-            raise AuditBlocked("RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING") from exc
+        if str(exc)=="STARTUP_ENTRYPOINT_CLASS_MISSING":
+            raise AuditBlocked("RETAINED_ORIGINAL_ENTRYPOINT_CLASS_MISSING") from exc
         raise
+    # Intentionally removed providers cannot remain necessary OEM superclasses.
+    require(not any(parent in removed for _,parent in inherited_missing),
+            "RETAINED_INHERITS_REMOVED_PROVIDER")
     try:
-        new_n=reachable(c)
+        new_n=reachable(c,missing_parents=clone_missing)
     except AuditBlocked as exc:
-        if str(exc)=="STARTUP_CLASS_OR_SUPER_MISSING":
-            raise AuditBlocked("CANDIDATE_CLASS_OR_SUPER_MISSING") from exc
+        if str(exc)=="STARTUP_ENTRYPOINT_CLASS_MISSING":
+            raise AuditBlocked("CANDIDATE_ENTRYPOINT_CLASS_MISSING") from exc
         raise
-    return {"status":"PRIVATE_STATIC_STARTUP_AUDIT_PASS_RUNTIME_NOT_TESTED",
+    # Identical inherited gaps are an explicit original limitation; any
+    # *additional* unresolved direct edge in the clone is a hard failure.
+    require(clone_missing==inherited_missing,"CANDIDATE_UNRESOLVED_PARENT_DRIFT")
+    # New DJ roots cannot introduce a dependency on an unresolved OEM parent.
+    try:
+        reachable(dict(c,entrypoints=added))
+    except AuditBlocked as exc:
+        if str(exc) in ("STARTUP_ENTRYPOINT_CLASS_MISSING","STARTUP_CLASS_OR_SUPER_MISSING"):
+            raise AuditBlocked("BRIDGE_ENTRYPOINT_OR_PARENT_MISSING") from exc
+        raise
+    status=("PRIVATE_STATIC_PARITY_WITH_UNRESOLVED_OEM_BASELINE_RUNTIME_NOT_TESTED"
+            if inherited_missing else "PRIVATE_STATIC_STARTUP_AUDIT_PASS_RUNTIME_NOT_TESTED")
+    return {"status":status,"original_baseline_unresolved_parent_edges":len(inherited_missing),
             "original_components":sum(o["components"].values()),
             "clone_components":sum(c["components"].values()),
             "original_entrypoints":old_n,"clone_entrypoints":new_n,
