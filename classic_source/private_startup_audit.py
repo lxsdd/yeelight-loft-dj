@@ -143,6 +143,31 @@ def reachable(data, *, missing_parents=None):
     for d in data["entrypoints"]:walk(d)
     return len(data["entrypoints"])
 
+def unresolved_edges(definitions, owners=None):
+    """Return unresolved direct superclass/interface edges, without logging symbols."""
+    scope=set(definitions) if owners is None else set(owners)
+    return {(owner,parent)
+            for owner in scope
+            for parent in definitions[owner]
+            if not parent.startswith(SYSTEM) and parent not in definitions}
+
+def qualify_report(result):
+    """An unchanged but unresolved OEM graph is not a complete startup audit."""
+    status=result.get("status")
+    count=result.get("original_baseline_unresolved_parent_edges")
+    all_count=result.get("original_total_unresolved_parent_edges")
+    require(type(count) is int and type(all_count) is int and
+            0 <= count <= all_count,"PRIVATE_REPORT_INVALID")
+    if status=="PRIVATE_STATIC_PARITY_WITH_UNRESOLVED_OEM_BASELINE_RUNTIME_NOT_TESTED":
+        require(all_count>0,"PRIVATE_REPORT_INVALID")
+        raise AuditBlocked("ORIGINAL_BASELINE_PARENT_UNVERIFIED")
+    require(status=="PRIVATE_STATIC_STARTUP_AUDIT_PASS_RUNTIME_NOT_TESTED" and
+            count==0 and all_count==0 and
+            result.get("runtime")=="NOT_TESTED" and
+            result.get("real_oem_read") is True,
+            "PRIVATE_REPORT_INVALID")
+    return True
+
 def audit_pair(original,candidate):
     inspect_original(Path(original))
     o=inspect_apk(original);c=inspect_apk(candidate)
@@ -200,9 +225,17 @@ def audit_pair(original,candidate):
         if str(exc) in ("STARTUP_ENTRYPOINT_CLASS_MISSING","STARTUP_CLASS_OR_SUPER_MISSING"):
             raise AuditBlocked("BRIDGE_ENTRYPOINT_OR_PARENT_MISSING") from exc
         raise
+    # Also inspect dormant OEM classes: reflection and later navigation can
+    # load types that are not reachable from immediate manifest entrypoints.
+    full_original_missing=unresolved_edges(o["definitions"])
+    require(inherited_missing<=full_original_missing,"ORIGINAL_EDGE_COUNTER_DRIFT")
+    new_classes=set(c["definitions"])-set(o["definitions"])
+    require(not unresolved_edges(c["definitions"],new_classes),
+            "CANDIDATE_NEW_CLASS_PARENT_UNVERIFIED")
     status=("PRIVATE_STATIC_PARITY_WITH_UNRESOLVED_OEM_BASELINE_RUNTIME_NOT_TESTED"
-            if inherited_missing else "PRIVATE_STATIC_STARTUP_AUDIT_PASS_RUNTIME_NOT_TESTED")
+            if full_original_missing else "PRIVATE_STATIC_STARTUP_AUDIT_PASS_RUNTIME_NOT_TESTED")
     return {"status":status,"original_baseline_unresolved_parent_edges":len(inherited_missing),
+            "original_total_unresolved_parent_edges":len(full_original_missing),
             "original_components":sum(o["components"].values()),
             "clone_components":sum(c["components"].values()),
             "original_entrypoints":old_n,"clone_entrypoints":new_n,
@@ -215,7 +248,9 @@ def main():
     p.add_argument("--candidate",type=Path,required=True)
     args=p.parse_args()
     try:
-        print(json.dumps(audit_pair(args.original,args.candidate),sort_keys=True))
+        report=audit_pair(args.original,args.candidate)
+        print(json.dumps(report,sort_keys=True))
+        qualify_report(report)
         return 0
     except (AuditBlocked,GateFailure,AxmlError,OSError,BadZipFile,KeyError,ValueError) as e:
         reason=str(e) if isinstance(e,AuditBlocked) else "PRIVATE_INPUT_INVALID"

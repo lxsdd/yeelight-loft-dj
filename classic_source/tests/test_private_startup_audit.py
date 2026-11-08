@@ -1,5 +1,7 @@
 """Offline negative/positive tests for the PRIVATE real-APK startup audit."""
 from collections import Counter
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 import hashlib
 import struct
 import unittest
@@ -92,6 +94,8 @@ class TestPrivatePairs(unittest.TestCase):
         self.assertEqual(info["original_dex"],2)
         self.assertEqual(info["clone_dex"],3)
         self.assertEqual(info["runtime"],"NOT_TESTED")
+        self.assertEqual(info["original_total_unresolved_parent_edges"],0)
+        self.assertTrue(audit.qualify_report(info))
     def test_missing_oem_device_browser_provider_refused(self):
         o,c=model()
         descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
@@ -153,6 +157,9 @@ class TestPrivatePairs(unittest.TestCase):
         result=self.checked(o,c)
         self.assertEqual(result["original_baseline_unresolved_parent_edges"],1)
         self.assertEqual(result["status"],"PRIVATE_STATIC_PARITY_WITH_UNRESOLVED_OEM_BASELINE_RUNTIME_NOT_TESTED")
+        self.assertEqual(result["original_total_unresolved_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_BASELINE_PARENT_UNVERIFIED"):
+            audit.qualify_report(result)
     def test_clone_sidecar_parent_remains_mandatory(self):
         o,c=model()
         descriptor="L"+audit.ADDED[0][1].replace(".","/")+";"
@@ -216,5 +223,69 @@ class TestPrivatePairs(unittest.TestCase):
         c["definitions"].pop(d)
         with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_ENTRYPOINT_CLASS_MISSING"):
             self.checked(o,c)
+
+    def test_nonstartup_oem_missing_parent_is_still_unqualified(self):
+        o,c=model()
+        dormant="Lvendor/legacy/Dormant;"
+        o["definitions"][dormant]=["Lvendor/external/OnlyAtRuntime;"]
+        c["definitions"][dormant]=["Lvendor/external/OnlyAtRuntime;"]
+        report=self.checked(o,c)
+        self.assertEqual(report["original_baseline_unresolved_parent_edges"],0)
+        self.assertEqual(report["original_total_unresolved_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_BASELINE_PARENT_UNVERIFIED"):
+            audit.qualify_report(report)
+
+    def test_nonentrypoint_sidecar_missing_parent_is_fatal(self):
+        o,c=model()
+        c["definitions"]["Lloftdj/NewHiddenSidecar;"]=["Lvendor/NotBundled;"]
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_NEW_CLASS_PARENT_UNVERIFIED"):
+            self.checked(o,c)
+
+    def test_unresolved_interface_is_baseline_risk_not_green(self):
+        o,c=model()
+        owner="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        unknown="Lvendor/legacy/UnknownInterface;"
+        o["definitions"][owner]=[BASE,unknown]
+        c["definitions"][owner]=[BASE,unknown]
+        report=self.checked(o,c)
+        self.assertEqual(report["original_total_unresolved_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_BASELINE_PARENT_UNVERIFIED"):
+            audit.qualify_report(report)
+
+    def test_report_gate_denies_false_pass_flags(self):
+        o,c=model();report=self.checked(o,c)
+        for tamper in (
+            {"original_total_unresolved_parent_edges":1},
+            {"original_baseline_unresolved_parent_edges":1},
+            {"real_oem_read":False},
+            {"runtime":"TESTED"},
+            {"status":"UNREVIEWED"},
+        ):
+            invalid=dict(report,**tamper)
+            with self.subTest(tamper=tamper),self.assertRaisesRegex(audit.AuditBlocked,"PRIVATE_REPORT_INVALID"):
+                audit.qualify_report(invalid)
+
+    def test_cli_returns_nonzero_on_sanitized_unresolved_baseline(self):
+        o,c=model()
+        target="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        o["definitions"][target]=["Lvendor/private/DoNotPrint;"]
+        c["definitions"][target]=["Lvendor/private/DoNotPrint;"]
+        report=self.checked(o,c)
+        out,err=StringIO(),StringIO()
+        with (patch.object(audit,"audit_pair",return_value=report),
+              patch("sys.argv",["audit","--original","dummy-original.apk","--candidate","dummy-clone.apk"]),
+              redirect_stdout(out),redirect_stderr(err)):
+            exit_code=audit.main()
+        self.assertEqual(exit_code,2)
+        self.assertIn("ORIGINAL_BASELINE_PARENT_UNVERIFIED",err.getvalue())
+        self.assertIn('"original_total_unresolved_parent_edges": 1',out.getvalue())
+        self.assertNotIn("DoNotPrint",out.getvalue()+err.getvalue())
+
+    def test_cli_returns_zero_only_for_complete_static_graph(self):
+        o,c=model();report=self.checked(o,c)
+        with (patch.object(audit,"audit_pair",return_value=report),
+              patch("sys.argv",["audit","--original","dummy-original.apk","--candidate","dummy-clone.apk"]),
+              redirect_stdout(StringIO()),redirect_stderr(StringIO())):
+            self.assertEqual(audit.main(),0)
 
 if __name__=="__main__":unittest.main()

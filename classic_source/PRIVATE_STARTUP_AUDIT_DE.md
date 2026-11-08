@@ -86,3 +86,50 @@ keine Originalklassennamen oder proprietäre Herstellerdaten. Der Status
 ist keine Android-Startfreigabe. Vor einer privaten signierten
 Besitzerprüfung bleiben reale OEM-Qualifikation und ein isolierter
 Offline-Android-17-Emulatorstart erforderlich.
+
+## Qualifikationskorrektur: Ungeklärte DEX-Vererbung darf keinen grünen Audit erzeugen
+
+**Befund:** PR79 unterschied bereits originale Vererbungslücken von neuen
+Clone-Defekten, konnte jedoch bei unverändert offenen Original-Abhängigkeiten
+noch Exitcode 0 zurückgeben. Der geschützte Workflow hätte dies fälschlich
+als vollständig qualifizierten Startup-Audit interpretieren können.
+
+Der verbesserte Gate prüft neben den Manifest-Startpfaden die direkte
+Vererbung **aller** OEM-DEX-Klassen, einschließlich möglicher spät geladener
+Klassen, und jeder hinzugefügten DJ-DEX-Klasse. Ungeklärte ursprüngliche
+Eltern-/Interface-Kanten bleiben als bereinigte Zähler sichtbar, führen
+aber bis zur tatsächlichen Laufzeit-Zuordnung **nicht zum PASS**. Eine
+Original-/Clone-Strukturparität ist keine Aussage darüber, ob die fehlende
+Klasse durch die Android-Laufzeit wirklich bereitgestellt wird. Auch bei
+vollständig geschlossenen DEX-Abhängigkeiten bleibt das Ergebnis
+`RUNTIME_NOT_TESTED` bis zum Offline-Emulatorstart.
+
+**Sicherheits-/Datenschutzgrenze:** Öffentliche Regressionstests enthalten
+ausschließlich erfundene DEX-Bezeichnungen und synthetische Komponenten.
+Echte OEM-Klassennamen und Manufacturer-Bytes verbleiben privat im Vault.
+Weder Signing noch Uploads wurden freigegeben.
+
+## Reverse Engineering als kontrollierte Original-Baseline
+
+Die verifizierte Yeelight-Classic-3.5.4-APK dient künftig als private
+**Verhaltens- und Kompatibilitätsreferenz**, nicht als frei veröffentlichbarer
+Quellcode. Zielarchitektur in Stufen:
+
+1. Original-Manifest/DEX/Ressourcen, Klasseneinstiege und Schnittstellen
+   ausschliesslich privat untersuchen, gegenüber dem Klon vergleichen;
+   öffentlich nur synthetische Verträge, unkritische Zähler und Statuscodes.
+2. Original und Klon im isolierten Offline-Android-17-Testsystem mit
+   identischen, dokumentierten Szenarien abnehmen, soweit auf der jeweiligen
+   Android-Version ausführbar. Signatur- und Herstellerabhängigkeiten getrennt
+   als offen kennzeichnen.
+3. Geräteliste, LAN-Befehle, Räume, Gruppen, Szenen und UI-Navigation in
+   wartbaren Java-/Kotlin-Modulen mit charakterisierten Original-Verhaltens-
+   tests implementieren; bestehende sichere DJ-Engine wiederverwenden.
+4. Cloud, Konto, Bluetooth, Firmware und Signatur-abhängige OEM-Funktionen
+   ohne Lizenz-/Kompatibilitätsprüfung weder entfernen noch als lauffähig
+   ausgeben. Keine OEM-Dateien oder dekompilierten Code ins Public-Repo.
+5. Vollständige Produktabnahme erst auf einem exakt geprüften, gesondert
+   autorisierten Kandidaten, nicht bei grünem synthetischem Build.
+
+Die Grenzen von UrhG §§69d/69e und Herstellerrechten müssen für jede
+tatsächliche Veröffentlichung/Reimplementierung geprüft werden.
