@@ -92,5 +92,5 @@ class TestWorkflowContract(unittest.TestCase):
         self.assertLess(text.index("--original-only"),text.index("Build and verify private unsigned"))
         self.assertLess(text.index("private_startup_audit.py"),text.index("Sign one private test APK"))
         self.assertLess(text.index("private_payload_parity.py"),text.index("Send TEST-SIGNED APK"))
-        self.assertEqual(text.count("private_startup_audit.py"),2)
+        self.assertEqual(text.count("private_startup_audit.py"),3)
 if __name__=="__main__":unittest.main()
