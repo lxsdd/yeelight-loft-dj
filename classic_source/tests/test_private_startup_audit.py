@@ -348,7 +348,8 @@ class TestOriginalOnlyPrebuild(unittest.TestCase):
     def test_original_only_cli_is_sanitized_and_failure_exits_2(self):
         original,_=model()
         original["definitions"]["Lsynthetic/dormant/Private;"]=["Lsynthetic/private/DoNotLog;"]
-        with patch.object(audit,"original_prebuild_report",side_effect=lambda path:self.report(original)), \
+        prebuilt=self.report(original)
+        with patch.object(audit,"original_prebuild_report",return_value=prebuilt), \
              patch("sys.argv",["audit","--original","synthetic.apk","--original-only"]), \
              redirect_stdout(StringIO()) as output,redirect_stderr(StringIO()) as errors:
             exitcode=audit.main()
