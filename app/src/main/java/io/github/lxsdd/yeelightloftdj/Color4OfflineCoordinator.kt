@@ -96,6 +96,8 @@ class Color4OfflineCoordinator(
     fun closeSession(deviceId: String, session: Color4TcpResponseLedger.Session): Boolean {
         if (sessions[deviceId] != session) return false
         val completion = ledger.close(deviceId, session)
+        // A clean disconnect must not replay queued UI values on a new socket.
+        admission.discardPending(deviceId)
         sessions.remove(deviceId)
         val active = inFlight.remove(deviceId)
         if (active != null) {
