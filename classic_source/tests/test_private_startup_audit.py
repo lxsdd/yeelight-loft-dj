@@ -33,9 +33,15 @@ def model():
     orig_desc={"L"+n.replace(".","/")+";" for n in names+all_activities+["com.yeelight.cherry.App"]}
     removed_desc={"L"+n.replace(".","/")+";" for n in audit.REMOVED}
     clone_desc=(orig_desc - removed_desc) | {"L"+n.replace(".","/")+";" for _,n in audit.ADDED}
+    orefs=Counter({(kind,"L"+name.replace(".","/")+";"):n
+                   for (kind,name),n in original.items()})
+    crefs=Counter({(kind,"L"+name.replace(".","/")+";"):n
+                   for (kind,name),n in clone.items()})
     o={"package":audit.OLD,"components":original,"entrypoints":orig_desc,
+       "manifest_references":orefs,"declared_shared_libraries":0,
        "definitions":{d:[BASE] for d in orig_desc},"dex_count":2}
     c={"package":audit.NEW,"components":clone,"entrypoints":clone_desc,
+       "manifest_references":crefs,"declared_shared_libraries":0,
        "definitions":{d:[BASE] for d in orig_desc | clone_desc},"dex_count":3}
     return o,c
 
@@ -322,8 +328,11 @@ class TestOriginalOnlyPrebuild(unittest.TestCase):
     def test_missing_retained_root_blocks_before_any_clone_build(self):
         original,_=model()
         original["definitions"].pop("Lcom/yeelight/cherry/Activity0;")
-        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_RETAINED_ENTRYPOINT_MISSING"):
-            self.report(original)
+        report=self.report(original)
+        self.assertEqual(report["manifest_missing_by_role"],{"activity":1})
+        self.assertEqual(report["manifest_missing_required_count"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_REQUIRED_CLASS_UNVERIFIED"):
+            audit.qualify_original_prebuild(report)
 
     def test_original_provider_count_drift_is_rejected(self):
         original,_=model()
@@ -364,5 +373,178 @@ class TestOriginalOnlyPrebuild(unittest.TestCase):
              redirect_stderr(StringIO()) as errors:
             self.assertEqual(audit.main(),2)
         self.assertIn("ORIGINAL_PREBUILD_CANDIDATE_FORBIDDEN",errors.getvalue())
+
+class TestManifestReferenceRoles(unittest.TestCase):
+    def node(self,tag,**values):
+        return {"tag":tag,"attributes":{audit.A+k:v for k,v in values.items()}}
+
+    def test_binary_manifest_roles_cover_alias_factory_navigation_and_library(self):
+        p={"elements":[{"tag":"manifest","attributes":{"package":audit.OLD}},
+            self.node("application",name=".App",appComponentFactory="android.app.AppComponentFactory",
+                      backupAgent=".Backup",manageSpaceActivity=".Storage",
+                      zygotePreloadName=".Preload"),
+            self.node("activity",name=".Home",parentActivityName=".Parent"),
+            self.node("activity",name=".Parent"),
+            self.node("activity-alias",name=".QuickStart",targetActivity=".Home"),
+            self.node("service",name=".Music"),
+            self.node("receiver",name=".Wake"),
+            self.node("provider",name=".StorageProvider"),
+            self.node("instrumentation",name=".TestRunner"),
+            self.node("uses-library",name="synthetic.required.library")]}
+        pkg,components,entries,refs=audit.manifest_index(p)
+        self.assertEqual(pkg,audit.OLD)
+        self.assertIn(("activity-alias",audit.OLD+".QuickStart"),components)
+        self.assertNotIn("Lcom/yeelight/cherry/QuickStart;",entries)
+        self.assertEqual(refs[("targetActivity","Lcom/yeelight/cherry/Home;")],1)
+        self.assertEqual(refs[("parentActivityName","Lcom/yeelight/cherry/Parent;")],1)
+        self.assertEqual(refs[("appComponentFactory","Landroid/app/AppComponentFactory;")],1)
+        self.assertEqual(refs[("backupAgent","Lcom/yeelight/cherry/Backup;")],1)
+        self.assertEqual(refs[("manageSpaceActivity","Lcom/yeelight/cherry/Storage;")],1)
+        self.assertEqual(refs[("zygotePreloadName","Lcom/yeelight/cherry/Preload;")],1)
+        self.assertEqual(refs[("instrumentation","Lcom/yeelight/cherry/TestRunner;")],1)
+
+    def test_alias_requires_a_target_but_not_a_dex_alias_class(self):
+        parsed={"elements":[{"tag":"manifest","attributes":{"package":audit.OLD}},
+                             self.node("activity-alias",name=".Broken")]}
+        with self.assertRaisesRegex(audit.AuditBlocked,"MANIFEST_ALIAS_TARGET_MISSING"):
+            audit.manifest_index(parsed)
+
+    def test_default_application_does_not_imply_a_private_class(self):
+        parsed={"elements":[{"tag":"manifest","attributes":{"package":audit.OLD}},
+                             self.node("application")]}
+        _,components,entries,refs=audit.manifest_index(parsed)
+        self.assertIn(("application","<default>"),components)
+        self.assertEqual(len(entries),0)
+        self.assertEqual(len(refs),0)
+
+    def test_vendor_prefixed_external_class_is_not_android_framework(self):
+        original,_=model()
+        desc="Landroidx/placeholder/NotInDex;"
+        original["manifest_references"][("appComponentFactory",desc)]+=1
+        report=audit.classify_manifest_references(original,exempt_providers=audit.REMOVED)
+        self.assertEqual(report["missing_by_role"]["appComponentFactory"],1)
+        self.assertNotIn("appComponentFactory",report["framework_by_role"])
+
+    def test_platform_class_outside_oem_dex_is_not_misclassified_missing(self):
+        original,_=model()
+        desc="Landroid/app/AppComponentFactory;"
+        original["manifest_references"][("appComponentFactory",desc)]+=1
+        report=audit.classify_manifest_references(original,exempt_providers=audit.REMOVED)
+        self.assertEqual(report["framework_by_role"],{"appComponentFactory":1})
+        self.assertEqual(report["missing_required"],0)
+
+    def test_multiple_unresolved_roles_are_all_counted_without_symbols(self):
+        original,_=model()
+        original["manifest_references"][("appComponentFactory","Lvendor/private/One;")]+=1
+        original["manifest_references"][("backupAgent","Lvendor/private/Two;")]+=1
+        original["manifest_references"][("parentActivityName","Lvendor/private/Three;")]+=1
+        summary=audit.classify_manifest_references(original,exempt_providers=audit.REMOVED)
+        self.assertEqual(summary["missing_required"],1)
+        self.assertEqual(summary["missing_supporting"],2)
+        self.assertEqual(summary["missing_by_role"],
+                         {"appComponentFactory":1,"backupAgent":1,"parentActivityName":1})
+        self.assertNotIn("Lvendor/",str({k:v for k,v in summary.items()
+                                         if k!="resolved_startup_roots"}))
+
+    def test_alias_symbol_not_mistaken_for_missing_implementation(self):
+        original,_=model()
+        original["manifest_references"][("activity-alias","Lprivate/synthetic/Quick;")]+=1
+        original["manifest_references"][("targetActivity","Lcom/yeelight/cherry/Activity0;")]+=1
+        summary=audit.classify_manifest_references(original,exempt_providers=audit.REMOVED)
+        self.assertEqual(summary["missing_required"],0)
+        self.assertEqual(summary["missing_supporting"],0)
+        self.assertEqual(summary["undeclared_alias_targets"],0)
+
+    def test_alias_target_must_point_to_manifest_declared_activity(self):
+        original,_=model()
+        d="Lcom/yeelight/cherry/NotAnActivity;"
+        original["definitions"][d]=[BASE]
+        original["manifest_references"][("activity-alias","Lsynthetic/Alias;")]+=1
+        original["manifest_references"][("targetActivity",d)]+=1
+        summary=audit.classify_manifest_references(original,exempt_providers=audit.REMOVED)
+        self.assertEqual(summary["undeclared_alias_targets"],1)
+
+    def test_missing_reference_metadata_is_not_silently_inferred(self):
+        original,_=model()
+        original.pop("manifest_references")
+        with self.assertRaisesRegex(audit.AuditBlocked,"MANIFEST_REFERENCE_METADATA_REQUIRED"):
+            audit.classify_manifest_references(original)
+
+    def test_shared_library_declaration_cannot_whitelist_missing_vendor_class(self):
+        original,_=model()
+        original["declared_shared_libraries"]=3
+        original["manifest_references"][("service","Lvendor/thirdparty/MissingService;")]+=1
+        summary=audit.classify_manifest_references(original,exempt_providers=audit.REMOVED)
+        self.assertEqual(summary["missing_required"],1)
+
+class TestOriginalReferenceReports(unittest.TestCase):
+    def report(self,original):
+        with patch.object(audit,"inspect_original"), \
+             patch.object(audit,"inspect_apk",return_value=original):
+            return audit.original_prebuild_report(Path("synthetic-original.apk"))
+
+    def test_report_collects_required_and_supporting_gaps_before_failing(self):
+        original,_=model()
+        original["manifest_references"][("appComponentFactory","Lvendor/HiddenFactory;")]+=1
+        original["manifest_references"][("backupAgent","Lvendor/HiddenBackup;")]+=1
+        result=self.report(original)
+        self.assertEqual(result["manifest_missing_by_role"],
+                         {"appComponentFactory":1,"backupAgent":1})
+        self.assertEqual(result["manifest_missing_required_count"],1)
+        self.assertEqual(result["manifest_missing_support_count"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_REQUIRED_CLASS_UNVERIFIED"):
+            audit.qualify_original_prebuild(result)
+
+    def test_only_optional_parent_missing_produces_separate_failure(self):
+        original,_=model()
+        original["manifest_references"][("parentActivityName","Lsynthetic/UnknownParent;")]+=1
+        result=self.report(original)
+        self.assertEqual(result["manifest_missing_support_count"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_SUPPORT_CLASS_UNVERIFIED"):
+            audit.qualify_original_prebuild(result)
+
+    def test_framework_factory_can_be_externally_resolved_without_static_class_def(self):
+        original,_=model()
+        original["manifest_references"][("appComponentFactory","Landroid/app/AppComponentFactory;")]+=1
+        result=self.report(original)
+        self.assertEqual(result["manifest_framework_by_role"],{"appComponentFactory":1})
+        self.assertEqual(result["runtime"],"NOT_TESTED")
+        self.assertTrue(audit.qualify_original_prebuild(result))
+
+    def test_undeclared_alias_target_blocks_even_if_class_in_dex(self):
+        original,_=model()
+        d="Lsynthetic/HasDexButNoManifestActivity;"
+        original["definitions"][d]=[BASE]
+        original["manifest_references"][("activity-alias","Lsynthetic/Alias;")]+=1
+        original["manifest_references"][("targetActivity",d)]+=1
+        result=self.report(original)
+        self.assertEqual(result["manifest_invalid_alias_target_count"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_ALIAS_TARGET_UNDECLARED"):
+            audit.qualify_original_prebuild(result)
+
+    def test_report_never_exposes_proprietary_class_names(self):
+        original,_=model()
+        d="Lprivate/OEM_SECRET_CLASS_NOT_FOR_LOGS;"
+        original["manifest_references"][("backupAgent",d)]+=1
+        report=self.report(original)
+        output=__import__("json").dumps(report,sort_keys=True)
+        self.assertNotIn("OEM_SECRET_CLASS",output)
+        self.assertIn('"backupAgent": 1',output)
+
+    def test_invalid_success_report_with_missing_category_is_blocked(self):
+        original,_=model()
+        report=self.report(original)
+        altered=dict(report,status="PRIVATE_ORIGINAL_REQUIRED_MANIFEST_CLASS_MISSING_BLOCKED",
+                     manifest_missing_required_count=1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_REPORT_INVALID"):
+            audit.qualify_original_prebuild(altered)
+
+    def test_original_and_candidate_manifest_role_changes_rejected(self):
+        o,c=model()
+        c["manifest_references"][("backupAgent","Landroid/app/BackupAgent;")]+=1
+        with patch.object(audit,"inspect_original"), \
+             patch.object(audit,"inspect_apk",side_effect=[o,c]):
+            with self.assertRaisesRegex(audit.AuditBlocked,"CLONE_MANIFEST_REFERENCE_ROLE_DRIFT"):
+                audit.audit_pair(Path("synthetic-original.apk"),Path("synthetic-clone.apk"))
 
 if __name__=="__main__":unittest.main()
