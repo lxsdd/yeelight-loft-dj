@@ -68,6 +68,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 classic_source/run_real_oem_tests.py
+      - name: Qualify original inheritance BEFORE any private clone build
+        run: |
+          set -euo pipefail
+          python3 classic_source/private_startup_audit.py \
+            --original "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk" \
+            --original-only
+          echo "PRIVATE_ORIGINAL_GRAPH_PREBUILD_READY_RUNTIME_NOT_TESTED"
       - name: Build PRIVATE unsigned candidate; never sign or publish
         env:
           CLASSIC_APKTOOL_JAR: ${{ runner.temp }}/classic-tools/apktool_3.0.3.jar

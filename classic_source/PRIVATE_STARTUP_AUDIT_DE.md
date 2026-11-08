@@ -133,3 +133,72 @@ Quellcode. Zielarchitektur in Stufen:
 
 Die Grenzen von UrhG §§69d/69e und Herstellerrechten müssen für jede
 tatsächliche Veröffentlichung/Reimplementierung geprüft werden.
+
+## 2026-11-08: Original-only-PREFLIGHT vor jedem weiteren Clone-Build
+
+Auf dem unverändert geschützten `main` hatte der eigentümergeführte
+Audit #42493590593 bereits Download, reale OEM-Tests und den unsignierten
+Clone-Build bestanden. Danach scheiterte die Original-Dex-Vererbung.
+Die neue Funktion **trennt die Kosten dieser Schritte**: Bereits das
+Original allein wird vor dem Build strukturell qualifiziert.
+
+`python3 classic_source/private_startup_audit.py --original PRIVATE_ORIGINAL.apk --original-only`
+
+Ausschließlich in der geschützten, manuell gestarteten Audit-Route folgt
+dieser Original-Preflight direkt auf die realen OEM-Tests und liegt **vor**
+dem unsignierten Kandidaten-Build. Im Original werden Package- und DEX-Form,
+sieben Provider, 185 Activities, alle retained Manifest-Klasseneinstiege
+und die Vererbungs-/Interface-Kanten *sämtlicher* OEM-DEX-Klassen (auch
+erst später dynamisch geladener Klassen) geprüft.
+
+Eine der beiden ausdrücklich für den **Klon** entfernten Providerklassen
+muss im Original nicht als DEX-Klasse vorhanden sein; alle anderen
+Original-Startpunkte bleiben strikt verpflichtend. Offene OEM-Elternkanten
+werden nicht erfunden, nicht wegdefiniert und nicht aus Präfixen als
+Laufzeitklassen angenommen. Ein Original-Baseline-Risiko ergibt in der
+privaten Audit-Route **Exitcode 2**; der vorhandene `always()`-Cleanup
+räumt die privaten Dateien auf, ohne einen unsignierten Klon gebaut zu haben.
+
+Die neue Ausgabe meldet **nur** die Anzahl offener Kanten und neutrale
+Qualifikationscodes, niemals Original-Klassen-/Methodennamen,
+DEX-Auszüge, persönliche Netzwerkdaten oder Originalbytes.
+Dieser Preflight beweist weiterhin **keinen Android-Start**.
+Die tatsächliche fehlende OEM-Abhängigkeit kann erst nach
+private-only Provenienzprüfung der echten Hersteller-APK, Android-
+Laufzeitbibliotheken und Manifest-/Shared-Library-Anforderungen
+ursächlich klassifiziert werden; die erweiterte statische Diagnose
+allein fügt keine fehlenden Klassen hinzu.
+
+## Einheitliche Entwicklung statt APK-Fehler-Pingpong
+
+- **P0 OEM Originalvertrag:** Im Privattresor die unveränderte APK
+  hash-pinnen, ihre Manifest-/DEX- und Signatur-/Classpath-Annahmen
+  prüfen, beobachtete Startpfade vor und nach Umbau vergleichen.
+- **P1 Echter Offline-Start:** Auf isoliertem Emulator denselben
+  exakten Kandidaten bis `Application.onCreate`, Activity,
+  DJ-Service, Notification-Return und Stop prüfen. Die dafür
+  notwendige autorisierte temporäre Testsignierung und Emulator-
+  Ausführung sind **noch nicht freigegeben** und wurden nicht gestartet.
+- **P2 Produktintegration:** Die unabhängigen, bereits entwickelten
+  Loft-DJ-Komponenten stufenweise in die Original-Classic-Navigation,
+  Geräteidentität, Räume/Gruppen, Szenen und sichere LAN-Session-
+  Zustandsverwaltung überführen. Kein separates externes DJ-Ziel,
+  kein manueller IP-Textdialog als Endzustand.
+- **P3 Funktions- und Langzeitabnahme:** Lokale Audioquellen,
+  BPM/FFT/Farbverläufe, Mehrlampen-Stop, ursprüngliche
+  OFF-Lampen, Quota- und Recovery-Zustände, Backup/Import, Android-
+  Standby, Bluetooth und Original-Classic-Alltag mit klar
+  definierten unterschiedlichen Testnachweisen abnehmen.
+- **P4 Reverse Engineering sicher begrenzen:** Die echte Classic-APK
+  bleibt eine ausschließlich private Vergleichsreferenz für
+  unabhängig wartbar zu implementierende Schnittstellen. Kein
+  unlizenzierter Decompiled-Code, keine OEM-Binärdateien oder
+  Account-Interna im öffentlichen Repository. Eine vollständige
+  Reproduktion proprietärer Signatur-/Cloudfunktionen wird weder
+  suggeriert noch durch LAN-Kompatibilität ersetzt.
+
+Der nächste grüne *öffentliche* Test bedeutet ausschließlich
+**Quellcode-/Auditlogik**, niemals private OEM- oder Android-17-
+Laufzeitqualifikation. Bis zur ursächlichen OEM-Abhängigkeitsprüfung
+kein vorschneller Merge auf `main`, keine private Test-APK und
+keine automatischen Hardwareaktionen.

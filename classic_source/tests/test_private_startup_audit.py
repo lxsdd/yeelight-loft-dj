@@ -288,4 +288,80 @@ class TestPrivatePairs(unittest.TestCase):
               redirect_stdout(StringIO()),redirect_stderr(StringIO())):
             self.assertEqual(audit.main(),0)
 
+class TestOriginalOnlyPrebuild(unittest.TestCase):
+    def report(self,original):
+        with patch.object(audit,"inspect_original"), \
+             patch.object(audit,"inspect_apk",return_value=original):
+            return audit.original_prebuild_report(Path("synthetic-original.apk"))
+
+    def test_clean_original_needs_no_clone_build(self):
+        original,_=model()
+        report=self.report(original)
+        self.assertEqual(report["original_total_missing_parent_edges"],0)
+        self.assertEqual(report["original_declared_removed_providers"],2)
+        self.assertEqual(report["runtime"],"NOT_TESTED")
+        self.assertTrue(audit.qualify_original_prebuild(report))
+
+    def test_dormant_original_missing_parent_fails_prebuild(self):
+        original,_=model()
+        original["definitions"]["Lsynthetic/dormant/Only;"]=["Lsynthetic/unbundled/Parent;"]
+        report=self.report(original)
+        self.assertEqual(report["original_missing_startup_parent_edges"],0)
+        self.assertEqual(report["original_total_missing_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_PARENT_UNVERIFIED"):
+            audit.qualify_original_prebuild(report)
+
+    def test_missing_removed_provider_class_is_only_exactly_exempted(self):
+        original,_=model()
+        for name in audit.REMOVED:
+            original["definitions"].pop("L"+name.replace(".","/")+";")
+        report=self.report(original)
+        self.assertEqual(report["status"],"PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED")
+        self.assertTrue(audit.qualify_original_prebuild(report))
+
+    def test_missing_retained_root_blocks_before_any_clone_build(self):
+        original,_=model()
+        original["definitions"].pop("Lcom/yeelight/cherry/Activity0;")
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_RETAINED_ENTRYPOINT_MISSING"):
+            self.report(original)
+
+    def test_original_provider_count_drift_is_rejected(self):
+        original,_=model()
+        del original["components"][("provider","com.yeelight.cherry.OtherFour")]
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_COMPONENT_COUNTS"):
+            self.report(original)
+
+    def test_ambiguous_prebuild_report_never_qualifies(self):
+        original,_=model();report=self.report(original)
+        variants=[
+            {"status":"PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED"},
+            {"original_total_missing_parent_edges":1},
+            {"real_oem_read":False},
+            {"runtime":"TESTED"},
+            {"original_declared_removed_providers":1},
+        ]
+        for values in variants:
+            with self.subTest(values=values), \
+                 self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_REPORT_INVALID"):
+                audit.qualify_original_prebuild(dict(report,**values))
+
+    def test_original_only_cli_is_sanitized_and_failure_exits_2(self):
+        original,_=model()
+        original["definitions"]["Lsynthetic/dormant/Private;"]=["Lsynthetic/private/DoNotLog;"]
+        with patch.object(audit,"original_prebuild_report",side_effect=lambda path:self.report(original)), \
+             patch("sys.argv",["audit","--original","synthetic.apk","--original-only"]), \
+             redirect_stdout(StringIO()) as output,redirect_stderr(StringIO()) as errors:
+            exitcode=audit.main()
+        self.assertEqual(exitcode,2)
+        self.assertIn("ORIGINAL_PREBUILD_PARENT_UNVERIFIED",errors.getvalue())
+        self.assertIn('"original_total_missing_parent_edges": 1',output.getvalue())
+        self.assertNotIn("DoNotLog",output.getvalue()+errors.getvalue())
+
+    def test_original_only_cli_rejects_candidate_input(self):
+        with patch("sys.argv",["audit","--original","synthetic.apk",
+                              "--original-only","--candidate","not-allowed.apk"]), \
+             redirect_stderr(StringIO()) as errors:
+            self.assertEqual(audit.main(),2)
+        self.assertIn("ORIGINAL_PREBUILD_CANDIDATE_FORBIDDEN",errors.getvalue())
+
 if __name__=="__main__":unittest.main()

@@ -168,6 +168,58 @@ def qualify_report(result):
             "PRIVATE_REPORT_INVALID")
     return True
 
+def original_prebuild_report(original):
+    """Qualify immutable OEM classgraph before making any private clone.
+
+    Original vendor bytes must remain in the private runner. These counters
+    intentionally reveal no class names or hierarchy details.
+    """
+    inspect_original(Path(original))
+    baseline=inspect_apk(original)
+    require(baseline["package"]==OLD,"ORIGINAL_PREBUILD_PACKAGE")
+    require(baseline["dex_count"]==2,"ORIGINAL_PREBUILD_DEX_SHAPE")
+    providers={n for kind,n in baseline["components"] if kind=="provider"}
+    activity_count=sum(1 for kind,_ in baseline["components"] if kind=="activity")
+    require(len(providers)==7 and activity_count==185,
+            "ORIGINAL_PREBUILD_COMPONENT_COUNTS")
+    require(set(REMOVED)<=providers,"ORIGINAL_PREBUILD_PROVIDER_CONTRACT")
+    removed={"L"+name.replace(".","/")+";" for name in REMOVED}
+    retained=baseline["entrypoints"]-removed
+    require(retained<=set(baseline["definitions"]),
+            "ORIGINAL_PREBUILD_RETAINED_ENTRYPOINT_MISSING")
+    missing_start=set()
+    try:
+        n=reachable(dict(baseline,entrypoints=retained),
+                    missing_parents=missing_start)
+    except AuditBlocked as exc:
+        raise AuditBlocked("ORIGINAL_PREBUILD_INHERITANCE_INVALID") from exc
+    missing_all=unresolved_edges(baseline["definitions"])
+    require(missing_start<=missing_all,"ORIGINAL_PREBUILD_GRAPH_COUNTER_INVALID")
+    return {"status":("PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED"
+                     if missing_all else "PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED"),
+            "original_retained_startup_entrypoints":n,
+            "original_missing_startup_parent_edges":len(missing_start),
+            "original_total_missing_parent_edges":len(missing_all),
+            "original_declared_removed_providers":len(removed),
+            "real_oem_read":True,"runtime":"NOT_TESTED"}
+
+def qualify_original_prebuild(report):
+    """Never treat unknown inherited OEM types as a complete startup PASS."""
+    start=report.get("original_missing_startup_parent_edges")
+    total=report.get("original_total_missing_parent_edges")
+    require(type(start) is int and type(total) is int and
+            0<=start<=total and report.get("real_oem_read") is True and
+            report.get("runtime")=="NOT_TESTED" and
+            report.get("original_declared_removed_providers")==len(REMOVED),
+            "ORIGINAL_PREBUILD_REPORT_INVALID")
+    if report.get("status")=="PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED":
+        require(total>0,"ORIGINAL_PREBUILD_REPORT_INVALID")
+        raise AuditBlocked("ORIGINAL_PREBUILD_PARENT_UNVERIFIED")
+    require(report.get("status")=="PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED" and
+            total==0 and start==0,
+            "ORIGINAL_PREBUILD_REPORT_INVALID")
+    return True
+
 def audit_pair(original,candidate):
     inspect_original(Path(original))
     o=inspect_apk(original);c=inspect_apk(candidate)
@@ -245,12 +297,21 @@ def audit_pair(original,candidate):
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--original",type=Path,required=True)
-    p.add_argument("--candidate",type=Path,required=True)
+    p.add_argument("--candidate",type=Path)
+    p.add_argument("--original-only",action="store_true",
+                   help="Preflight pinned original classgraph without a candidate")
     args=p.parse_args()
     try:
-        report=audit_pair(args.original,args.candidate)
-        print(json.dumps(report,sort_keys=True))
-        qualify_report(report)
+        if args.original_only:
+            require(args.candidate is None,"ORIGINAL_PREBUILD_CANDIDATE_FORBIDDEN")
+            report=original_prebuild_report(args.original)
+            print(json.dumps(report,sort_keys=True))
+            qualify_original_prebuild(report)
+        else:
+            require(args.candidate is not None,"CANDIDATE_REQUIRED")
+            report=audit_pair(args.original,args.candidate)
+            print(json.dumps(report,sort_keys=True))
+            qualify_report(report)
         return 0
     except (AuditBlocked,GateFailure,AxmlError,OSError,BadZipFile,KeyError,ValueError) as e:
         reason=str(e) if isinstance(e,AuditBlocked) else "PRIVATE_INPUT_INVALID"
