@@ -11,6 +11,26 @@ class Color4OfflineCoordinatorTest {
     private val rgb = Color4UiAdmission.Kind.RGB
     private val brightness = Color4UiAdmission.Kind.BRIGHTNESS
 
+    @Test fun preSessionIntentsCannotBeReplayedByFreshExplicitUiEvent() {
+        val c = Color4OfflineCoordinator()
+        assertFalse(c.offer("one", rgb, 0x123456, true))
+        assertFalse(c.offer("one", brightness, 44, true))
+        val s = c.openSession("one", true)!!
+        assertNull(c.takeOnExplicitUiEvent("one", rgb, 10_000, true, s, 1))
+        assertNull(c.takeOnExplicitUiEvent("one", brightness, 10_000, true, s, 1))
+        assertTrue(c.offer("one", rgb, 0xabcdef, true))
+        assertEquals(0xabcdef, c.takeOnExplicitUiEvent("one", rgb, 10_000, true, s, 1)!!.value)
+        assertTrue(c.onReply("one", s, 1, true, false))
+        assertNull(c.takeOnExplicitUiEvent("one", brightness, 12_000, true, s, 2))
+        assertTrue(c.closeSession("one", s))
+        assertFalse(c.offer("one", rgb, 0x010203, true))
+        val next = c.openSession("one", true)!!
+        assertNull(c.takeOnExplicitUiEvent("one", rgb, 13_500, true, next, 2))
+        assertTrue(c.offer("one", rgb, 0x112233, true))
+        assertEquals(0x112233, c.takeOnExplicitUiEvent("one", rgb, 13_500, true, next, 2)!!.value)
+        assertTrue(c.onReply("one", next, 2, true, false))
+    }
+
     @Test fun explicitUiTicketAndExactReplyOnly() {
         val c = Color4OfflineCoordinator()
         val s = c.openSession("one", true)!!
