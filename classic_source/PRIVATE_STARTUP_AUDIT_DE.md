@@ -220,3 +220,18 @@ Prüfungen, fehlende Commit-/Tag-/PR-Trigger, Bereinigung und das Verbot
 von Signing und Artifact-Upload bleiben unverändert. Dies ist
 ausschließlich eine Änderung an der vorhandenen manuellen Audit-Route,
 kein neuer Workflow-Start oder neuer Task.
+
+## Sicherheitskette vereinheitlicht: auch die nur eigentümergeführte Signed-Route
+
+Die bestehende `classic-private-test-signed.yml` erhält denselben
+**Original-only-Preflight** vor Gradle-/Apktool-/SDK36-Paketdownload,
+unsigniertem Kandidaten-Build und jeglicher Signierung. Das ist eine
+reine Quellcode-Härtung: Der geschützt manuelle Signierworkflow
+wurde **nicht** ausgelöst, keine APK signiert oder hochgeladen.
+Der existente strikte Original/Klon-Graphvergleich vor dem Signieren
+und erneut nach dem Signieren sowie die binäre Manifest-/DEX-
+Payload-Paritätsprüfung bleiben unverändert verpflichtend.
+Ungeklärte OEM-Originalabhängigkeiten brechen beide Routen früh ab.
+Einen sinnvollen privaten Hardware-Kandidaten darf es erst nach
+separater Android-17-Offline-Startqualifikation geben; die
+Signierroute allein liefert diesen Laufzeitbeleg weiterhin nicht.
