@@ -7,7 +7,12 @@ package io.github.lxsdd.yeelightloftdj
  * A socket close or timeout is uncertain: never silently replay the command.
  */
 class Color4TcpResponseLedger {
-    data class Session(val generation: Long)
+    /**
+     * Ledger-issued in-memory socket capability. Generation is diagnostic only:
+     * constructing the same number in a different object never grants a reply,
+     * timeout, close or command admission for the original socket.
+     */
+    class Session internal constructor(val generation: Long)
     data class Completion(val ticket: Long, val success: Boolean, val uncertain: Boolean)
     private data class Inflight(val ticket: Long, val protocolId: Long)
     private class Device {
@@ -35,7 +40,7 @@ class Color4TcpResponseLedger {
     @Synchronized
     fun begin(deviceId: String, session: Session, ticket: Long, protocolId: Long): Boolean {
         val d = devices[deviceId] ?: return false
-        if (ticket <= d.lastTicket || protocolId <= 0 || d.quarantined || d.session != session || d.inflight != null || protocolId <= d.lastProtocolId) return false
+        if (ticket <= d.lastTicket || protocolId <= 0 || d.quarantined || d.session !== session || d.inflight != null || protocolId <= d.lastProtocolId) return false
         d.lastTicket = ticket
         d.lastProtocolId = protocolId
         d.inflight = Inflight(ticket, protocolId)
@@ -47,7 +52,7 @@ class Color4TcpResponseLedger {
     fun reply(deviceId: String, session: Session, protocolId: Long, success: Boolean, quotaOrUncertain: Boolean): Completion? {
         val d = devices[deviceId] ?: return null
         val active = d.inflight ?: return null
-        if (d.session != session || active.protocolId != protocolId || protocolId <= 0) return null
+        if (d.session !== session || active.protocolId != protocolId || protocolId <= 0) return null
         d.inflight = null
         if (!success || quotaOrUncertain) d.quarantined = true
         return Completion(active.ticket, success && !quotaOrUncertain, !success || quotaOrUncertain)
@@ -62,7 +67,7 @@ class Color4TcpResponseLedger {
     @Synchronized
     fun close(deviceId: String, session: Session): Completion? {
         val d = devices[deviceId] ?: return null
-        if (d.session != session) return null
+        if (d.session !== session) return null
         d.session = null
         val old = d.inflight
         d.inflight = null

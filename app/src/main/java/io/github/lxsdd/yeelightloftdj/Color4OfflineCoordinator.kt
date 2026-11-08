@@ -42,7 +42,7 @@ class Color4OfflineCoordinator(
         deviceId: String, kind: Color4UiAdmission.Kind, nowMs: Long,
         supported: Boolean, session: Color4TcpResponseLedger.Session, protocolId: Long,
     ): Dispatch? {
-        if (sessions[deviceId] != session) return null
+        if (sessions[deviceId] !== session) return null
         if (!supported) {
             admission.takeOnUiEvent(deviceId, kind, nowMs, false)
             closeSession(deviceId, session)
@@ -66,7 +66,7 @@ class Color4OfflineCoordinator(
         success: Boolean, uncertainOrQuota: Boolean,
     ): Boolean {
         val active = inFlight[deviceId] ?: return false
-        if (active.session != session || active.protocolId != protocolId) return false
+        if (active.session !== session || active.protocolId != protocolId) return false
         val completion = ledger.reply(deviceId, session, protocolId, success, uncertainOrQuota) ?: return false
         inFlight.remove(deviceId)
         if (completion.ticket != active.ticket) {
@@ -80,7 +80,7 @@ class Color4OfflineCoordinator(
     @Synchronized
     fun onTimeout(deviceId: String, session: Color4TcpResponseLedger.Session, protocolId: Long): Boolean {
         val active = inFlight[deviceId] ?: return false
-        if (active.session != session || active.protocolId != protocolId) return false
+        if (active.session !== session || active.protocolId != protocolId) return false
         val completion = ledger.timeout(deviceId, session, protocolId) ?: return false
         inFlight.remove(deviceId)
         if (completion.ticket != active.ticket) {
@@ -94,7 +94,7 @@ class Color4OfflineCoordinator(
     /** Disconnect leaves the budget spent and any pending write uncertain. */
     @Synchronized
     fun closeSession(deviceId: String, session: Color4TcpResponseLedger.Session): Boolean {
-        if (sessions[deviceId] != session) return false
+        if (sessions[deviceId] !== session) return false
         val completion = ledger.close(deviceId, session)
         // A clean disconnect must not replay queued UI values on a new socket.
         admission.discardPending(deviceId)
