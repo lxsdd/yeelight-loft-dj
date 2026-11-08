@@ -144,7 +144,32 @@ def audit_pair(original,candidate):
     for n in REMOVED:del expected[("provider",n)]
     for entry in ADDED:expected[entry]+=1
     require(expected==c["components"],"CLONE_COMPONENT_DRIFT")
-    old_n=reachable(o);new_n=reachable(c)
+    # Only the two intentionally removed, non-executable provider entrypoints
+    # may disappear from the clone. Reject any other manifest graph drift.
+    removed={"L"+n.replace(".","/")+";" for n in REMOVED}
+    added={"L"+n.replace(".","/")+";" for _,n in ADDED}
+    require(o["entrypoints"]-c["entrypoints"]==removed,"REMOVED_PROVIDER_ENTRYPOINT_DRIFT")
+    require(c["entrypoints"]-o["entrypoints"]==added,"ADDED_BRIDGE_ENTRYPOINT_DRIFT")
+    # Exact OEM class definitions and their parent/interface relationships
+    # must survive the rebuild. A missing retained OEM class is never waived.
+    for descriptor,parents in o["definitions"].items():
+        require(c["definitions"].get(descriptor)==parents,"OEM_DEX_GRAPH_DRIFT")
+    # A removed provider is no longer a startup entrypoint of the clone.
+    # However if any retained class inherits from it, reachable() still visits
+    # it and refuses an unresolved superclass. No blanket third-party bypass.
+    retained=dict(o,entrypoints=o["entrypoints"] & c["entrypoints"])
+    try:
+        old_n=reachable(retained)
+    except AuditBlocked as exc:
+        if str(exc)=="STARTUP_CLASS_OR_SUPER_MISSING":
+            raise AuditBlocked("RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING") from exc
+        raise
+    try:
+        new_n=reachable(c)
+    except AuditBlocked as exc:
+        if str(exc)=="STARTUP_CLASS_OR_SUPER_MISSING":
+            raise AuditBlocked("CANDIDATE_CLASS_OR_SUPER_MISSING") from exc
+        raise
     return {"status":"PRIVATE_STATIC_STARTUP_AUDIT_PASS_RUNTIME_NOT_TESTED",
             "original_components":sum(o["components"].values()),
             "clone_components":sum(c["components"].values()),

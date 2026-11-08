@@ -29,11 +29,12 @@ def model():
     for n in audit.REMOVED: del clone[("provider",n)]
     for n in audit.ADDED: clone[n]+=1
     orig_desc={"L"+n.replace(".","/")+";" for n in names+all_activities+["com.yeelight.cherry.App"]}
-    clone_desc=orig_desc | {"L"+n.replace(".","/")+";" for _,n in audit.ADDED}
+    removed_desc={"L"+n.replace(".","/")+";" for n in audit.REMOVED}
+    clone_desc=(orig_desc - removed_desc) | {"L"+n.replace(".","/")+";" for _,n in audit.ADDED}
     o={"package":audit.OLD,"components":original,"entrypoints":orig_desc,
        "definitions":{d:[BASE] for d in orig_desc},"dex_count":2}
     c={"package":audit.NEW,"components":clone,"entrypoints":clone_desc,
-       "definitions":{d:[BASE] for d in clone_desc},"dex_count":3}
+       "definitions":{d:[BASE] for d in orig_desc | clone_desc},"dex_count":3}
     return o,c
 
 def fake_dex():
@@ -95,7 +96,7 @@ class TestPrivatePairs(unittest.TestCase):
         o,c=model()
         descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
         o["definitions"].pop(descriptor)
-        with self.assertRaisesRegex(audit.AuditBlocked,"STARTUP_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
             self.checked(o,c)
     def test_no_provider_deletion_guess_accepted(self):
         o,c=model();del c["components"][("provider","com.yeelight.yeelib.data.DeviceBrowserProvider")]
@@ -112,11 +113,66 @@ class TestPrivatePairs(unittest.TestCase):
     def test_not_all_classes_present_in_clone(self):
         o,c=model()
         c["definitions"].pop("Lcom/yeelight/yeelib/data/DeviceBrowserProvider;")
-        with self.assertRaisesRegex(audit.AuditBlocked,"STARTUP_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"OEM_DEX_GRAPH_DRIFT"):
             self.checked(o,c)
     def test_does_not_accept_more_or_fewer_dex_files(self):
         o,c=model();c["dex_count"]=4
         with self.assertRaisesRegex(audit.AuditBlocked,"DEX_SHAPE"):
+            self.checked(o,c)
+
+    def test_removed_oem_provider_class_can_be_absent_if_no_longer_referenced(self):
+        o,c=model()
+        for name in audit.REMOVED:
+            descriptor="L"+name.replace(".","/")+";"
+            o["definitions"].pop(descriptor)
+            c["definitions"].pop(descriptor)
+        info=self.checked(o,c)
+        self.assertEqual(info["status"],"PRIVATE_STATIC_STARTUP_AUDIT_PASS_RUNTIME_NOT_TESTED")
+    def test_removed_provider_cannot_remain_referenced_in_clone_manifest(self):
+        o,c=model()
+        descriptor="L"+audit.REMOVED[0].replace(".","/")+";"
+        c["entrypoints"].add(descriptor)
+        with self.assertRaisesRegex(audit.AuditBlocked,"REMOVED_PROVIDER_ENTRYPOINT_DRIFT"):
+            self.checked(o,c)
+    def test_unexpected_missing_retained_manifest_entry_is_rejected(self):
+        o,c=model()
+        descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        c["entrypoints"].remove(descriptor)
+        with self.assertRaisesRegex(audit.AuditBlocked,"REMOVED_PROVIDER_ENTRYPOINT_DRIFT"):
+            self.checked(o,c)
+    def test_unexpected_extra_clone_manifest_entry_is_rejected(self):
+        o,c=model()
+        c["entrypoints"].add("Lunreviewed/Extra;")
+        with self.assertRaisesRegex(audit.AuditBlocked,"ADDED_BRIDGE_ENTRYPOINT_DRIFT"):
+            self.checked(o,c)
+    def test_original_retained_parent_remains_mandatory(self):
+        o,c=model()
+        descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        o["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
+        c["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
+            self.checked(o,c)
+    def test_clone_sidecar_parent_remains_mandatory(self):
+        o,c=model()
+        descriptor="L"+audit.ADDED[0][1].replace(".","/")+";"
+        c["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_CLASS_OR_SUPER_MISSING"):
+            self.checked(o,c)
+    def test_removed_provider_as_retained_super_is_still_required(self):
+        o,c=model()
+        removed="L"+audit.REMOVED[0].replace(".","/")+";"
+        retained="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        o["definitions"].pop(removed)
+        c["definitions"].pop(removed)
+        o["definitions"][retained]=[removed]
+        c["definitions"][retained]=[removed]
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
+            self.checked(o,c)
+    def test_oem_class_graph_mutation_remains_blocked(self):
+        o,c=model()
+        descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        c["definitions"][descriptor]=["Ljava/lang/String;"]
+        with self.assertRaisesRegex(audit.AuditBlocked,"OEM_DEX_GRAPH_DRIFT"):
             self.checked(o,c)
 
 if __name__=="__main__":unittest.main()
