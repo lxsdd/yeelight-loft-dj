@@ -1,5 +1,7 @@
 """Offline negative/positive tests for the PRIVATE real-APK startup audit."""
 from collections import Counter
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 import hashlib
 import struct
 import unittest
@@ -92,11 +94,13 @@ class TestPrivatePairs(unittest.TestCase):
         self.assertEqual(info["original_dex"],2)
         self.assertEqual(info["clone_dex"],3)
         self.assertEqual(info["runtime"],"NOT_TESTED")
+        self.assertEqual(info["original_total_unresolved_parent_edges"],0)
+        self.assertTrue(audit.qualify_report(info))
     def test_missing_oem_device_browser_provider_refused(self):
         o,c=model()
         descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
         o["definitions"].pop(descriptor)
-        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_ENTRYPOINT_CLASS_MISSING"):
             self.checked(o,c)
     def test_no_provider_deletion_guess_accepted(self):
         o,c=model();del c["components"][("provider","com.yeelight.yeelib.data.DeviceBrowserProvider")]
@@ -145,18 +149,22 @@ class TestPrivatePairs(unittest.TestCase):
         c["entrypoints"].add("Lunreviewed/Extra;")
         with self.assertRaisesRegex(audit.AuditBlocked,"ADDED_BRIDGE_ENTRYPOINT_DRIFT"):
             self.checked(o,c)
-    def test_original_retained_parent_remains_mandatory(self):
+    def test_original_retained_parent_gap_is_reported_not_assumed_fixed(self):
         o,c=model()
         descriptor="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
         o["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
         c["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
-        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
-            self.checked(o,c)
+        result=self.checked(o,c)
+        self.assertEqual(result["original_baseline_unresolved_parent_edges"],1)
+        self.assertEqual(result["status"],"PRIVATE_STATIC_PARITY_WITH_UNRESOLVED_OEM_BASELINE_RUNTIME_NOT_TESTED")
+        self.assertEqual(result["original_total_unresolved_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_BASELINE_PARENT_UNVERIFIED"):
+            audit.qualify_report(result)
     def test_clone_sidecar_parent_remains_mandatory(self):
         o,c=model()
         descriptor="L"+audit.ADDED[0][1].replace(".","/")+";"
         c["definitions"][descriptor]=["Lvendor/unavailable/Parent;"]
-        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_UNRESOLVED_PARENT_DRIFT"):
             self.checked(o,c)
     def test_removed_provider_as_retained_super_is_still_required(self):
         o,c=model()
@@ -166,7 +174,7 @@ class TestPrivatePairs(unittest.TestCase):
         c["definitions"].pop(removed)
         o["definitions"][retained]=[removed]
         c["definitions"][retained]=[removed]
-        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_CLASS_OR_SUPER_MISSING"):
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_INHERITS_REMOVED_PROVIDER"):
             self.checked(o,c)
     def test_oem_class_graph_mutation_remains_blocked(self):
         o,c=model()
@@ -174,5 +182,187 @@ class TestPrivatePairs(unittest.TestCase):
         c["definitions"][descriptor]=["Ljava/lang/String;"]
         with self.assertRaisesRegex(audit.AuditBlocked,"OEM_DEX_GRAPH_DRIFT"):
             self.checked(o,c)
+
+    def test_new_dj_class_cannot_be_missing_from_dex(self):
+        o,c=model()
+        dj="L"+audit.ADDED[0][1].replace(".","/")+";"
+        c["definitions"].pop(dj)
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_ENTRYPOINT_CLASS_MISSING"):
+            self.checked(o,c)
+
+    def test_clone_cannot_introduce_missing_nonplatform_parent(self):
+        o,c=model()
+        dj="L"+audit.ADDED[0][1].replace(".","/")+";"
+        c["definitions"][dj]=["Lvendor/clone/OnlyMissing;"]
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_UNRESOLVED_PARENT_DRIFT"):
+            self.checked(o,c)
+
+    def test_new_dj_cannot_inherit_original_baseline_gap(self):
+        o,c=model()
+        original="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        missing="Lvendor/unknown/Baseline;"
+        dj="L"+audit.ADDED[0][1].replace(".","/")+";"
+        o["definitions"][original]=[missing]
+        c["definitions"][original]=[missing]
+        c["definitions"][dj]=[original]
+        with self.assertRaisesRegex(audit.AuditBlocked,"BRIDGE_ENTRYPOINT_OR_PARENT_MISSING"):
+            self.checked(o,c)
+
+    def test_unresolved_parent_count_deduplicates_identical_edges(self):
+        o,c=model()
+        original="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        o["definitions"][original]=["Lvendor/unknown/Baseline;","Lvendor/unknown/Baseline;"]
+        c["definitions"][original]=o["definitions"][original][:]
+        result=self.checked(o,c)
+        self.assertEqual(result["original_baseline_unresolved_parent_edges"],1)
+
+    def test_missing_retained_activity_start_class_always_fatal(self):
+        o,c=model()
+        d="Lcom/yeelight/cherry/Activity0;"
+        o["definitions"].pop(d)
+        c["definitions"].pop(d)
+        with self.assertRaisesRegex(audit.AuditBlocked,"RETAINED_ORIGINAL_ENTRYPOINT_CLASS_MISSING"):
+            self.checked(o,c)
+
+    def test_nonstartup_oem_missing_parent_is_still_unqualified(self):
+        o,c=model()
+        dormant="Lvendor/legacy/Dormant;"
+        o["definitions"][dormant]=["Lvendor/external/OnlyAtRuntime;"]
+        c["definitions"][dormant]=["Lvendor/external/OnlyAtRuntime;"]
+        report=self.checked(o,c)
+        self.assertEqual(report["original_baseline_unresolved_parent_edges"],0)
+        self.assertEqual(report["original_total_unresolved_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_BASELINE_PARENT_UNVERIFIED"):
+            audit.qualify_report(report)
+
+    def test_nonentrypoint_sidecar_missing_parent_is_fatal(self):
+        o,c=model()
+        c["definitions"]["Lloftdj/NewHiddenSidecar;"]=["Lvendor/NotBundled;"]
+        with self.assertRaisesRegex(audit.AuditBlocked,"CANDIDATE_NEW_CLASS_PARENT_UNVERIFIED"):
+            self.checked(o,c)
+
+    def test_unresolved_interface_is_baseline_risk_not_green(self):
+        o,c=model()
+        owner="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        unknown="Lvendor/legacy/UnknownInterface;"
+        o["definitions"][owner]=[BASE,unknown]
+        c["definitions"][owner]=[BASE,unknown]
+        report=self.checked(o,c)
+        self.assertEqual(report["original_total_unresolved_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_BASELINE_PARENT_UNVERIFIED"):
+            audit.qualify_report(report)
+
+    def test_report_gate_denies_false_pass_flags(self):
+        o,c=model();report=self.checked(o,c)
+        for tamper in (
+            {"original_total_unresolved_parent_edges":1},
+            {"original_baseline_unresolved_parent_edges":1},
+            {"real_oem_read":False},
+            {"runtime":"TESTED"},
+            {"status":"UNREVIEWED"},
+        ):
+            invalid=dict(report,**tamper)
+            with self.subTest(tamper=tamper),self.assertRaisesRegex(audit.AuditBlocked,"PRIVATE_REPORT_INVALID"):
+                audit.qualify_report(invalid)
+
+    def test_cli_returns_nonzero_on_sanitized_unresolved_baseline(self):
+        o,c=model()
+        target="Lcom/yeelight/yeelib/data/DeviceBrowserProvider;"
+        o["definitions"][target]=["Lvendor/private/DoNotPrint;"]
+        c["definitions"][target]=["Lvendor/private/DoNotPrint;"]
+        report=self.checked(o,c)
+        out,err=StringIO(),StringIO()
+        with (patch.object(audit,"audit_pair",return_value=report),
+              patch("sys.argv",["audit","--original","dummy-original.apk","--candidate","dummy-clone.apk"]),
+              redirect_stdout(out),redirect_stderr(err)):
+            exit_code=audit.main()
+        self.assertEqual(exit_code,2)
+        self.assertIn("ORIGINAL_BASELINE_PARENT_UNVERIFIED",err.getvalue())
+        self.assertIn('"original_total_unresolved_parent_edges": 1',out.getvalue())
+        self.assertNotIn("DoNotPrint",out.getvalue()+err.getvalue())
+
+    def test_cli_returns_zero_only_for_complete_static_graph(self):
+        o,c=model();report=self.checked(o,c)
+        with (patch.object(audit,"audit_pair",return_value=report),
+              patch("sys.argv",["audit","--original","dummy-original.apk","--candidate","dummy-clone.apk"]),
+              redirect_stdout(StringIO()),redirect_stderr(StringIO())):
+            self.assertEqual(audit.main(),0)
+
+class TestOriginalOnlyPrebuild(unittest.TestCase):
+    def report(self,original):
+        with patch.object(audit,"inspect_original"), \
+             patch.object(audit,"inspect_apk",return_value=original):
+            return audit.original_prebuild_report(Path("synthetic-original.apk"))
+
+    def test_clean_original_needs_no_clone_build(self):
+        original,_=model()
+        report=self.report(original)
+        self.assertEqual(report["original_total_missing_parent_edges"],0)
+        self.assertEqual(report["original_declared_removed_providers"],2)
+        self.assertEqual(report["runtime"],"NOT_TESTED")
+        self.assertTrue(audit.qualify_original_prebuild(report))
+
+    def test_dormant_original_missing_parent_fails_prebuild(self):
+        original,_=model()
+        original["definitions"]["Lsynthetic/dormant/Only;"]=["Lsynthetic/unbundled/Parent;"]
+        report=self.report(original)
+        self.assertEqual(report["original_missing_startup_parent_edges"],0)
+        self.assertEqual(report["original_total_missing_parent_edges"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_PARENT_UNVERIFIED"):
+            audit.qualify_original_prebuild(report)
+
+    def test_missing_removed_provider_class_is_only_exactly_exempted(self):
+        original,_=model()
+        for name in audit.REMOVED:
+            original["definitions"].pop("L"+name.replace(".","/")+";")
+        report=self.report(original)
+        self.assertEqual(report["status"],"PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED")
+        self.assertTrue(audit.qualify_original_prebuild(report))
+
+    def test_missing_retained_root_blocks_before_any_clone_build(self):
+        original,_=model()
+        original["definitions"].pop("Lcom/yeelight/cherry/Activity0;")
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_RETAINED_ENTRYPOINT_MISSING"):
+            self.report(original)
+
+    def test_original_provider_count_drift_is_rejected(self):
+        original,_=model()
+        del original["components"][("provider","com.yeelight.cherry.OtherFour")]
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_COMPONENT_COUNTS"):
+            self.report(original)
+
+    def test_ambiguous_prebuild_report_never_qualifies(self):
+        original,_=model();report=self.report(original)
+        variants=[
+            {"status":"PRIVATE_ORIGINAL_BASELINE_UNRESOLVED_PREBUILD_BLOCKED"},
+            {"original_total_missing_parent_edges":1},
+            {"real_oem_read":False},
+            {"runtime":"TESTED"},
+            {"original_declared_removed_providers":1},
+        ]
+        for values in variants:
+            with self.subTest(values=values), \
+                 self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_REPORT_INVALID"):
+                audit.qualify_original_prebuild(dict(report,**values))
+
+    def test_original_only_cli_is_sanitized_and_failure_exits_2(self):
+        original,_=model()
+        original["definitions"]["Lsynthetic/dormant/Private;"]=["Lsynthetic/private/DoNotLog;"]
+        prebuilt=self.report(original)
+        with patch.object(audit,"original_prebuild_report",return_value=prebuilt), \
+             patch("sys.argv",["audit","--original","synthetic.apk","--original-only"]), \
+             redirect_stdout(StringIO()) as output,redirect_stderr(StringIO()) as errors:
+            exitcode=audit.main()
+        self.assertEqual(exitcode,2)
+        self.assertIn("ORIGINAL_PREBUILD_PARENT_UNVERIFIED",errors.getvalue())
+        self.assertIn('"original_total_missing_parent_edges": 1',output.getvalue())
+        self.assertNotIn("DoNotLog",output.getvalue()+errors.getvalue())
+
+    def test_original_only_cli_rejects_candidate_input(self):
+        with patch("sys.argv",["audit","--original","synthetic.apk",
+                              "--original-only","--candidate","not-allowed.apk"]), \
+             redirect_stderr(StringIO()) as errors:
+            self.assertEqual(audit.main(),2)
+        self.assertIn("ORIGINAL_PREBUILD_CANDIDATE_FORBIDDEN",errors.getvalue())
 
 if __name__=="__main__":unittest.main()
