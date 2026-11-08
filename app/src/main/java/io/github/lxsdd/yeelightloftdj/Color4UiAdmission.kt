@@ -131,6 +131,15 @@ class Color4UiAdmission(
         }
     }
 
+    /** Discard UI intents from a disconnected generation without refunding budget. */
+    @Synchronized
+    fun discardPending(deviceId: String) {
+        lamps[deviceId]?.let {
+            it.pendingRgb = null
+            it.pendingBrightness = null
+        }
+    }
+
     @Synchronized
     fun isQuarantined(deviceId: String): Boolean = lamps[deviceId]?.quarantined == true
 }
