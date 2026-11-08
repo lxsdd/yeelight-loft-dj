@@ -202,3 +202,21 @@ Der nächste grüne *öffentliche* Test bedeutet ausschließlich
 Laufzeitqualifikation. Bis zur ursächlichen OEM-Abhängigkeitsprüfung
 kein vorschneller Merge auf `main`, keine private Test-APK und
 keine automatischen Hardwareaktionen.
+
+## Kosten-/Fehlervermeidung im geschützten Audit-Workflow
+
+Zusätzlich zum fachlichen Original-only-Preflight wurden die teuren
+Vorbereitungsschritte zeitlich nach hinten verschoben: Das öffentliche
+Quellprogramm benötigt für diese Originaldiagnose keine Gradle-9.8.2-
+Installation, keinen vollständigen Android-SDK-36-Paketdownload und
+keine Apktool-JAR. Erst wenn der gepinnte OEM-Download, alle echten
+Originaltests und die vollständige Original-Vererbungsprüfung bestanden
+sind, werden Gradle, SDK-Plattform/Build-Tools und das SHA-256-gepinnte
+Apktool für den weiterhin unsignierten Klon-Build vorbereitet.
+
+Fehler im unveränderten Original verbrauchen daher künftig weder einen
+Klon-Build noch dessen Toolchain-Downloads. Die Eigentümer-/Environment-
+Prüfungen, fehlende Commit-/Tag-/PR-Trigger, Bereinigung und das Verbot
+von Signing und Artifact-Upload bleiben unverändert. Dies ist
+ausschließlich eine Änderung an der vorhandenen manuellen Audit-Route,
+kein neuer Workflow-Start oder neuer Task.

@@ -33,27 +33,12 @@ jobs:
           java-version: '17'
       - name: Android SDK
         uses: android-actions/setup-android@v4
-      - name: Gradle without private cache
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '9.8.2'
-          cache-disabled: true
       - name: Source tests (synthetic only at this point)
         run: |
           set -euo pipefail
           (cd classic_source && python3 -m unittest discover -s tests -q)
           (cd classic_source/checkpoint && python3 -m unittest discover -s tests -q)
           python3 -m unittest discover -s github_hosted/tests -q
-      - name: Pin SDK and Apktool
-        run: |
-          set -euo pipefail
-          umask 077
-          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' >/dev/null
-          mkdir -p "$RUNNER_TEMP/classic-tools"
-          curl --proto '=https' --tlsv1.2 -fsSL --retry 2 \
-            'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar' \
-            -o "$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar"
-          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  '"$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar" | sha256sum --check --status
       - name: Download pinned original from PRIVATE vault
         env:
           GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}
@@ -75,6 +60,21 @@ jobs:
             --original "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk" \
             --original-only
           echo "PRIVATE_ORIGINAL_GRAPH_PREBUILD_READY_RUNTIME_NOT_TESTED"
+      - name: Gradle without private cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.8.2'
+          cache-disabled: true
+      - name: Pin SDK and Apktool
+        run: |
+          set -euo pipefail
+          umask 077
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' >/dev/null
+          mkdir -p "$RUNNER_TEMP/classic-tools"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 2 \
+            'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar' \
+            -o "$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar"
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  '"$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar" | sha256sum --check --status
       - name: Build PRIVATE unsigned candidate; never sign or publish
         env:
           CLASSIC_APKTOOL_JAR: ${{ runner.temp }}/classic-tools/apktool_3.0.3.jar
