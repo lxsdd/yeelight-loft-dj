@@ -24,6 +24,8 @@ class Color4OfflineCoordinator(
     @Synchronized
     fun openSession(deviceId: String, supported: Boolean): Color4TcpResponseLedger.Session? {
         if (deviceId.isBlank() || !supported || isQuarantined(deviceId) || sessions.containsKey(deviceId)) return null
+        // An intent offered before this socket generation must never cross into it.
+        admission.discardPending(deviceId)
         val session = ledger.open(deviceId) ?: return null
         sessions[deviceId] = session
         return session
@@ -31,6 +33,8 @@ class Color4OfflineCoordinator(
 
     @Synchronized
     fun offer(deviceId: String, kind: Color4UiAdmission.Kind, value: Int, supported: Boolean): Boolean {
+        // UI intents have no valid socket owner until a session is open.
+        if (sessions[deviceId] == null && supported) return false
         val accepted = admission.offer(deviceId, kind, value, supported)
         if (!supported) sessions[deviceId]?.let { closeSession(deviceId, it) }
         return accepted
