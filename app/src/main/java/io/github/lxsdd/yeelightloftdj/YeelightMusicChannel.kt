@@ -33,6 +33,11 @@ class YeelightMusicChannel(
     private val sendLock = Any()
     private var socket: Socket? = null
     private var enabledAttempted = false
+    @Volatile private var disableAcknowledged = false
+    @Volatile private var startDefinitelyRejected = false
+    val alreadyDisabledSuccessfully: Boolean get() = disableAcknowledged
+    /** The LAN gate deferred, or firmware explicitly rejected, set_music(1). */
+    val enableDefinitelyNotAccepted: Boolean get() = startDefinitelyRejected
     private var closed = false
     private var nextId = 1
 
@@ -49,7 +54,21 @@ class YeelightMusicChannel(
             listener.soTimeout = 4_000
             synchronized(lock) { enabledAttempted = true }
             // Listener MUST exist before telling the bulb to connect back.
-            enableOnDevice(localWifiIp, listener.localPort)
+            try {
+                enableOnDevice(localWifiIp, listener.localPort)
+            } catch (failure: Exception) {
+                // A definite firmware rejection or pre-send admission refusal
+                // MUST NOT generate a speculative set_music(0) write.
+                // A transport timeout is different: the command might have run.
+                if (failure is YeelightLan.RejectedCommand ||
+                    failure is DeviceCommandGate.Deferred) {
+                    synchronized(lock) {
+                        startDefinitelyRejected = true
+                        enabledAttempted = false
+                    }
+                }
+                throw failure
+            }
             val accepted = listener.accept()
             candidate = accepted
             if (accepted.inetAddress.hostAddress != deviceIp) {
@@ -63,12 +82,23 @@ class YeelightMusicChannel(
             }
         } catch (failure: Exception) {
             runCatching { candidate?.close() }
-            // A missing ACK does not prove set_music failed: try exactly one
-            // compensating disable and retain the original failure.
+            // Compensate only a potentially applied start, never an explicit
+            // firmware rejection or a gate decision made before writing.
             runCatching { close() }.exceptionOrNull()?.let(failure::addSuppressed)
             throw failure
         } finally {
             listener.close()
+        }
+    }
+
+    /**
+     * Close ONLY the reverse data socket to interrupt a blocked writer.
+     * Retain enabledAttempted so a subsequent close() performs precisely
+     * one quota-accounted set_music(0); no command is sent here.
+     */
+    fun interruptBlockedOutput() {
+        synchronized(lock) {
+            runCatching { socket?.close() }
         }
     }
 
@@ -106,19 +136,37 @@ class YeelightMusicChannel(
         }
     }
 
-    /** Close the reverse channel before restoring bulb state. */
+    /**
+     * For a normal stop, explicitly disable music mode WHILE the reverse
+     * socket is still connected, then close it. The Yeelight spec treats
+     * set_music(0) and closing the reverse socket as ALTERNATIVE stop paths.
+     * Closing first can make older firmware reject a subsequent stop as
+     * "invalid params" even though the music session has already ended.
+     *
+     * On an unacknowledged stop, close the reverse socket as a documented
+     * best-effort fallback, but NEVER claim that physical recovery succeeded.
+     * The caller retains its durable unresolved marker; no automatic retry.
+     */
     override fun close() {
         val shouldDisable: Boolean
+        val previousSocket: Socket?
         synchronized(lock) {
             if (closed) return
-            closed = true
-            runCatching { socket?.close() }
+            closed = true // no new RGB writes after stop begins
+            previousSocket = socket
             socket = null
             shouldDisable = enabledAttempted
             enabledAttempted = false
         }
-        // A single explicit set_music(0) is safer than assuming a lost
-        // connection always resets every firmware. Never retry automatically.
-        if (shouldDisable) disableOnDevice()
+        try {
+            if (shouldDisable) {
+                disableOnDevice()
+                disableAcknowledged = true
+            }
+        } finally {
+            // The reverse stream is a fallback stop even on rejected/timeout
+            // set_music(0); it is NOT a verified firmware ACK.
+            runCatching { previousSocket?.close() }
+        }
     }
 }
