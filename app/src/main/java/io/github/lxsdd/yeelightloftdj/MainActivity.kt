@@ -223,8 +223,13 @@ private fun LoftApp(controller: LoftController) {
                     "network" -> item(key = "network-diagnostics") {
                         DeviceTools(controller, initiallyExpanded = true)
                     }
-                    "transfer" -> item(key = "scene-import-export") {
-                        SceneExchangePanel(controller)
+                    "transfer" -> {
+                        item(key = "scene-import-export") {
+                            SceneExchangePanel(controller)
+                        }
+                        item(key = "portable-configuration") {
+                            PortableConfigPanel(controller)
+                        }
                     }
                     else -> {
                         val id = detailRoute?.removePrefix("device:")
