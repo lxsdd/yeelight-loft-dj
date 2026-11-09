@@ -53,6 +53,18 @@ jobs:
           done
           invalid="$(printf 'Signer #1 public key SHA-256 digest: %s\n' "$digest" | bash .github/scripts/extract-apk-cert-sha256.sh)"
           test -z "$invalid"
+      - name: Validate offline color4 firmware research (synthetic only)
+        run: python3 -m unittest discover -s tools/tests -p 'test_color4_*.py' -v
+      - name: Verify ceiling1 stock-firmware provenance research (synthetic only)
+        run: python3 -m unittest discover -s tools/tests -p 'test_ceiling1_*.py' -v
+      - name: Inspect OEM image formats using synthetic-only regression fixtures
+        run: python3 -m unittest discover -s tools/tests -p 'test_oem_image_evidence.py' -v
+      - name: Analyze MediaTek FOTA LZMA with synthetic fixtures only
+        run: python3 -m unittest discover -s tools/tests -p 'test_mediatek_mmm_evidence.py' -v
+      - name: Analyze ceiling1 WLAN callback evidence with synthetic fixtures only
+        run: python3 -m unittest discover -s tools/tests -p 'test_ceiling1_wlan_firmware_markers.py' -v
+      - name: Trace offline ceiling1 Thumb literal references (synthetic only)
+        run: python3 -m unittest discover -s tools/tests -p 'test_ceiling1_thumb_literal_xrefs.py' -v
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - name: Verify permanent APK signing certificate
