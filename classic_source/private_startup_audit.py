@@ -11,6 +11,7 @@ from apk_readonly_audit import parse_binary_xml, AxmlError
 from classic_first import inspect_original, GateFailure
 from dex_authority_remap import assert_self_consistent_dex, DexRemapError
 from bridge.build_bridge import dex_descriptors, ToolError
+from activity_provenance import (index_activity_metadata, summarize_missing_activities, ProvenanceError)
 
 OLD="com.yeelight.cherry"
 NEW="io.lxsdd.yeelightdj"
@@ -129,11 +130,13 @@ def inspect_apk(path):
             require(not defs.keys()&found.keys(),"DUPLICATE_MULTIDEX_CLASS")
             defs.update(found)
     pkg,components,entrypoints,refs=manifest_index(parsed)
+    activity_metadata=index_activity_metadata(parsed,pkg)
     uses_libraries=sum(node["tag"] in
                        ("uses-library","uses-static-library","uses-native-library")
                        for node in parsed["elements"])
     return {"package":pkg,"components":components,"entrypoints":entrypoints,
             "manifest_references":refs,"declared_shared_libraries":uses_libraries,
+            "activity_metadata":activity_metadata,
             "definitions":defs,"dex_count":len(files)}
 
 def classify_manifest_references(data, *, exempt_providers=()):
@@ -248,6 +251,13 @@ def original_prebuild_report(original):
             "ORIGINAL_PREBUILD_COMPONENT_COUNTS")
     require(set(REMOVED)<=providers,"ORIGINAL_PREBUILD_PROVIDER_CONTRACT")
     summary=classify_manifest_references(baseline,exempt_providers=REMOVED)
+    require("activity_metadata" in baseline,"ORIGINAL_ACTIVITY_PROVENANCE_MISSING")
+    declared={d for (role,d),n in baseline["manifest_references"].items()
+              if role=="activity" and n}
+    activity_provenance=summarize_missing_activities(
+        baseline["activity_metadata"],baseline["definitions"],declared)
+    require(activity_provenance["missing_count"]==summary["missing_by_role"].get("activity",0),
+            "ORIGINAL_ACTIVITY_PROVENANCE_COUNTER_DRIFT")
     missing_start=set()
     try:
         reachable(dict(baseline,entrypoints=summary["resolved_startup_roots"]),
@@ -267,6 +277,7 @@ def original_prebuild_report(original):
     else:
         status="PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED"
     return {"status":status,
+            "original_missing_activity_provenance":activity_provenance,
             "manifest_reference_count":summary["reference_count"],
             "manifest_roles":summary["roles"],
             "manifest_missing_by_role":summary["missing_by_role"],
@@ -309,6 +320,23 @@ def qualify_original_prebuild(report):
             sum(roles.values())==count and
             sum(n for role,n in missing.items() if role in REQUIRED_MANIFEST_ROLES)==required,
             "ORIGINAL_PREBUILD_REPORT_INVALID")
+    provenance=report.get("original_missing_activity_provenance")
+    require(isinstance(provenance,dict) and
+            type(provenance.get("missing_count")) is int and
+            isinstance(provenance.get("declared_enabled_by_missing"),dict) and
+            set(provenance["declared_enabled_by_missing"])==
+                {"explicit_true","explicit_false","inherited","unresolved_resource"} and
+            all(type(n) is int and n>=0 for n in provenance["declared_enabled_by_missing"].values()) and
+            sum(provenance["declared_enabled_by_missing"].values())==provenance["missing_count"] and
+            isinstance(missing,dict) and
+            provenance["missing_count"]==missing.get("activity",0) and
+            type(provenance.get("split_labeled_missing_count")) is int and
+            0<=provenance["split_labeled_missing_count"]<=provenance["missing_count"] and
+            type(provenance.get("process_labeled_missing_count")) is int and
+            0<=provenance["process_labeled_missing_count"]<=provenance["missing_count"] and
+            provenance.get("missing_classes_waived")==0 and
+            provenance.get("runtime")=="NOT_TESTED",
+            "ORIGINAL_ACTIVITY_PROVENANCE_REPORT_INVALID")
     status=report.get("status")
     if alias:
         require(status=="PRIVATE_ORIGINAL_ALIAS_TARGET_UNDECLARED_BLOCKED",
@@ -442,8 +470,8 @@ def main():
             print(json.dumps(report,sort_keys=True))
             qualify_report(report)
         return 0
-    except (AuditBlocked,GateFailure,AxmlError,OSError,BadZipFile,KeyError,ValueError) as e:
-        reason=str(e) if isinstance(e,AuditBlocked) else "PRIVATE_INPUT_INVALID"
+    except (AuditBlocked,ProvenanceError,GateFailure,AxmlError,OSError,BadZipFile,KeyError,ValueError) as e:
+        reason=str(e) if isinstance(e,(AuditBlocked,ProvenanceError)) else "PRIVATE_INPUT_INVALID"
         print("PRIVATE_STARTUP_AUDIT_BLOCKED_"+reason,file=sys.stderr)
         return 2
 if __name__=="__main__":raise SystemExit(main())

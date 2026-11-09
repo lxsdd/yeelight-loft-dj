@@ -39,6 +39,8 @@ def model():
                    for (kind,name),n in clone.items()})
     o={"package":audit.OLD,"components":original,"entrypoints":orig_desc,
        "manifest_references":orefs,"declared_shared_libraries":0,
+       "activity_metadata":{d:{"enabled":"inherited","split_labeled":False,"process_labeled":False}
+                            for (role,d),n in orefs.items() if role=="activity" and n},
        "definitions":{d:[BASE] for d in orig_desc},"dex_count":2}
     c={"package":audit.NEW,"components":clone,"entrypoints":clone_desc,
        "manifest_references":crefs,"declared_shared_libraries":0,
@@ -546,5 +548,49 @@ class TestOriginalReferenceReports(unittest.TestCase):
              patch.object(audit,"inspect_apk",side_effect=[o,c]):
             with self.assertRaisesRegex(audit.AuditBlocked,"CLONE_MANIFEST_REFERENCE_ROLE_DRIFT"):
                 audit.audit_pair(Path("synthetic-original.apk"),Path("synthetic-clone.apk"))
+
+class TestActivityProvenancePrebuildContract(unittest.TestCase):
+    def report(self, original):
+        with patch.object(audit, "inspect_original"), patch.object(audit, "inspect_apk", return_value=original):
+            return audit.original_prebuild_report(Path("synthetic-original.apk"))
+
+    def test_disabled_split_missing_is_still_hard_failure(self):
+        original,_=model()
+        d="Lcom/yeelight/cherry/Activity0;"
+        original["definitions"].pop(d)
+        original["activity_metadata"][d]={"enabled":"explicit_false",
+                                         "split_labeled":True,"process_labeled":False}
+        r=self.report(original)
+        self.assertEqual(r["original_missing_activity_provenance"]["missing_count"],1)
+        self.assertEqual(r["original_missing_activity_provenance"]["split_labeled_missing_count"],1)
+        self.assertEqual(r["manifest_missing_required_count"],1)
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_REQUIRED_CLASS_UNVERIFIED"):
+            audit.qualify_original_prebuild(r)
+
+    def test_missing_provenance_metadata_is_not_a_skip(self):
+        original,_=model()
+        original.pop("activity_metadata")
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_ACTIVITY_PROVENANCE_MISSING"):
+            self.report(original)
+
+    def test_inconsistent_provenance_fails_before_private_pass(self):
+        original,_=model()
+        report=self.report(original)
+        report["original_missing_activity_provenance"]["missing_count"]=3
+        with self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_ACTIVITY_PROVENANCE_REPORT_INVALID"):
+            audit.qualify_original_prebuild(report)
+
+    def test_original_report_does_not_emit_vendor_names(self):
+        original,_=model()
+        d="Lcom/yeelight/cherry/Activity0;"
+        original["definitions"].pop(d)
+        original["activity_metadata"][d]={"enabled":"explicit_true",
+                                         "split_labeled":True,"process_labeled":True}
+        report=self.report(original)
+        import json
+        encoded=json.dumps(report,sort_keys=True)
+        self.assertNotIn("Activity0",encoded)
+        self.assertNotIn("Lcom/yeelight/",encoded)
+        self.assertEqual(report["original_missing_activity_provenance"]["missing_classes_waived"],0)
 
 if __name__=="__main__":unittest.main()

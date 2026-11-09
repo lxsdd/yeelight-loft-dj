@@ -300,3 +300,31 @@ Kein neues privates Original, kein geschützter Workflow, kein
 Signierschlüssel und keine neue Test-APK werden für diese
 öffentliche Quell- und CI-Qualifikation benötigt. Es werden
 **keine** weiteren Provider ohne nachweisliche Ursache entfernt.
+
+
+## 2026-11-09: isolierte Activity-Provenienzdiagnose nach #42512987416
+
+Der geschützte Original-Audit auf main \`5a6d6c76...\` hat die gepinnte
+Originaldatei und vier echte OEM-Tests bestätigt, aber vor jedem Klon-Build
+mit \`ORIGINAL_PREBUILD_REQUIRED_CLASS_UNVERIFIED\` abgebrochen:
+drei Activity-Manifestreferenzen ohne OEM-DEX-class_def und sechs zusätzliche
+offene Vererbungs-/Interface-Kanten im unveränderten Original.
+Daraus folgt **keine** Laufzeitaussage für Android 17.
+
+Der vorliegende isolierte **Quellcodekandidat** ergänzt die ursprüngliche
+binäre Manifest/DEX-Prüfung um eine anonymisierte Activity-Provenienz:
+explizit aktiviert/deaktiviert, geerbter Enabled-Wert, nicht auswertbarer
+Ressourcenwert sowie Vorhandensein eines Split-/Prozess-Hinweises.
+Alias-Identitäten sind keine Java-Klassen. Weder deaktivierte Activities
+noch Split-Hinweise gelten als nachgewiesene Klassenbereitstellung.
+Der private Bericht enthält ausschließlich aggregierte Kategorien, niemals
+OEM-Deskriptoren, Werte von Prozess-/Split-Namen oder Dateiinhalte.
+Ein Zählerdrift oder fehlende Metadaten schlägt fehl. **Keine** der drei
+fehlenden Klassen wird dadurch freigestellt; der Original-Build bleibt
+bis zur belegten Zuordnung gesperrt.
+
+Für die ursächliche Qualifikation sind zunächst private, read-only
+Nachweise über das vollständige Original-Paketset, Split-Installationsstatus,
+Abhängigkeiten und ClassLoader-Herkunft nötig, danach ein gesondert freigegebener
+Android-17-Offline-Starttest. Keine automatische Workflow-Auslösung,
+Signierung, OEM-Veröffentlichung oder Geräteaktion.
