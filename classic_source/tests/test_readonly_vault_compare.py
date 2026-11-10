@@ -36,7 +36,13 @@ def receipt(*, pin=DEVICE, dex1=DEX1, dex2=DEX2, xml=XML):
 
 def original_state(**changes):
     provenance = {
-        "missing_count": 3, "missing_classes_waived": 0,
+        "missing_count": 3, "missing_classes_waived": 0, "runtime": "NOT_TESTED",
+        "declared_enabled_by_missing": {
+            "explicit_true": 0, "explicit_false": 1,
+            "inherited": 2, "unresolved_resource": 0,
+        },
+        "split_labeled_missing_count": 0,
+        "process_labeled_missing_count": 1,
     }
     classes = {
         "original_missing_activity_count": 3,
@@ -44,6 +50,19 @@ def original_state(**changes):
         "installed_split_set_verified": False,
         "actual_classloader_verified": False,
         "runtime": "NOT_TESTED", "missing_classes_waived": 0,
+        "status": "ORIGINAL_CLASSPATH_PROVENANCE_UNVERIFIED",
+        "candidate_sources_by_kind": {
+            "split_apk": 0, "shared_library": 0, "platform_classpath": 0,
+        },
+        "activity_candidates_by_kind": {
+            "split_apk": 0, "shared_library": 0, "platform_classpath": 0,
+        },
+        "parent_edge_candidates_by_kind": {
+            "split_apk": 0, "shared_library": 0, "platform_classpath": 0,
+        },
+        "activities_without_candidate": 3,
+        "parent_edges_without_candidate": 6,
+        "candidate_graph_unresolved_parent_edges": 0,
     }
     baseline = {
         "status": "PRIVATE_ORIGINAL_REQUIRED_MANIFEST_CLASS_MISSING_BLOCKED",
@@ -93,6 +112,15 @@ class ReadonlyVaultCompareTest(unittest.TestCase):
         self.assertEqual(report["original_unresolved_parent_edges"], 6)
         self.assertEqual(report["original_startup_parent_edges"], 0)
         self.assertEqual(report["declared_shared_library_count"], 1)
+        self.assertEqual(report["missing_activity_enabled_buckets"], {
+            "explicit_false": 1, "explicit_true": 0,
+            "inherited": 2, "unresolved_resource": 0})
+        self.assertEqual(report["missing_activity_split_labeled"], 0)
+        self.assertEqual(report["missing_activity_process_labeled"], 1)
+        self.assertEqual(report["activities_without_candidate"], 3)
+        self.assertEqual(report["parent_edges_without_candidate"], 6)
+        self.assertEqual(report["candidate_sources_by_kind"]["shared_library"], 0)
+        self.assertFalse(report["candidate_is_installation_proof"])
         for key in ("device_receipt_independently_attested", "actual_classloader_verified",
                     "android_runtime_tested", "private_build_produced", "device_access_performed"):
             self.assertFalse(report[key])
@@ -100,6 +128,71 @@ class ReadonlyVaultCompareTest(unittest.TestCase):
         self.assertNotIn("private-fixture", json.dumps(report))
         self.assertNotIn(DEX1, json.dumps(report))
         self.assertNotIn(DEVICE, json.dumps(report))
+
+
+    def test_aggregate_candidate_evidence_never_becomes_classloader_proof(self):
+        state = original_state()
+        c = state["original_classpath_provenance"]
+        c["candidate_sources_by_kind"]["split_apk"] = 1
+        c["activity_candidates_by_kind"]["split_apk"] = 2
+        c["parent_edge_candidates_by_kind"]["split_apk"] = 4
+        c["activities_without_candidate"] = 1
+        c["parent_edges_without_candidate"] = 2
+        c["candidate_graph_unresolved_parent_edges"] = 1
+        out = self.checked(baseline=state)
+        self.assertEqual(out["activity_candidates_by_kind"]["split_apk"], 2)
+        self.assertEqual(out["parent_edges_without_candidate"], 2)
+        self.assertTrue(out["diagnostic_only"])
+        self.assertFalse(out["candidate_is_installation_proof"])
+        self.assertFalse(out["actual_classloader_verified"])
+        self.assertEqual(out["original_missing_activities"], 3)
+        self.assertEqual(out["original_unresolved_parent_edges"], 6)
+        self.assertEqual(out["missing_classes_waived"], 0)
+
+    def test_invalid_enabled_metadata_fails_closed(self):
+        for tamper in (
+            lambda p: p["declared_enabled_by_missing"].update({"explicit_false": 3}),
+            lambda p: p["declared_enabled_by_missing"].update({"secret_vendor": 1}),
+            lambda p: p["declared_enabled_by_missing"].update({"inherited": True}),
+            lambda p: p.update({"split_labeled_missing_count": 4}),
+            lambda p: p.update({"process_labeled_missing_count": -1}),
+            lambda p: p.update({"runtime": "PASS"}),
+        ):
+            state = original_state()
+            tamper(state["original_missing_activity_provenance"])
+            with self.subTest(tamper=tamper.__code__.co_firstlineno), \
+                 self.assertRaises(diagnostic.ReadonlyBlocked):
+                self.checked(baseline=state)
+
+    def test_invalid_candidate_metadata_fails_closed(self):
+        for tamper in (
+            lambda p: p["candidate_sources_by_kind"].update({"shared_library": True}),
+            lambda p: p["candidate_sources_by_kind"].update({"private_vendor": 1}),
+            lambda p: p["activity_candidates_by_kind"].update({"split_apk": 1}),
+            lambda p: p["parent_edge_candidates_by_kind"].update({"shared_library": 1}),
+            lambda p: p.update({"activities_without_candidate": 2}),
+            lambda p: p.update({"parent_edges_without_candidate": 7}),
+            lambda p: p.update({"candidate_graph_unresolved_parent_edges": 1}),
+            lambda p: p.update({"status": "READY"}),
+            lambda p: p.update({"runtime": "PASS"}),
+        ):
+            state = original_state()
+            tamper(state["original_classpath_provenance"])
+            with self.subTest(tamper=tamper.__code__.co_firstlineno), \
+                 self.assertRaises(diagnostic.ReadonlyBlocked):
+                self.checked(baseline=state)
+
+    def test_aggregate_output_never_serializes_private_symbols(self):
+        state = original_state()
+        state["original_missing_activity_provenance"]["private_name"] = "Lvendor/SecretActivity;"
+        state["original_classpath_provenance"]["private_name"] = "Lvendor/SecretClass;"
+        report = self.checked(baseline=state)
+        encoded = json.dumps(report)
+        self.assertNotIn("Secret", encoded)
+        self.assertNotIn("Lvendor/", encoded)
+        self.assertEqual(report["original_structure"],
+                         "PRIVATE_ORIGINAL_REQUIRED_MANIFEST_CLASS_MISSING_BLOCKED")
+        self.assertFalse(report["candidate_is_installation_proof"])
 
     def test_dex_only_difference_is_not_hidden_by_archive_difference(self):
         report = self.checked(archive=archive_report(dex1="a" * 64))

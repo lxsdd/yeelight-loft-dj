@@ -47,6 +47,66 @@ def _nonnegative(record, name):
     return value
 
 
+# Fixed, non-proprietary reporting dimensions only. No descriptor names or paths.
+ACTIVITY_ENABLED_BUCKETS = (
+    "explicit_true", "explicit_false", "inherited", "unresolved_resource",
+)
+CLASSPATH_CANDIDATE_KINDS = ("split_apk", "shared_library", "platform_classpath")
+
+
+def _bounded_buckets(record, keys):
+    _need(type(record) is dict and set(record) == set(keys))
+    return {key: _nonnegative(record, key) for key in keys}
+
+
+def _protected_provenance(activity, classpath, missing, total):
+    """Project validated aggregate counts, never private class or library names.
+
+    Candidate evidence is *not* an installed split or a working ClassLoader.
+    Reject contradictory counts and elevated runtime claims before output.
+    """
+    _need(activity.get("runtime") == "NOT_TESTED" and
+          classpath.get("status") == "ORIGINAL_CLASSPATH_PROVENANCE_UNVERIFIED" and
+          classpath.get("runtime") == "NOT_TESTED" and
+          classpath.get("installed_split_set_verified") is False and
+          classpath.get("actual_classloader_verified") is False and
+          classpath.get("missing_classes_waived") == 0)
+    enabled = _bounded_buckets(activity.get("declared_enabled_by_missing"),
+                               ACTIVITY_ENABLED_BUCKETS)
+    split = _nonnegative(activity, "split_labeled_missing_count")
+    process = _nonnegative(activity, "process_labeled_missing_count")
+    _need(sum(enabled.values()) == missing and split <= missing and process <= missing)
+
+    candidates = _bounded_buckets(classpath.get("candidate_sources_by_kind"),
+                                  CLASSPATH_CANDIDATE_KINDS)
+    activities = _bounded_buckets(classpath.get("activity_candidates_by_kind"),
+                                  CLASSPATH_CANDIDATE_KINDS)
+    edges = _bounded_buckets(classpath.get("parent_edge_candidates_by_kind"),
+                            CLASSPATH_CANDIDATE_KINDS)
+    without_activity = _nonnegative(classpath, "activities_without_candidate")
+    without_parent = _nonnegative(classpath, "parent_edges_without_candidate")
+    candidate_edge_gaps = _nonnegative(classpath, "candidate_graph_unresolved_parent_edges")
+    _need(sum(activities.values()) + without_activity == missing and
+          sum(edges.values()) + without_parent == total)
+    _need(all(activities[k] == 0 and edges[k] == 0
+              for k in CLASSPATH_CANDIDATE_KINDS if candidates[k] == 0))
+    _need(sum(candidates.values()) > 0 or
+          (candidate_edge_gaps == 0 and sum(activities.values()) == 0 and
+           sum(edges.values()) == 0))
+    return {
+        "missing_activity_enabled_buckets": enabled,
+        "missing_activity_split_labeled": split,
+        "missing_activity_process_labeled": process,
+        "candidate_sources_by_kind": candidates,
+        "activity_candidates_by_kind": activities,
+        "parent_edge_candidates_by_kind": edges,
+        "activities_without_candidate": without_activity,
+        "parent_edges_without_candidate": without_parent,
+        "candidate_graph_unresolved_parent_edges": candidate_edge_gaps,
+        "candidate_is_installation_proof": False,
+    }
+
+
 def _device_pin(receipt):
     """The read-only owner secret must contain its own installed-base pin.
 
@@ -91,6 +151,7 @@ def diagnose(original_path, receipt):
           original_report["manifest_missing_by_role"].get("activity", 0) == missing_activities and
           _nonnegative(classpath, "original_missing_activity_count") == missing_activities and
           _nonnegative(classpath, "original_unresolved_direct_parent_edges") == total_parents)
+    provenance = _protected_provenance(activity, classpath, missing_activities, total_parents)
     _need(parity.get("classes_verified") is False and
           parity.get("actual_classloader_verified") is False and
           parity.get("android_runtime_tested") is False)
@@ -110,6 +171,7 @@ def diagnose(original_path, receipt):
         "original_unresolved_parent_edges": total_parents,
         "original_startup_parent_edges": startup_parents,
         "declared_shared_library_count": libraries,
+        **provenance,
         "missing_classes_waived": 0,
         "installed_split_set_verified": False,
         "actual_classloader_verified": False,
