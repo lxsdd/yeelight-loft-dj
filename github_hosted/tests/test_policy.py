@@ -24,9 +24,9 @@ class PolicyTests(unittest.TestCase):
         return {'repository':{'full_name':policy.SOURCE_REPO,'private':False},'ref':'refs/heads/main'}
     def test_owner_protected_main_passes(self):
         self.assertEqual(policy.require_approved_dispatch(self.valid(),self.event())['source_sha'],'a'*40)
-    def test_exact_three_private_classic_workflows_allowed(self):
-        allowed = (policy.WORKFLOW_FILE, policy.SIGNED_WORKFLOW_FILE, policy.AUDIT_WORKFLOW_FILE)
-        self.assertEqual(len(policy.ALLOWED_WORKFLOW_REFS), 3)
+    def test_exact_four_private_classic_workflows_allowed(self):
+        allowed = (policy.WORKFLOW_FILE, policy.SIGNED_WORKFLOW_FILE, policy.AUDIT_WORKFLOW_FILE, policy.READONLY_WORKFLOW_FILE)
+        self.assertEqual(len(policy.ALLOWED_WORKFLOW_REFS), 4)
         for path in allowed:
             with self.subTest(path=path):
                 e=self.valid()
@@ -92,5 +92,24 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaises(policy.PolicyFailure):policy.require_approved_dispatch(self.valid(),obj)
     def test_event_file_required_without_event(self):
         with self.assertRaises(policy.PolicyFailure):policy.require_approved_dispatch(self.valid())
+
+    def test_readonly_workflow_rejects_nonmain_and_foreign_owner(self):
+        ref = policy.SOURCE_REPO + '/' + policy.READONLY_WORKFLOW_FILE + '@refs/heads/main'
+        env = self.valid()
+        env['GITHUB_WORKFLOW_REF'] = ref
+        self.assertEqual(policy.require_approved_dispatch(env, self.event())['source_sha'], 'a'*40)
+        for wrong in (ref.replace('@refs/heads/main', '@refs/heads/test'),
+                      ref.replace(policy.SOURCE_REPO, 'attacker/source', 1),
+                      ref.replace('/classic-private-readonly-parity.yml', '/classic-private-readonly-parity.yml.bak')):
+            with self.subTest(ref=wrong), self.assertRaises(policy.PolicyFailure):
+                env['GITHUB_WORKFLOW_REF'] = wrong
+                policy.require_approved_dispatch(env, self.event())
+        for key, wrong in [('GITHUB_ACTOR', 'attacker'), ('GITHUB_REF', 'refs/heads/test'),
+                           ('GITHUB_EVENT_NAME', 'pull_request')]:
+            env = self.valid()
+            env['GITHUB_WORKFLOW_REF'] = ref
+            env[key] = wrong
+            with self.subTest(key=key), self.assertRaises(policy.PolicyFailure):
+                policy.require_approved_dispatch(env, self.event())
 
 if __name__=='__main__':unittest.main()
