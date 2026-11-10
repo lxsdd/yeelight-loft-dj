@@ -142,10 +142,19 @@ class ClassicMusicCoordinator(private val transport: Transport) {
         ids.forEach { device(it) }
         return ids.associateWith { stop(it) }
     }
-    @Synchronized fun startGroup(ids: List<String>): Map<String, State> {
+    /** Check for cancellation before each additional participant, not just once.
+     * A stop may arrive during a previous reverse-channel handshake.
+     * Already confirmed OWNED members remain visible to the caller for cleanup.
+     */
+    @Synchronized fun startGroup(ids: List<String>, allowNextStart: () -> Boolean = { true }): Map<String, State> {
         require(ids.distinct().size == ids.size)
         ids.forEach { device(it) }
-        return ids.associateWith { start(it) }
+        val states = linkedMapOf<String, State>()
+        for (id in ids) {
+            if (!allowNextStart()) break
+            states[id] = start(id)
+        }
+        return states
     }
     private fun device(id: String) = requireNotNull(devices[id]) { "unregistered device" }
     private fun quarantine(d: Device, reason: String): State {

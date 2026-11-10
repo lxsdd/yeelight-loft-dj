@@ -30,9 +30,13 @@ fun main() {
         val output = engine.audio(t,bands)
         if (output.beat) beats++
     }
-    check(beats >= 7 && fake.frames.size == beats * 4)
+    // Continuous flow adds bounded calm frames between beats; never an RPC flood.
+    check(beats >= 7 && fake.frames.size > beats * 4)
+    check(fake.frames.size <= 4 * 15) // 4 seconds / 300 ms + initial frame
+    check(fake.frames.none { it.first == "foreign" })
     check(fake.frames.map { it.second }.distinct().size > 3)
-    check(fake.frames.all { it.third in 20..100 })
+    check(fake.frames.all { it.third in 12..100 })
+    check(fake.frames.maxOf { it.third } >= 20)
     fake.reject = "b"
     var failed = false
     for (t in 4010L..5000L step 10L) {
@@ -49,5 +53,5 @@ fun main() {
     check(fake.active["foreign"] == true && fake.active["b"] == true)
     check(engine.selected().isEmpty())
     check(!engine.audio(1000L,doubleArrayOf(1.0,1.0,1.0,1.0)).sent.any())
-    println("PASS DJ bridge: 4-lamp, foreign owner, 130 BPM, HSV, failure isolation, stop, stale audio")
+    println("PASS DJ bridge: 4-lamp, quiet flow, rate-bound HSV/brightness, foreign owner, failure isolation, stop, stale audio")
 }

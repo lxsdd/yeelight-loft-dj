@@ -128,6 +128,14 @@ jobs:
           python3 classic_source/private_startup_audit.py \
             --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
             --candidate "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
+      # This is an owner-only private emulator test, never an OEM asset upload.
+      # Failure to boot API 37, isolate networks, install the exact APK, or open
+      # the native in-Classic DJ screen prevents the private draft publication.
+      - name: PRIVATE Android-17 emulator startup and native Loft DJ UI gate
+        run: |
+          set -euo pipefail
+          bash classic_source/private_ci/run_android17_emulator.sh \
+            "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
       - name: Send TEST-SIGNED APK to PRIVATE draft Release only
         env:
           GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}
