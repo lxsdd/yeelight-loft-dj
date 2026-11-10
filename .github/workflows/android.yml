@@ -55,6 +55,8 @@ jobs:
           test -z "$invalid"
       - name: Unit tests and debug build
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+      - name: Compile and run Classic DJ JVM integration regressions (no OEM APK)
+        run: gradle --no-daemon --stacktrace -p classic_source/checkpoint_jvm_ci verifyClassicJvm
       - name: Verify permanent APK signing certificate
         if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'lxsdd' && github.ref == 'refs/heads/main' }}
         shell: bash
