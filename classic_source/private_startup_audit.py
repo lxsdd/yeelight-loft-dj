@@ -12,6 +12,8 @@ from classic_first import inspect_original, GateFailure
 from dex_authority_remap import assert_self_consistent_dex, DexRemapError
 from bridge.build_bridge import dex_descriptors, ToolError
 from activity_provenance import (index_activity_metadata, summarize_missing_activities, ProvenanceError)
+from class_source_inventory import classify_pinned_sources, SourceInventoryError
+from activity_provenance import (validate_diagnostic_report, ClasspathProvenanceError)
 
 OLD="com.yeelight.cherry"
 NEW="io.lxsdd.yeelightdj"
@@ -234,7 +236,7 @@ def qualify_report(result):
             "PRIVATE_REPORT_INVALID")
     return True
 
-def original_prebuild_report(original):
+def original_prebuild_report(original, *, candidate_specs=()):
     """Classify every manifest class role before a private clone is assembled.
 
     All original OEM names remain in memory only; the serialized report contains
@@ -256,6 +258,10 @@ def original_prebuild_report(original):
               if role=="activity" and n}
     activity_provenance=summarize_missing_activities(
         baseline["activity_metadata"],baseline["definitions"],declared)
+    # Pinned splits/libraries are candidate inventories, not actual classloader proof.
+    classpath_provenance=classify_pinned_sources(
+        baseline["definitions"],declared,system_prefixes=SYSTEM,
+        candidate_specs=candidate_specs,dex_reader=dex_index)
     require(activity_provenance["missing_count"]==summary["missing_by_role"].get("activity",0),
             "ORIGINAL_ACTIVITY_PROVENANCE_COUNTER_DRIFT")
     missing_start=set()
@@ -266,6 +272,10 @@ def original_prebuild_report(original):
         raise AuditBlocked("ORIGINAL_PREBUILD_INHERITANCE_INVALID") from exc
     missing_all=unresolved_edges(baseline["definitions"])
     require(missing_start<=missing_all,"ORIGINAL_PREBUILD_GRAPH_COUNTER_INVALID")
+    validate_diagnostic_report(
+        classpath_provenance,
+        expected_missing_activities=activity_provenance["missing_count"],
+        expected_unresolved_edges=len(missing_all))
     if summary["undeclared_alias_targets"]:
         status="PRIVATE_ORIGINAL_ALIAS_TARGET_UNDECLARED_BLOCKED"
     elif summary["missing_required"]:
@@ -278,6 +288,7 @@ def original_prebuild_report(original):
         status="PRIVATE_ORIGINAL_BASELINE_STRUCTURAL_READY_RUNTIME_NOT_TESTED"
     return {"status":status,
             "original_missing_activity_provenance":activity_provenance,
+            "original_classpath_provenance":classpath_provenance,
             "manifest_reference_count":summary["reference_count"],
             "manifest_roles":summary["roles"],
             "manifest_missing_by_role":summary["missing_by_role"],
@@ -337,6 +348,13 @@ def qualify_original_prebuild(report):
             provenance.get("missing_classes_waived")==0 and
             provenance.get("runtime")=="NOT_TESTED",
             "ORIGINAL_ACTIVITY_PROVENANCE_REPORT_INVALID")
+    cp=report.get("original_classpath_provenance")
+    try:
+        validate_diagnostic_report(
+            cp, expected_missing_activities=provenance["missing_count"],
+            expected_unresolved_edges=total)
+    except ClasspathProvenanceError as exc:
+        raise AuditBlocked("ORIGINAL_CLASSPATH_PROVENANCE_REPORT_INVALID") from exc
     status=report.get("status")
     if alias:
         require(status=="PRIVATE_ORIGINAL_ALIAS_TARGET_UNDECLARED_BLOCKED",
@@ -457,21 +475,33 @@ def main():
     p.add_argument("--candidate",type=Path)
     p.add_argument("--original-only",action="store_true",
                    help="Preflight pinned original classgraph without a candidate")
+    p.add_argument("--supplemental-apk",type=Path,action="append",default=[])
+    p.add_argument("--supplemental-sha256",action="append",default=[])
+    p.add_argument("--supplemental-kind",choices=("split_apk","shared_library"),
+                   action="append",default=[])
     args=p.parse_args()
     try:
+        lengths={len(args.supplemental_apk),len(args.supplemental_sha256),
+                 len(args.supplemental_kind)}
+        require(len(lengths)==1,"CANDIDATE_SOURCE_INPUT_MISMATCH")
+        specs=tuple(zip(args.supplemental_apk,args.supplemental_sha256,
+                        args.supplemental_kind))
         if args.original_only:
             require(args.candidate is None,"ORIGINAL_PREBUILD_CANDIDATE_FORBIDDEN")
-            report=original_prebuild_report(args.original)
+            report=original_prebuild_report(args.original,candidate_specs=specs)
             print(json.dumps(report,sort_keys=True))
             qualify_original_prebuild(report)
         else:
+            require(not specs,"CANDIDATE_SOURCE_ORIGINAL_ONLY_REQUIRED")
             require(args.candidate is not None,"CANDIDATE_REQUIRED")
             report=audit_pair(args.original,args.candidate)
             print(json.dumps(report,sort_keys=True))
             qualify_report(report)
         return 0
-    except (AuditBlocked,ProvenanceError,GateFailure,AxmlError,OSError,BadZipFile,KeyError,ValueError) as e:
-        reason=str(e) if isinstance(e,(AuditBlocked,ProvenanceError)) else "PRIVATE_INPUT_INVALID"
+    except (AuditBlocked,ProvenanceError,SourceInventoryError,ClasspathProvenanceError,
+            GateFailure,AxmlError,OSError,BadZipFile,KeyError,ValueError) as e:
+        reason=str(e) if isinstance(
+            e,(AuditBlocked,ProvenanceError,SourceInventoryError,ClasspathProvenanceError)) else "PRIVATE_INPUT_INVALID"
         print("PRIVATE_STARTUP_AUDIT_BLOCKED_"+reason,file=sys.stderr)
         return 2
 if __name__=="__main__":raise SystemExit(main())
