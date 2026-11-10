@@ -271,7 +271,13 @@ class ClassicTests(unittest.TestCase):
         self.assertIn('PendingIntent.getService', java)
         self.assertIn('FLAG_IMMUTABLE', java)
         self.assertIn('FLAG_ACTIVITY_CLEAR_TOP', java)
-        self.assertIn('void finishSession()', java)
+        # Stop and late callbacks are fenced to their own session; the old
+        # unfenced finishSession() contract must not be reintroduced.
+        self.assertIn('void stopSession(long expectedToken', java)
+        self.assertIn('sessionFence.cancel()', java)
+        self.assertIn('sessionFence.owns(token)', java)
+        self.assertIn('FLAG_ACTIVITY_NEW_TASK', java)
+        self.assertNotIn('void finishSession()', java)
         self.assertIn('START_NOT_STICKY', java)
         self.assertNotIn('set_rgb(', java)
         self.assertNotIn('set_music(', java)
