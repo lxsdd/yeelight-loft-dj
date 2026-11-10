@@ -12,9 +12,9 @@ class ClassicDjEngine(
     private val lighting = ClassicLiveLightStyle()
 
     /** Caller must explicitly start and confirm each lamp. Unowned lamps are never output targets. */
-    @Synchronized fun select(ids: List<String>): Map<String, ClassicMusicCoordinator.State> {
+    @Synchronized fun select(ids: List<String>, allowNextStart: () -> Boolean = { true }): Map<String, ClassicMusicCoordinator.State> {
         require(ids.distinct().size == ids.size)
-        val states = coordinator.startGroup(ids)
+        val states = coordinator.startGroup(ids, allowNextStart)
         val snapshot = coordinator.snapshot().associateBy { it.id }
         for ((id, state) in states) {
             if (state == ClassicMusicCoordinator.State.OWNED) active[id] = snapshot.getValue(id).generation
