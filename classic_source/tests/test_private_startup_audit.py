@@ -352,8 +352,13 @@ class TestOriginalOnlyPrebuild(unittest.TestCase):
             {"original_declared_removed_providers":1},
         ]
         for values in variants:
+            # Tampering with the parent-edge total now fails at the stricter
+            # provenance consistency gate, before the legacy report gate.
+            expected = ("ORIGINAL_CLASSPATH_PROVENANCE_REPORT_INVALID"
+                        if "original_total_missing_parent_edges" in values
+                        else "ORIGINAL_PREBUILD_REPORT_INVALID")
             with self.subTest(values=values), \
-                 self.assertRaisesRegex(audit.AuditBlocked,"ORIGINAL_PREBUILD_REPORT_INVALID"):
+                 self.assertRaisesRegex(audit.AuditBlocked,expected):
                 audit.qualify_original_prebuild(dict(report,**values))
 
     def test_original_only_cli_is_sanitized_and_failure_exits_2(self):
