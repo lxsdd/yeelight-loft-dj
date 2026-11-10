@@ -57,6 +57,14 @@ jobs:
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - name: Compile and run Classic DJ JVM integration regressions (no OEM APK)
         run: gradle --no-daemon --stacktrace -p classic_source/checkpoint_jvm_ci verifyClassicJvm
+      - name: Compile native Yeelight Classic Android bridge against SDK only
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The sidecar must compile as true Android source; never fetch the OEM APK.
+          test -s "$ANDROID_HOME/platforms/android-36/android.jar"
+          gradle --no-daemon --stacktrace -p classic_source/private_gradle_bridge stageBridgeInputs
+          test -s classic_source/private_gradle_bridge/build/dex-input/classic-bridge.jar
       - name: Verify permanent APK signing certificate
         if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'lxsdd' && github.ref == 'refs/heads/main' }}
         shell: bash

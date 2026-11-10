@@ -24,6 +24,10 @@ class NativeKotlinCITests(unittest.TestCase):
         self.assertIn("name: Compile and run Classic DJ JVM integration regressions (no OEM APK)", workflow)
         self.assertIn("gradle --no-daemon --stacktrace -p classic_source/checkpoint_jvm_ci verifyClassicJvm", workflow)
         self.assertEqual(workflow.count(" -p classic_source/checkpoint_jvm_ci verifyClassicJvm"), 1)
+        self.assertIn("name: Compile native Yeelight Classic Android bridge against SDK only", workflow)
+        self.assertIn("gradle --no-daemon --stacktrace -p classic_source/private_gradle_bridge stageBridgeInputs", workflow)
+        self.assertIn('test -s classic_source/private_gradle_bridge/build/dex-input/classic-bridge.jar', workflow)
+        self.assertNotIn("CLASSIC_VAULT_TOKEN", workflow)
         self.assertIn("pull_request:", workflow)
         self.assertIn("contents: read", workflow)
 
