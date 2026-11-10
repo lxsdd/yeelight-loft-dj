@@ -1,0 +1,61 @@
+# Owner-only read-only vault diagnosis. Never builds, signs, installs or publishes.
+# This workflow is NOT executable until separately reviewed/landed on protected main.
+name: Classic PRIVATE read-only APK/classpath comparison
+run-name: Classic private read-only provenance ${{ github.sha }}
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: classic-private-readonly-parity
+  cancel-in-progress: false
+jobs:
+  private-readonly-comparison:
+    if: ${{ github.actor == 'lxsdd' && github.ref == 'refs/heads/main' && github.repository == 'lxsdd/yeelight-loft-dj' && github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment:
+      name: classic-private-build
+      deployment: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout protected public source without retained credentials
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Python runtime without dependency downloads
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Enforce exact owner/protected-main dispatch allowlist
+        run: python3 github_hosted/policy.py
+      - name: Download pinned original into ephemeral private directory
+        env:
+          GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/classic-original"
+          bash github_hosted/vault.sh fetch "$RUNNER_TEMP/classic-original" classic-original-3.5.4-v1
+      - name: Compare read-only receipt and original classpath without outputting private data
+        env:
+          CLASSIC_PIXEL6A_READONLY_RECEIPT: ${{ secrets.CLASSIC_PIXEL6A_READONLY_RECEIPT }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [[ -z "${CLASSIC_PIXEL6A_READONLY_RECEIPT:-}" ]]; then
+            echo 'READONLY_RECEIPT_MISSING' >&2
+            exit 2
+          fi
+          printf '%s' "$CLASSIC_PIXEL6A_READONLY_RECEIPT" | \
+            python3 classic_source/private_ci/readonly_vault_compare.py \
+              --original "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk"
+      - name: Remove ephemeral private input on all outcomes
+        if: always()
+        run: |
+          set -euo pipefail
+          set +x
+          rm -rf -- "$RUNNER_TEMP/classic-original"
