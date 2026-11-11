@@ -8,7 +8,8 @@ fail() {
   # The private runner emits only these fixed, source-reviewed stage names.
   case "${1:-}" in
     TOOLCHAIN_UNAVAILABLE|SDK_PACKAGE_INSTALL_FAILED|SDK_PACKAGE_CATALOG_FAILED|\
-SDK_IMAGE_NOT_LISTED|SDK_LICENSE_NOT_PREAUTHORIZED|SIGNATURE_TOOL_UNAVAILABLE|\
+SDK_IMAGE_NOT_LISTED|SDK_LICENSE_NOT_PREAUTHORIZED|KVM_HOST_DEVICE_MISSING|\
+KVM_HOST_ACCESS_UNAVAILABLE|KVM_ACCELERATION_CHECK_FAILED|SIGNATURE_TOOL_UNAVAILABLE|\
 ORIGINAL_PIN_UNVERIFIED|STOCK_SIGNATURE_INVALID|AVD_SETUP_FAILED|\
 EMULATOR_BOOT_FAILED|EMULATOR_ROOT_FAILED|NETWORK_ISOLATION_FAILED|\
 OEM_BADGING_FAILED|LAUNCHER_DISCOVERY_FAILED|OEM_INSTALL_FAILED|\
@@ -33,6 +34,7 @@ APK="$(realpath -e -- "$1")"
    -d "$ANDROID_HOME/platform-tools" ]] || fail TOOLCHAIN_UNAVAILABLE
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 for tool in sdkmanager avdmanager adb python3; do command -v "$tool" >/dev/null || fail TOOLCHAIN_UNAVAILABLE; done
+source classic_source/private_ci/hosted_kvm_scope.sh
 ROOT="$RUNNER_TEMP/classic-stock-emulator"
 [[ ! -e "$ROOT" ]] || fail
 mkdir -m 700 "$ROOT"
@@ -45,9 +47,14 @@ cleanup() {
     adb -s emulator-5554 emu kill >/dev/null 2>&1
     kill "$EMULATOR_PID" >/dev/null 2>&1
   fi
+  kvm_scope_restore
   rm -rf -- "$ROOT"
 }
 trap cleanup EXIT
+if ! kvm_scope_acquire; then
+  [[ "$KVM_SCOPE_REASON" == "KVM_DEVICE_MISSING" ]] && fail KVM_HOST_DEVICE_MISSING
+  fail KVM_HOST_ACCESS_UNAVAILABLE
+fi
 # Read the stable SDK package catalog first. The obsolete unversioned
 # "android-37;google_apis" image was NOT downloadable (run 43021597830).
 # Never select unknown/preview/PlayStore/non-root images or alter licensing.
@@ -71,6 +78,8 @@ fi
 AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
 APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
 [[ -x "$AAPT" && -x "$APKSIGNER" ]] || fail SIGNATURE_TOOL_UNAVAILABLE
+"$ANDROID_HOME/emulator/emulator" -accel-check >"$ROOT/accel.log" 2>&1 ||
+  fail KVM_ACCELERATION_CHECK_FAILED
 # Original pin and existing OEM signature are mandatory. Never sign any APK.
 python3 - "$APK" >"$ROOT/original-pin.log" 2>&1 <<'PY' || fail ORIGINAL_PIN_UNVERIFIED
 from pathlib import Path
@@ -82,19 +91,27 @@ PY
 "$APKSIGNER" verify "$APK" >"$ROOT/signature.log" 2>&1 || fail STOCK_SIGNATURE_INVALID
 printf 'no\n' | avdmanager create avd --force -n classic-stock-offline-37 \
   -k "$SYSTEM_IMAGE" >"$ROOT/avd.log" 2>&1 || fail AVD_SETUP_FAILED
+# Current Android17 PS16K x86_64 emulator's specified software renderer,
+# without blind retries or fallback to host GPU.
 "$ANDROID_HOME/emulator/emulator" -avd classic-stock-offline-37 -port 5554 \
   -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics \
-  -memory 4096 -gpu swiftshader_indirect >"$ROOT/emulator.log" 2>&1 &
+  -memory 4096 -accel on -gpu swangle_indirect -feature -Vulkan \
+  >"$ROOT/emulator.log" 2>&1 &
 EMULATOR_PID=$!
+boot_failed() {
+  python3 classic_source/private_ci/emulator_boot_diagnosis.py "$ROOT/emulator.log" ||
+    true
+  fail EMULATOR_BOOT_FAILED
+}
 READY=0
 for _ in $(seq 1 150); do
   if [[ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
     READY=1; break
   fi
-  kill -0 "$EMULATOR_PID" 2>/dev/null || fail EMULATOR_BOOT_FAILED
+  kill -0 "$EMULATOR_PID" 2>/dev/null || boot_failed
   sleep 2
 done
-[[ "$READY" == 1 ]] || fail EMULATOR_BOOT_FAILED
+[[ "$READY" == 1 ]] || boot_failed
 adb -s emulator-5554 root >"$ROOT/root.log" 2>&1 || fail EMULATOR_ROOT_FAILED
 adb -s emulator-5554 wait-for-device >/dev/null 2>&1 || fail EMULATOR_ROOT_FAILED
 [[ "$(adb -s emulator-5554 shell id -u | tr -d '\r')" == 0 ]] || fail EMULATOR_ROOT_FAILED

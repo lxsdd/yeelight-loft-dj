@@ -8,8 +8,8 @@ umask 077
 
 fail() {
   case "${1:-}" in
-    INVALID_CONTEXT|HOST_SDK_UNAVAILABLE|HOST_KVM_UNAVAILABLE|\
-    SDK_CATALOG_FAILED|SDK_IMAGE_UNLISTED|SDK_LICENSE_NOT_PREAUTHORIZED|\
+    INVALID_CONTEXT|HOST_SDK_UNAVAILABLE|HOST_KVM_DEVICE_MISSING|\
+    HOST_KVM_ACCESS_UNAVAILABLE|SDK_CATALOG_FAILED|SDK_IMAGE_UNLISTED|SDK_LICENSE_NOT_PREAUTHORIZED|\
     SDK_INSTALL_FAILED|AVD_CREATION_FAILED|EMULATOR_EXEC_UNAVAILABLE|\
     EMULATOR_ACCELERATION_FAILED|EMULATOR_BOOT_FAILED) code="$1";;
     *) code="INTERNAL_ERROR";;
@@ -24,9 +24,9 @@ fail() {
    "${RUNNER_ENVIRONMENT:-}" == "github-hosted" ]] || fail INVALID_CONTEXT
 [[ -n "${RUNNER_TEMP:-}" && -d "$RUNNER_TEMP" &&
    -n "${ANDROID_HOME:-}" && -d "$ANDROID_HOME" ]] || fail HOST_SDK_UNAVAILABLE
-# Do not adjust /dev/kvm permissions, kernel modules, or host devices.
-# A missing usable KVM is a precise runner-infrastructure blocker.
-[[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]] || fail HOST_KVM_UNAVAILABLE
+# This one hosted job alone receives scoped KVM access, restored in EXIT.
+# No personal hardware, LAN, account, OEM data or physical devices touched.
+source classic_source/private_ci/hosted_kvm_scope.sh
 CLI="$ANDROID_HOME/cmdline-tools/latest/bin"
 PLAT="$ANDROID_HOME/platform-tools"
 [[ -x "$CLI/sdkmanager" && -x "$CLI/avdmanager" && -x "$PLAT/adb" ]] ||
@@ -42,9 +42,14 @@ cleanup() {
     "$PLAT/adb" -s emulator-5554 emu kill >/dev/null 2>&1
     kill "$EMULATOR_PID" >/dev/null 2>&1
   fi
+  kvm_scope_restore
   rm -rf -- "$ROOT"
 }
 trap cleanup EXIT
+if ! kvm_scope_acquire; then
+  [[ "$KVM_SCOPE_REASON" == "KVM_DEVICE_MISSING" ]] && fail HOST_KVM_DEVICE_MISSING
+  fail HOST_KVM_ACCESS_UNAVAILABLE
+fi
 
 "$CLI/sdkmanager" --list --channel=0 </dev/null >"$ROOT/catalog.log" 2>&1 ||
   fail SDK_CATALOG_FAILED

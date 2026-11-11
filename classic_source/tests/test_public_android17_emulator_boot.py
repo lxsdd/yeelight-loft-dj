@@ -7,6 +7,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 BASH = ROOT / "classic_source/private_ci/run_public_android17_emulator_boot.sh"
 WORKFLOW = ROOT / ".github/workflows/classic-public-emulator-boot.yml"
+KVM = ROOT / "classic_source/private_ci/hosted_kvm_scope.sh"
 
 
 class PublicAndroid17BootContracts(unittest.TestCase):
@@ -32,9 +33,10 @@ class PublicAndroid17BootContracts(unittest.TestCase):
 
     def test_public_runner_keeps_no_apk_no_new_licenses_and_fixed_serial(self):
         script = BASH.read_text(encoding="utf-8")
-        for required in ("[[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]",
+        for required in ("source classic_source/private_ci/hosted_kvm_scope.sh",
                          'sdkmanager" --install --channel=0',
                          "select_android17_image.py", '"$EMU" -accel-check',
+                         "kvm_scope_acquire", "kvm_scope_restore",
                          "-accel on -gpu swangle_indirect -feature -Vulkan",
                          "emulator_boot_diagnosis.py", "ANDROID17_PUBLIC_EMULATOR_COLD_BOOT_PROVEN_NO_OEM",
                          "trap cleanup EXIT", 'getprop ro.build.version.sdk'):
@@ -46,6 +48,24 @@ class PublicAndroid17BootContracts(unittest.TestCase):
             self.assertNotIn(forbidden, script)
         result = subprocess.run(["bash","-n",str(BASH)],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_one_runner_user_kvm_permission_scope_restored_no_global_mode(self):
+        helper = KVM.read_text(encoding="utf-8")
+        self.assertIn("kvm_scope_acquire()", helper)
+        self.assertIn("kvm_scope_restore()", helper)
+        self.assertIn("KVM_SCOPE_OLD_OWNER", helper)
+        self.assertIn("KVM_SCOPE_OLD_MODE", helper)
+        self.assertIn('sudo -n chown "$(id -u):$(id -g)" /dev/kvm', helper)
+        self.assertIn("sudo -n chmod 0600 /dev/kvm", helper)
+        self.assertIn('sudo -n chown "$KVM_SCOPE_OLD_OWNER" /dev/kvm', helper)
+        self.assertIn('sudo -n chmod "$KVM_SCOPE_OLD_MODE" /dev/kvm', helper)
+        for dangerous in ("0666", "0777", "udevadm", "modprobe", "apt-get",
+                          "setfacl -m g::rwx", "chmod 666", "chmod 777"):
+            self.assertNotIn(dangerous, helper)
+        self.assertIn("kvm_scope_restore", BASH.read_text())
+        c = subprocess.run(["bash", "-n", str(KVM)],
+                           capture_output=True, text=True)
+        self.assertEqual(c.returncode, 0, c.stderr)
 
     def test_rejects_local_execution_before_any_emulator_or_download(self):
         result = subprocess.run(["bash",str(BASH),"--no-oem"],
