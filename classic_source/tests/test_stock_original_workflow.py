@@ -11,6 +11,15 @@ PROBE=ROOT / "classic_source/private_ci/stock_original_emulator_probe.py"
 
 
 def verify_workflow(text):
+    # GitHub's standalone owner-dispatch policy MUST recognize this exact
+    # workflow; merely calling policy.py is insufficient (run 43012985357).
+    import importlib.util
+    module=ROOT / "github_hosted/policy.py"
+    spec=importlib.util.spec_from_file_location("classic_owner_policy", module)
+    policy=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(policy)
+    required=policy.SOURCE_REPO+"/"+str(WORKFLOW.relative_to(ROOT))+"@refs/heads/main"
+    assert required in policy.ALLOWED_WORKFLOW_REFS, "protected workflow is not policy allowlisted"
     y=yaml.safe_load(text)
     assert set(y.get("on", y.get(True))) == {"workflow_dispatch"}
     assert y["permissions"] == {"contents":"read"}
@@ -51,6 +60,10 @@ def verify_shell(text):
         'adb -s emulator-5554 root', 'settings put global airplane_mode_on 1',
         'ip -4 route flush table main', 'ip -6 route flush table main',
         'install -r --no-streaming', 'stock_original_emulator_probe.py',
+        'STOCK_ORIGINAL_ANDROID17_EMULATOR_BLOCKED_',
+        'STOCK_SIGNATURE_INVALID', 'STOCK_STARTUP_UNVERIFIED',
+        'SDK_PACKAGE_INSTALL_FAILED', 'EMULATOR_BOOT_FAILED',
+        'NETWORK_ISOLATION_FAILED',
         '--explicit-owner-approved-private-emulator', 'trap cleanup EXIT'
     )
     for token in required:
