@@ -1,17 +1,18 @@
-# A single protected-independent, public no-OEM emulator boot acceptance.
-# Triggered only on changes to the original-stock emulator qualification path.
+# Public no-OEM Android 17 smoke for real, exact Classic PR source commits.
+# No vault, signing, physical device, private artifact, paid runner, or license assent.
+# Private signed candidate qualification stays in the separately owner-gated workflow.
 name: Classic PUBLIC Android17 emulator cold boot (no OEM)
 on:
   pull_request:
     branches: [main]
     paths:
-      - '.github/workflows/classic-public-emulator-boot.yml'
-      - '.github/workflows/classic-private-stock-original-android17.yml'
-      - 'classic_source/private_ci/run_stock_original_android17.sh'
-      - 'classic_source/private_ci/run_public_android17_emulator_boot.sh'
-      - 'classic_source/private_ci/emulator_boot_diagnosis.py'
-      - 'classic_source/private_ci/select_android17_image.py'
-      - 'classic_source/tests/test_public_android17_emulator_boot.py'
+      # Every production Classic source subtree, including future modules.
+      - 'classic_source/**'
+      # A CI/protected-emulator contract change must also retrigger QA.
+      - '.github/workflows/classic-*.yml'
+      # Avoid expensive public emulator boots for documentation-only PRs.
+      - '!classic_source/*.md'
+      - '!classic_source/**/*.md'
 permissions:
   contents: read
 concurrency:
@@ -19,14 +20,24 @@ concurrency:
   cancel-in-progress: true
 jobs:
   android17-no-oem-boot:
-    if: ${{ github.repository == 'lxsdd/yeelight-loft-dj' && github.actor == 'lxsdd' && github.event_name == 'pull_request' }}
+    if: ${{ github.repository == 'lxsdd/yeelight-loft-dj' && github.actor == 'lxsdd' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'lxsdd/yeelight-loft-dj' }}
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
-      - name: Checkout public source without retained credentials
+      - name: Checkout exact same-repository Classic candidate without credentials
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Prove checked out commit equals PR head (not synthetic merge SHA)
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'CLASSIC_PUBLIC_QA_CANDIDATE_SHA=%s\n' "$EXPECTED_SHA"
       - name: Python
         uses: actions/setup-python@v6
         with:
