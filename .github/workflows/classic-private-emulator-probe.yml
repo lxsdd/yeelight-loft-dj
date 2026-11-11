@@ -1,0 +1,138 @@
+# Protected owner-only, PRIVATE, ephemeral emulator DIAGNOSIS.
+# This is NOT the ordinary prebuild audit, APK acceptance, signing/release or
+# a way to bless missing original classes. It never publishes a binary.
+name: Classic PRIVATE offline modified-APK emulator probe (no distribution)
+run-name: Classic private emulator-only diagnostic ${{ github.sha }}
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: classic-private-ephemeral-emulator-probe
+  cancel-in-progress: false
+jobs:
+  guarded-private-emulator-only:
+    if: ${{ github.actor == 'lxsdd' && github.ref == 'refs/heads/main' && github.repository == 'lxsdd/yeelight-loft-dj' && github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: classic-private-build
+      deployment: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout immutable owner-dispatched public main source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify pinned source SHA and protected manual dispatch identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 github_hosted/policy.py
+          printf 'CLASSIC_PRIVATE_PROBE_SOURCE_SHA=%s\n' "$GITHUB_SHA"
+      - name: Setup Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android SDK 36
+        uses: android-actions/setup-android@v4
+      - name: Offline positive and negative source regression gates
+        run: |
+          set -euo pipefail
+          (cd classic_source && python3 -m unittest discover -s tests -q)
+          (cd classic_source/checkpoint && python3 -m unittest discover -s tests -q)
+          python3 -m unittest discover -s github_hosted/tests -q
+      - name: Fetch only pinned private original (no persistent cache)
+        env:
+          GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -m 700 -p "$RUNNER_TEMP/private-original"
+          bash github_hosted/vault.sh fetch "$RUNNER_TEMP/private-original" classic-original-3.5.4-v1
+      - name: Require exact old OEM gaps for diagnostic only, never qualify them
+        run: |
+          set -euo pipefail
+          python3 classic_source/run_real_oem_tests.py
+          python3 classic_source/private_emulator_probe.py \
+            --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk"
+        env:
+          CLASSIC_ORIGINAL_APK: ${{ runner.temp }}/private-original/com.yeelight.cherry_3.5.4.apk
+      - name: Setup pinned Gradle with private cache disabled
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.8.2'
+          cache-disabled: true
+      - name: Pin Android SDK36 and separately verified Apktool
+        run: |
+          set -euo pipefail
+          umask 077
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' </dev/null >/dev/null
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -f "$ANDROID_HOME/build-tools/36.0.0/d8"
+          mkdir -m 700 -p "$RUNNER_TEMP/classic-tools"
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 2 \
+            'https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar' \
+            -o "$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar"
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  '"$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar" | sha256sum --check --status
+      - name: Assemble quarantined unsigned Classic candidate with original DEX parity
+        env:
+          CLASSIC_APKTOOL_JAR: ${{ runner.temp }}/classic-tools/apktool_3.0.3.jar
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -m 700 -p "$RUNNER_TEMP/private-output"
+          python3 classic_source/build_private_unsigned.py \
+            --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+            --android-sdk "$ANDROID_HOME" \
+            --output "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk" \
+            >"$RUNNER_TEMP/private-output/build-result.log" 2>&1 || {
+              echo 'PRIVATE_CLASSIC_PROBE_BUILD_FAILED_LOG_RETAINED_ONLY_ON_RUNNER' >&2
+              exit 2
+            }
+          test -s "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk"
+          test -s "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk.preflight.json"
+      - name: Reject any candidate OEM graph drift or new classpath defect
+        run: |
+          set -euo pipefail
+          python3 classic_source/private_emulator_probe.py \
+            --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+            --candidate "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk"
+      - name: Ephemeral private TEST sign only for offline emulator installation
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 classic_source/private_test_sign.py \
+            --unsigned "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk" \
+            --preflight "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk.preflight.json" \
+            --output "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk" \
+            --android-sdk "$ANDROID_HOME" \
+            >"$RUNNER_TEMP/private-output/test-sign-result.log" 2>&1 || {
+              echo 'PRIVATE_CLASSIC_PROBE_TEST_SIGN_FAILED' >&2
+              exit 2
+            }
+          test -s "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
+      - name: Independent unsigned/signed payload parity and final candidate graph probe
+        run: |
+          set -euo pipefail
+          python3 classic_source/private_payload_parity.py \
+            --unsigned "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk" \
+            --signed "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
+          python3 classic_source/private_emulator_probe.py \
+            --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+            --candidate "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
+      - name: Real offline Android17 emulator install and native in-Classic DJ UI diagnostic
+        run: |
+          set -euo pipefail
+          bash classic_source/private_ci/run_android17_emulator.sh \
+            "$RUNNER_TEMP/private-output/classic-loft-dj-TEST-SIGNED.apk"
+          echo 'PRIVATE_CLASSIC_EMULATOR_DIAGNOSTIC_PASSED_BASELINE_CLASSPATH_STILL_UNVERIFIED'
+      - name: Always destroy all private inputs, test signing output and SDK tools
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf -- "$RUNNER_TEMP/private-original" "$RUNNER_TEMP/private-output" "$RUNNER_TEMP/classic-tools"
