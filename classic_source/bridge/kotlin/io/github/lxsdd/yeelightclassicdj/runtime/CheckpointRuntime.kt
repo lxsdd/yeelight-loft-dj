@@ -61,7 +61,12 @@ class CheckpointRuntime : DjRuntime {
             val newEngine = ClassicDjEngine(coordinator)
             stagedEngine = newEngine
             // The user manually chooses participants; NOTHING starts by discovery/notification.
-            val states = if (selectedLampIps.isEmpty()) emptyMap() else newEngine.select(selectedLampIps)
+            // A STOP during a previous device handshake must not start more lamps.
+            // The staged engine still cleans up any confirmed OWNED socket on abort.
+            val states = if (selectedLampIps.isEmpty()) emptyMap() else
+                newEngine.select(selectedLampIps) {
+                    synchronized(lock) { state == State.STARTING }
+                }
             val owned = states.filterValues { it == ClassicMusicCoordinator.State.OWNED }.keys
             if (selectedLampIps.isNotEmpty() && owned.isEmpty()) {
                 error("No confirmed reverse channel; leave remote state untouched and stop")

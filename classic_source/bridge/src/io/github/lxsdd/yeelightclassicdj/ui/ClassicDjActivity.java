@@ -8,12 +8,14 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /** New screen INSIDE the Classic private fork, not a separate application launcher. */
@@ -22,10 +24,19 @@ public final class ClassicDjActivity extends Activity {
     private TextView status;
     private EditText lampIps;
     private CheckBox musicOptIn;
+    private String transientStatus;
+    private long transientUntilMs;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Runnable statusRefresh = new Runnable() {
         @Override public void run() {
-            if (status != null) status.setText(ClassicDjService.uiStatus());
+            if (status != null) {
+                if (transientStatus != null && SystemClock.elapsedRealtime() < transientUntilMs) {
+                    status.setText(transientStatus);
+                } else {
+                    transientStatus = null;
+                    status.setText(ClassicDjService.uiStatus());
+                }
+            }
             statusHandler.postDelayed(this, 500L);
         }
     };
@@ -64,10 +75,14 @@ public final class ClassicDjActivity extends Activity {
             Intent i = new Intent(this, ClassicDjService.class);
             i.setAction(ClassicDjService.ACTION_STOP);
             startService(i);
-            status.setText("Stopp angefordert; Lampenstatus muss bestätigt werden.");
+            showTransientStatus("Stopp angefordert; Lampenstatus muss bestätigt werden.");
         });
         layout.addView(stop);
-        setContentView(layout);
+        // A small device and the on-screen keyboard must not hide DJ/Stop.
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(layout);
+        setContentView(scroll);
     }
 
     @Override protected void onResume() {
@@ -78,6 +93,12 @@ public final class ClassicDjActivity extends Activity {
     @Override protected void onPause() {
         statusHandler.removeCallbacks(statusRefresh);
         super.onPause();
+    }
+
+    private void showTransientStatus(String message) {
+        transientStatus = message;
+        transientUntilMs = SystemClock.elapsedRealtime() + 4_000L;
+        if (status != null) status.setText(message);
     }
 
     private void requestMic() {
@@ -93,25 +114,25 @@ public final class ClassicDjActivity extends Activity {
         if (musicOptIn.isChecked()) {
             String input = lampIps.getText().toString().trim();
             if (input.isEmpty()) {
-                status.setText("Mindestens eine Color4-IP eingeben oder Auswahl deaktivieren.");
+                showTransientStatus("Mindestens eine Color4-IP eingeben oder Auswahl deaktivieren.");
                 return;
             }
             for (String part : input.split(",")) {
                 String ip = part.trim();
                 if (!validPrivateLanIp(ip) || ips.contains(ip)) {
-                    status.setText("Ungültige oder doppelte Color4-IP: bitte prüfen.");
+                    showTransientStatus("Ungültige oder doppelte Color4-IP: bitte prüfen.");
                     return;
                 }
                 ips.add(ip);
             }
-            if (ips.size() > 4) { status.setText("Maximal vier Lampen gleichzeitig."); return; }
+            if (ips.size() > 4) { showTransientStatus("Maximal vier Lampen gleichzeitig."); return; }
         }
         Intent i = new Intent(this, ClassicDjService.class);
         i.setAction(ClassicDjService.ACTION_MIC);
         i.putExtra(EXTRA_SELECTED_IPS, ips.toArray(new String[0]));
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
-        status.setText(ips.isEmpty() ? "Mikrofonanalyse ohne Lampen gestartet." :
+        showTransientStatus(ips.isEmpty() ? "Mikrofonanalyse ohne Lampen gestartet." :
             "Music-Rückkanal für " + ips.size() + " gewählte Color4-Lampen wird aufgebaut.");
     }
 
@@ -133,7 +154,7 @@ public final class ClassicDjActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode == MIC_REQUEST) {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) startMicService();
-            else status.setText("Mikrofonberechtigung fehlt. Keine Steuerung gestartet.");
+            else showTransientStatus("Mikrofonberechtigung fehlt. Keine Steuerung gestartet.");
         }
     }
 }

@@ -54,6 +54,7 @@ STUBS = {
 }''',
 'android/os/Build.java': '''package android.os; public class Build {public static class VERSION {public static int SDK_INT=35;}}''',
 'android/os/Bundle.java': '''package android.os; public class Bundle {}''',
+'android/os/SystemClock.java': '''package android.os; public class SystemClock { public static long elapsedRealtime(){ return 0L; } }''',
 'android/os/Looper.java': '''package android.os; public class Looper { public static Looper getMainLooper(){return null;} }''',
 'android/os/Handler.java': '''package android.os; public class Handler { public Handler(Looper l){} public void post(Runnable r){} public void postDelayed(Runnable r,long t){} public void removeCallbacks(Runnable r){} }''',
 'android/os/IBinder.java': '''package android.os; public interface IBinder {}''',
@@ -82,6 +83,9 @@ STUBS = {
  public Button(android.content.Context c){super(c);} public Button(android.content.Context c,android.util.AttributeSet attrs){super(c,attrs);}
  public void setAllCaps(boolean b){}
 }''',
+'android/widget/ScrollView.java': '''package android.widget; public class ScrollView extends android.view.View {
+ public ScrollView(android.content.Context c){super(c);} public void setFillViewport(boolean v){} public void addView(android.view.View v){}
+}''',
 'android/widget/LinearLayout.java': '''package android.widget; public class LinearLayout extends android.view.View {
  public static final int VERTICAL=1; public LinearLayout(android.content.Context c){super(c);}
  public void setOrientation(int v){} public void setPadding(int a,int b,int c,int d){}
@@ -102,7 +106,7 @@ class BridgeCompileTests(unittest.TestCase):
                 paths.append(p)
             sources = list((ROOT/'bridge/src').rglob('*.java'))
             self.assertGreaterEqual(len(sources), 4)
-            result = subprocess.run(['javac', '-source', '8', '-target', '8', '-Xlint:all', '-d', str(root/'classes'), *(str(p) for p in paths+sources)], text=True, capture_output=True, timeout=30)
+            result = subprocess.run(['javac', '--release', '8', '-Xlint:all', '-d', str(root/'classes'), *(str(p) for p in paths+sources)], text=True, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             klass = root/'classes/io/github/lxsdd/yeelightclassicdj/ui/ClassicDjService.class'
             self.assertTrue(klass.exists())
