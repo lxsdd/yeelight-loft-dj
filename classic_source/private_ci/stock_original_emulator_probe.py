@@ -40,6 +40,25 @@ class StockBlocked(ValueError):
     """Fixed safe reason; never embed original component names or exception text."""
 
 
+STOCK_BLOCK_REASONS = frozenset((
+    "STOCK_NOT_DISPOSABLE_EMULATOR",
+    "STOCK_ADB_COMMAND_FAILED",
+    "STOCK_ADB_UNBOUNDED_OUTPUT",
+    "STOCK_NOT_ANDROID17",
+    "STOCK_EMULATOR_NOT_OFFLINE",
+    "STOCK_EMULATOR_ROUTE_NOT_ISOLATED",
+    "STOCK_LOGCAT_UNVERIFIED",
+    "STOCK_ACTIVITY_SNAPSHOT_UNVERIFIED",
+    "STOCK_EXPLICIT_OWNER_APPROVAL_REQUIRED",
+    "STOCK_LAUNCH_COMPONENT_INVALID",
+    "STOCK_PIN_UNVERIFIED",
+    "STOCK_INSTALLED_SPLIT_SET_UNVERIFIED",
+    "STOCK_INSTALLED_PATH_UNVERIFIED",
+    "STOCK_INSTALLED_APK_HASH_MISMATCH",
+    "STOCK_ACTIVITY_START_FAILED",
+))
+
+
 def need(valid, code):
     if not valid:
         raise StockBlocked(code)
@@ -176,6 +195,12 @@ def main():
         result = probe(serial=args.serial, launcher=args.launcher,
                        pinned_sha256=args.pinned_sha256,
                        owner_approved=args.explicit_owner_approved_private_emulator)
+    except StockBlocked as exc:
+        reason = str(exc)
+        if reason not in STOCK_BLOCK_REASONS:
+            reason = "STOCK_ORIGINAL_EMULATOR_UNVERIFIED"
+        print(json.dumps({"status": "BLOCKED", "reason": reason}, sort_keys=True))
+        return 2
     except Exception:
         print(json.dumps({"status": "BLOCKED", "reason": "STOCK_ORIGINAL_EMULATOR_UNVERIFIED"},
                          sort_keys=True))

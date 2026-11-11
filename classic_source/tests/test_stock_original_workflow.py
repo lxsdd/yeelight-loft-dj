@@ -60,6 +60,10 @@ def verify_shell(text):
         'adb -s emulator-5554 root', 'settings put global airplane_mode_on 1',
         'ip -4 route flush table main', 'ip -6 route flush table main',
         'install -r --no-streaming', 'stock_original_emulator_probe.py',
+        'STOCK_ORIGINAL_ANDROID17_EMULATOR_BLOCKED_',
+        'STOCK_SIGNATURE_INVALID', 'STOCK_STARTUP_UNVERIFIED',
+        'SDK_PACKAGE_INSTALL_FAILED', 'EMULATOR_BOOT_FAILED',
+        'NETWORK_ISOLATION_FAILED',
         '--explicit-owner-approved-private-emulator', 'trap cleanup EXIT'
     )
     for token in required:

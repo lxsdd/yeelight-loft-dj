@@ -152,7 +152,7 @@ class OriginalStockEmulatorTests(unittest.TestCase):
             exit_code = m.main()
         self.assertEqual(exit_code, 2)
         self.assertEqual(json.loads(output.call_args.args[0]),
-                         {"status":"BLOCKED","reason":"STOCK_ORIGINAL_EMULATOR_UNVERIFIED"})
+                         {"status":"BLOCKED","reason":"STOCK_EXPLICIT_OWNER_APPROVAL_REQUIRED"})
 
     def test_cli_executed_from_repository_root_uses_synthetic_adb_only(self):
         """Exercise the real protected CLI import path, masked by in-process tests."""
@@ -205,6 +205,26 @@ class OriginalStockEmulatorTests(unittest.TestCase):
             self.assertTrue(result["stock_launch_verified"])
             self.assertFalse(result["loft_dj_clone_tested"])
             self.assertNotIn("secret",p.stdout.lower())
+
+    def test_cli_safe_failure_stage_enums_without_vendor_or_exception_leak(self):
+        argv=["stock_original_emulator_probe.py", "--serial", m.SERIAL,
+              "--launcher", LAUNCHER, "--pinned-sha256", ORIGINAL_SHA256,
+              "--explicit-owner-approved-private-emulator"]
+        with patch.object(sys, "argv", argv):
+            for thrown in (m.StockBlocked("Lprivate/Secret;"),
+                           RuntimeError("Lprivate/Secret;")):
+                with patch.object(m, "offline_snapshot", side_effect=thrown), \
+                     patch("builtins.print") as output:
+                    self.assertEqual(m.main(), 2)
+                    value=json.loads(output.call_args.args[0])
+                    self.assertEqual(value["reason"], "STOCK_ORIGINAL_EMULATOR_UNVERIFIED")
+                    self.assertNotIn("Secret", str(value))
+            with patch.object(m, "offline_snapshot",
+                              side_effect=m.StockBlocked("STOCK_EMULATOR_ROUTE_NOT_ISOLATED")), \
+                 patch("builtins.print") as output:
+                self.assertEqual(m.main(), 2)
+                value=json.loads(output.call_args.args[0])
+                self.assertEqual(value["reason"], "STOCK_EMULATOR_ROUTE_NOT_ISOLATED")
 
 
 if __name__ == "__main__":
