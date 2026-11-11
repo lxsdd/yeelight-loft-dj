@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from private_ci.readonly_vault_compare import diagnose as diagnose_baseline, MAX_RECEIPT
 from manifest_route_provenance import inspect_original_routes
+from embedded_code_inventory import inspect_pinned_embedded
 
 EXPORTED = ("explicit_true", "explicit_false", "inherited", "unresolved_resource")
 LIBRARY = ("required_true", "required_false", "inherited", "unresolved_resource")
@@ -112,11 +113,43 @@ def guarded_context(route, baseline):
     }
 
 
+
+EMBEDDED_STATUS = "CANDIDATE_INVENTORY_ONLY_RUNTIME_UNVERIFIED"
+EMBEDDED_KEYS = (
+    "embedded_dex_containers", "embedded_nested_zip_containers",
+    "embedded_nested_dex_containers", "embedded_native_elf_containers",
+    "embedded_other_entries_scanned", "uninspected_nested_archives",
+    "embedded_missing_activity_candidate_count",
+    "embedded_missing_parent_candidate_count",
+    "embedded_duplicate_original_definition_count",
+)
+
+
+def guarded_embedded(embedded, baseline):
+    """Nested byte candidate is not Android ClassLoader/source installation."""
+    need(type(embedded) is dict and embedded.get("embedded_inventory_status") ==
+         EMBEDDED_STATUS and embedded.get("code_candidates_prove_runtime_loader") is False)
+    counts = {key: number(embedded, key) for key in EMBEDDED_KEYS}
+    need(counts["embedded_missing_activity_candidate_count"] <=
+         number(baseline, "original_missing_activities") and
+         counts["embedded_missing_parent_candidate_count"] <=
+         number(baseline, "original_unresolved_parent_edges") and
+         counts["uninspected_nested_archives"] <=
+         counts["embedded_nested_zip_containers"])
+    return {
+        "embedded_code_candidate_inventory": counts,
+        "embedded_code_sources_classloader_verified": False,
+        "embedded_inventory_complete":
+            counts["uninspected_nested_archives"] == 0,
+    }
+
+
 def diagnose(original_path, receipt):
     # SHA and original-APK structural checks are mandatory BEFORE this extra pass.
     original = diagnose_baseline(original_path, receipt)
     context = guarded_context(inspect_original_routes(original_path), original)
-    return dict(original, **context)
+    embedded = guarded_embedded(inspect_pinned_embedded(original_path), original)
+    return dict(original, **context, **embedded)
 
 
 def main():

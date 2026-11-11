@@ -52,13 +52,32 @@ def routes():
     }
 
 
+
+def embedded():
+    return {
+        "embedded_dex_containers":1,
+        "embedded_nested_zip_containers":1,
+        "embedded_nested_dex_containers":1,
+        "embedded_native_elf_containers":2,
+        "embedded_other_entries_scanned":15,
+        "uninspected_nested_archives":0,
+        "embedded_missing_activity_candidate_count":2,
+        "embedded_missing_parent_candidate_count":3,
+        "embedded_duplicate_original_definition_count":1,
+        "code_candidates_prove_runtime_loader":False,
+        "embedded_inventory_status":"CANDIDATE_INVENTORY_ONLY_RUNTIME_UNVERIFIED",
+    }
+
+
 class ProtectedRouteTests(unittest.TestCase):
     def test_positive_uses_real_pinned_gate_and_proves_nothing_about_loader(self):
         with patch.object(module,"diagnose_baseline",return_value=original()) as gate, \
-             patch.object(module,"inspect_original_routes",return_value=routes()) as raw:
+             patch.object(module,"inspect_original_routes",return_value=routes()) as raw, \
+             patch.object(module,"inspect_pinned_embedded",return_value=embedded()) as nested:
             report=module.diagnose("private-fixture.apk","synthetic-receipt")
         gate.assert_called_once_with("private-fixture.apk","synthetic-receipt")
         raw.assert_called_once_with("private-fixture.apk")
+        nested.assert_called_once_with("private-fixture.apk")
         self.assertEqual(report["missing_activity_exported_buckets"]["inherited"],2)
         self.assertEqual(report["declared_library_required_buckets"]["required_false"],1)
         self.assertEqual(report["missing_activity_route_counts"]["main_launcher_filters"],1)
@@ -66,6 +85,9 @@ class ProtectedRouteTests(unittest.TestCase):
         self.assertEqual(report["classloader_missing_waivers"],0)
         self.assertFalse(report["manifest_context_proves_classloader"])
         self.assertFalse(report["actual_classloader_verified"])
+        self.assertEqual(report["embedded_code_candidate_inventory"]["embedded_missing_activity_candidate_count"],2)
+        self.assertFalse(report["embedded_code_sources_classloader_verified"])
+        self.assertTrue(report["embedded_inventory_complete"])
 
     def test_deny_unverified_graph_counters_and_fake_runtime(self):
         changes=(
@@ -117,6 +139,37 @@ class ProtectedRouteTests(unittest.TestCase):
         self.assertNotIn("manufacturer",data)
         self.assertNotIn("Lsecret",data)
         self.assertFalse(report["manifest_context_proves_classloader"])
+
+
+    def test_embedded_inconsistencies_and_loader_elevation_denied(self):
+        changes=(
+            lambda x:x.update({"embedded_missing_activity_candidate_count":4}),
+            lambda x:x.update({"embedded_missing_parent_candidate_count":7}),
+            lambda x:x.update({"uninspected_nested_archives":2}),
+            lambda x:x.update({"embedded_dex_containers":True}),
+            lambda x:x.update({"embedded_inventory_status":"VERIFIED_CLASSLOADER"}),
+            lambda x:x.update({"code_candidates_prove_runtime_loader":True}),
+        )
+        for mutate in changes:
+            sample=embedded()
+            mutate(sample)
+            with self.subTest(line=mutate.__code__.co_firstlineno), \
+                 self.assertRaises(module.RouteDiagnosticBlocked):
+                module.guarded_embedded(sample,original())
+
+    def test_uninspected_nested_archive_cannot_claim_complete(self):
+        sample=embedded()
+        sample["uninspected_nested_archives"]=1
+        report=module.guarded_embedded(sample,original())
+        self.assertFalse(report["embedded_inventory_complete"])
+        self.assertFalse(report["embedded_code_sources_classloader_verified"])
+
+    def test_private_nested_strings_never_appear_in_output(self):
+        sample=embedded()
+        sample["private_dex_name"]="secret/OriginalClass.dex"
+        serialized=json.dumps(module.guarded_embedded(sample,original()))
+        self.assertNotIn("OriginalClass",serialized)
+        self.assertNotIn("secret/",serialized)
 
     def test_cli_blocks_bad_args_without_calling_oem(self):
         with patch.object(sys,"argv",["readonly_route_comparison.py","unexpected"]), \
