@@ -1,0 +1,56 @@
+# Strictly owner-dispatched private stock-original Android17 baseline.
+# NEVER signs, builds clones, publishes, uses hardware, or ships OEM payloads.
+name: Classic PRIVATE stock OEM Android 17 offline baseline
+run-name: Classic OEM stock emulator ${{ github.sha }}
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: classic-private-stock-original-android17
+  cancel-in-progress: false
+jobs:
+  stock-original-emulator:
+    if: ${{ github.actor == 'lxsdd' && github.ref == 'refs/heads/main' && github.repository == 'lxsdd/yeelight-loft-dj' && github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: classic-private-build
+      deployment: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout protected public source without retained credentials
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Enforce owner-only dispatch policy
+        run: python3 github_hosted/policy.py
+      - name: Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Download pinned OEM-signed original into ephemeral private directory
+        env:
+          GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          mkdir -p "$RUNNER_TEMP/classic-original"
+          bash github_hosted/vault.sh fetch "$RUNNER_TEMP/classic-original" classic-original-3.5.4-v1
+      - name: Verify real Android17 stock original launch offline
+        run: |
+          set -euo pipefail
+          set +x
+          bash classic_source/private_ci/run_stock_original_android17.sh \
+            "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk"
+      - name: Remove all private input and emulator material
+        if: always()
+        run: |
+          set -euo pipefail
+          set +x
+          rm -rf -- "$RUNNER_TEMP/classic-original" "$RUNNER_TEMP/classic-stock-emulator"
