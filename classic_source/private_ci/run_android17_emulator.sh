@@ -58,13 +58,19 @@ printf 'no\n' | avdmanager create avd --force -n classic-offline-api37 \
   -memory 4096 -accel on -gpu swangle_indirect -feature -Vulkan \
   >"$WORK/emulator.log" 2>&1 &
 EMULATOR_PID=$!
+boot_failed() {
+  # Fixed non-OEM boot diagnosis only; no raw emulator log leaves runner.
+  python3 classic_source/private_ci/emulator_boot_diagnosis.py \
+    "$WORK/emulator.log" || true
+  fail
+}
 READY=0
 for _ in $(seq 1 150); do
   if [[ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then READY=1; break; fi
-  kill -0 "$EMULATOR_PID" 2>/dev/null || fail
+  kill -0 "$EMULATOR_PID" 2>/dev/null || boot_failed
   sleep 2
 done
-[[ "$READY" == 1 ]] || fail
+[[ "$READY" == 1 ]] || boot_failed
 adb -s emulator-5554 root >"$WORK/root.log" 2>&1 || fail
 adb -s emulator-5554 wait-for-device >/dev/null 2>&1 || fail
 [[ "$(adb -s emulator-5554 shell id -u | tr -d '\r')" == 0 ]] || fail
