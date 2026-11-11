@@ -14,10 +14,12 @@ WORKFLOW_FILE = '.github/workflows/classic-protected-assembly.yml'
 SIGNED_WORKFLOW_FILE = '.github/workflows/classic-private-test-signed.yml'
 AUDIT_WORKFLOW_FILE = '.github/workflows/classic-private-startup-audit.yml'
 READONLY_WORKFLOW_FILE = '.github/workflows/classic-private-readonly-parity.yml'
+STOCK_ORIGINAL_WORKFLOW_FILE = '.github/workflows/classic-private-stock-original-android17.yml'
 # Exact allowlist. Each workflow also enforces owner-only workflow_dispatch on protected main.
 ALLOWED_WORKFLOW_REFS = frozenset(
     SOURCE_REPO + '/' + path + '@refs/heads/main'
-    for path in (WORKFLOW_FILE, SIGNED_WORKFLOW_FILE, AUDIT_WORKFLOW_FILE, READONLY_WORKFLOW_FILE)
+    for path in (WORKFLOW_FILE, SIGNED_WORKFLOW_FILE, AUDIT_WORKFLOW_FILE,
+                 READONLY_WORKFLOW_FILE, STOCK_ORIGINAL_WORKFLOW_FILE)
 )
 INPUT_RELEASE = 'classic-original-3.5.4-v1'
 INPUT_APK = 'com.yeelight.cherry_3.5.4.apk'

@@ -32,14 +32,21 @@ def verify_private_shell(value):
         'GITHUB_REPOSITORY:-', 'GITHUB_ACTOR:-', 'GITHUB_REF:-',
         'GITHUB_EVENT_NAME:-', 'RUNNER_ENVIRONMENT:-',
         '-z "${GH_TOKEN:-}"', '-z "${CLASSIC_VAULT_TOKEN:-}"',
-        'sdkmanager --install', "'system-images;android-37;google_apis;x86_64'",
+        'sdkmanager --list --channel=0', "select_android17_image.py",
+        "'system-images;android-37.2;google_apis_ps16k;x86_64'",
+        "'system-images;android-37.1;google_apis_ps16k;x86_64'",
+        "sdkmanager --install", "kvm_scope_acquire", "kvm_scope_restore",
+        "-accel on -gpu swangle_indirect -feature -Vulkan",
+        "emulator_boot_diagnosis.py",
         'adb -s emulator-5554 root',
         'settings put global airplane_mode_on 1',
         'settings put global wifi_on 0',
         'settings put global mobile_data 0',
         'ip -4 route flush table main',
         'ip -6 route flush table main',
-        'install -r "$APK"', 'sha256sum "$APK"',
+        'install -r --no-streaming "$APK"', 'sha256sum "$APK"',
+        'clone_launcher_selection.py', 'query-activities --components --user 0',
+        'resolve-activity --components --user 0',
         'android17_start_smoke.py', '--expected-installed-apk-sha256',
         '--explicit-owner-approved-private-emulator',
         'PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS',
@@ -47,6 +54,12 @@ def verify_private_shell(value):
     for token in required:
         assert token in value, "private emulator safety preflight missing"
     assert 'sdkmanager --licenses' not in value, "no automatic new license acceptance"
+    assert "swiftshader_indirect" not in value, "obsolete emulator path"
+    assert "system-images;android-37;google_apis;x86_64" not in value, "unsupported image"
+    assert "launchable-activity:" not in value, "aapt launcher heuristic forbidden"
+    assert "echo 'y'" not in value and "yes |" not in value, "no license assent"
+    assert value.index("ip -6 route flush table main") < value.index('install -r --no-streaming "$APK"')
+    assert value.index('install -r --no-streaming "$APK"') < value.index("query-activities --components")
     assert 'upload-artifact' not in value, "private APK never uploaded publicly"
     assert 'gh release' not in value, "emulator does not publish"
     assert 'adb -d ' not in value, "physical device route forbidden"
@@ -92,6 +105,16 @@ class PrivateEmulatorWorkflowContract(unittest.TestCase):
         text = SHELL.read_text("utf-8")
         with self.assertRaises(AssertionError):
             verify_private_shell(text.replace('--expected-installed-apk-sha256', '--skip-sha'))
+
+    def test_private_clone_uses_installed_os_launcher_and_proven_sdk(self):
+        text = SHELL.read_text("utf-8")
+        for removed in ("clone_launcher_selection.py", "query-activities --components",
+                        "resolve-activity --components", "kvm_scope_restore",
+                        "select_android17_image.py", "swangle_indirect"):
+            with self.subTest(removed=removed), self.assertRaises(AssertionError):
+                verify_private_shell(text.replace(removed, "unsafe"))
+        with self.assertRaises(AssertionError):
+            verify_private_shell(text.replace("install -r --no-streaming", "install -r"))
 
     def test_probe_never_directly_exports_private_dj_activity(self):
         value = PROBE.read_text("utf-8")

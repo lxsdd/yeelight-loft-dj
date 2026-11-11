@@ -51,21 +51,58 @@ def _component(text):
     return text
 
 
-def _resumed(snapshot, component):
-    package, activity = component.split("/", 1)
-    # Android versions differ in the ActivityRecord prefix. Evaluate only the
-    # actual mResumed/topResumedActivity line; an unrelated mention is not proof.
+# Only global Android17 top-resumed ActivityRecords qualify real foreground.
+# A per-task mResumedActivity or historic ActivityRecord is not evidence.
+GLOBAL_TOP = re.compile(r"^\s*(?:topResumedActivity|ResumedActivity)\s*[:=]\s*(.*?)\s*$")
+TOP_COMPONENT = re.compile(
+    r"(?<![\w.])u0\s+([A-Za-z_][A-Za-z0-9_.]*)/"
+    r"((?:\.[A-Za-z_$]|[A-Za-z_$])[A-Za-z0-9_.$]*)(?=\s|})"
+)
+
+
+def _global_top(snapshot):
+    """Return fixed state and canonical component internally; never serialize OEM names."""
+    rows = []
     for line in _bounded(snapshot, "SMOKE_BAD_ACTIVITY_SNAPSHOT").splitlines():
-        if not re.search(r"(?:mResumedActivity|topResumedActivity|ResumedActivity)\s*[:=]", line):
+        match = GLOBAL_TOP.fullmatch(line)
+        if match is None:
             continue
-        if re.search(r"(?<![\w.])" + re.escape(package + "/" + activity) + r"(?![\w.$])", line):
-            return True
-        # Android may abbreviate the package on the Activity part: pkg/.Main
-        if activity.startswith(package + "."):
-            short = package + "/." + activity[len(package) + 1:]
-            if re.search(r"(?<![\w.])" + re.escape(short) + r"(?![\w.$])", line):
-                return True
-    return False
+        payload = match.group(1)
+        if not payload.startswith("ActivityRecord{") or not payload.endswith("}"):
+            return "UNPARSABLE", None
+        parts = TOP_COMPONENT.findall(payload)
+        if len(parts) != 1:
+            return "UNPARSABLE", None
+        package, cls = parts[0]
+        if cls.startswith("."):
+            cls = package + cls
+        rows.append((package, cls))
+    if not rows:
+        return "NO_GLOBAL_TOP", None
+    if len(set(rows)) != 1:
+        return "CONFLICTING_GLOBAL_TOP", None
+    package, cls = rows[0]
+    if package != PACKAGE:
+        return "FOREIGN_GLOBAL_TOP", None
+    return "CLONE_GLOBAL_TOP", cls
+
+
+def _resumed(snapshot, component):
+    """Strict exact native DJ foreground proof; no per-task stale-stack matches."""
+    package, activity = component.split("/", 1)
+    category, top = _global_top(snapshot)
+    return category == "CLONE_GLOBAL_TOP" and package == PACKAGE and top == activity
+
+
+def _classic_foreground(snapshot):
+    category, top = _global_top(snapshot)
+    if category != "CLONE_GLOBAL_TOP":
+        return False, category
+    if not top.startswith("com.yeelight."):
+        # A native DJ activity, random injected clone component or fallback
+        # launcher does not prove the ORIGINAL Classic screen.
+        return False, "NON_CLASSIC_TOP"
+    return True, "SAME_CLONE_ORIGINAL_ACTIVITY"
 
 
 def classify_crash(logcat, package=PACKAGE):
@@ -122,13 +159,19 @@ def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash
     if type(observed_ms) is not int or observed_ms < 2000 or observed_ms > 120000:
         raise SmokeBlocked("SMOKE_OBSERVATION_WINDOW_INVALID")
     expected_activity = re.search(r"^Activity:\s*(.+?)\s*$", launch_output, re.M)
+    resolved = expected_activity.group(1) if expected_activity is not None else ""
+    # A MAIN/LAUNCHER alias may start another OEM Activity inside the clone.
+    # Neither an arbitrary exported clone nor the DJ Activity is an OEM entry.
+    valid_component = (resolved == component or
+                       bool(re.fullmatch(re.escape(PACKAGE) +
+                                         r"/com\.yeelight\.[A-Za-z_$][A-Za-z0-9_.$]*",
+                                         resolved)))
     valid_am = (bool(re.search(r"^Status:\s*ok\s*$", launch_output, re.M))
-                and expected_activity is not None
-                and expected_activity.group(1) == component
+                and valid_component
                 and bool(re.search(r"^Complete\s*$", launch_output, re.M))
                 and not re.search(r"(?:^Error:|^Security exception:|^Warning: Activity not started)", launch_output, re.M))
     crash = classify_crash(crash_log)
-    resumed = _resumed(activity_snapshot, component)
+    resumed, resume_category = _classic_foreground(activity_snapshot)
     return {
         "status": ("BLOCKED_CRASH" if crash["target_crash"] else
                    "BLOCKED_UNATTRIBUTED_FATAL" if crash["unattributed_fatal"] else
@@ -137,6 +180,7 @@ def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash
                    "EMULATOR_ACTIVITY_RESUMED_OBSERVED"),
         "am_result_accepted": bool(valid_am),
         "resumed_activity_observed": bool(resumed),
+        "foreground_category": resume_category,
         "observed_window_ms": observed_ms,
         "crash": crash,
         "runtime": "PRIVATE_EMULATOR_WINDOW_ONLY",
@@ -225,6 +269,7 @@ def evaluate_navigation_window(*, component, activity_snapshot, crash_log, ui_du
         raise SmokeBlocked("SMOKE_OBSERVATION_WINDOW_INVALID")
     _bounded(activity_snapshot, "SMOKE_BAD_ACTIVITY_SNAPSHOT")
     crash = classify_crash(crash_log)
+    # Navigation MUST resume the exact native DJ class, not merely any clone.
     resumed = _resumed(activity_snapshot, component)
     ui = (classify_visible_ui(ui_dump, stage="native_dj")
           if resumed and not crash["target_crash"] and not crash["unattributed_fatal"]

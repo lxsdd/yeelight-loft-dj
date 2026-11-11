@@ -22,7 +22,7 @@ DJ_UI = ('<?xml version="1.0"?><hierarchy>'
          '<node text="Mikrofon starten" clickable="true"/>'
          '<node text="DJ stoppen" clickable="true"/>'
          '</hierarchy>')
-ACTIVITY = "mResumedActivity: ActivityRecord{123 %s}"
+ACTIVITY = "ResumedActivity: ActivityRecord{123 u0 %s t1}"
 
 
 class FakeADB:
@@ -163,6 +163,65 @@ class Android17StartupTest(unittest.TestCase):
                                         activity_snapshot="mResumedActivity: something irrelevant",
                                         crash_log="", observed_ms=3000)
         self.assertEqual(result["status"], "BLOCKED_ACTIVITY_NOT_RESUMED")
+
+    def test_real_original_classic_handoff_does_not_fail_native_entry(self):
+        # Launcher alias can forward into a different OEM class of the *same*
+        # clone package. This is proven on protected STOCK (original) run,
+        # but remains a synthetic test for the modified Classic candidate.
+        next_activity = PACKAGE + "/com.yeelight.cherry.AfterSplash"
+        result = evaluate_launch_window(
+            component=LAUNCHER,
+            launch_output="Status: ok\nActivity: " + next_activity + "\nComplete\n",
+            activity_snapshot=ACTIVITY % next_activity,
+            crash_log="", observed_ms=3000)
+        self.assertEqual(result["status"], "EMULATOR_ACTIVITY_RESUMED_OBSERVED")
+        self.assertEqual(result["foreground_category"], "SAME_CLONE_ORIGINAL_ACTIVITY")
+        self.assertTrue(result["resumed_activity_observed"])
+        self.assertFalse(result["app_functionally_accepted"])
+
+    def test_global_resumed_not_old_task_or_foreign_user(self):
+        bad_snapshots = (
+            "mResumedActivity: ActivityRecord{123 u0 " + LAUNCHER + " t1}",
+            "Hist #0: ActivityRecord{123 u0 " + LAUNCHER + " t1}",
+            "ResumedActivity: null",
+            "ResumedActivity: ActivityRecord{123 u10 " + LAUNCHER + " t1}",
+            "ResumedActivity: ActivityRecord{123 u0 com.other/.Main t1}",
+            "ResumedActivity: ActivityRecord{123 u0 " + DJ + " t1}",
+            "ResumedActivity: ActivityRecord{123 u0 " + LAUNCHER + " t1}\n" +
+                "topResumedActivity: ActivityRecord{124 u0 com.other/.Main t2}",
+            "",
+        )
+        for snapshot in bad_snapshots:
+            with self.subTest(snapshot=snapshot[:40]):
+                result = evaluate_launch_window(
+                    component=LAUNCHER,
+                    launch_output="Status: ok\nActivity: " + LAUNCHER + "\nComplete",
+                    activity_snapshot=snapshot, crash_log="", observed_ms=3000)
+                self.assertEqual(result["status"], "BLOCKED_ACTIVITY_NOT_RESUMED")
+                self.assertFalse(result["resumed_activity_observed"])
+
+    def test_native_dj_requires_exact_global_top_resumed(self):
+        for snapshot in (
+            ACTIVITY % LAUNCHER,
+            "mResumedActivity: ActivityRecord{123 u0 " + DJ + " t1}",
+            "ResumedActivity: ActivityRecord{123 u0 " + DJ + " t1}\n" +
+                "topResumedActivity: ActivityRecord{124 u0 " + LAUNCHER + " t2}",
+        ):
+            result = evaluate_navigation_window(
+                component=DJ, activity_snapshot=snapshot,
+                crash_log="", ui_dump=DJ_UI, observed_ms=3000)
+            self.assertEqual(result["status"], "BLOCKED_DJ_NOT_RESUMED")
+            self.assertFalse(result["resumed_activity_observed"])
+
+    def test_am_start_must_resolve_to_original_classic_not_dj_or_other(self):
+        for resolved in (DJ, PACKAGE + "/com.other.App", "com.other/.Main"):
+            result = evaluate_launch_window(
+                component=LAUNCHER,
+                launch_output="Status: ok\nActivity: " + resolved + "\nComplete",
+                activity_snapshot=ACTIVITY % LAUNCHER,
+                crash_log="", observed_ms=3000)
+            self.assertEqual(result["status"], "BLOCKED_START_RESULT")
+            self.assertFalse(result["am_result_accepted"])
 
     def test_unattributed_or_target_fatal_blocks_and_stays_sanitized(self):
         crash="FATAL EXCEPTION: main\nProcess: "+PACKAGE+", PID: 123\njava.lang.NoClassDefFoundError: secretVendorSymbol\nat ActivityThread.installContentProviders"

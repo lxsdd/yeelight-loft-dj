@@ -19,6 +19,7 @@ command -v avdmanager >/dev/null || fail
 command -v adb >/dev/null || fail
 AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
 [[ -x "$AAPT" ]] || fail
+source classic_source/private_ci/hosted_kvm_scope.sh
 WORK="$RUNNER_TEMP/classic-android17-emulator"
 [[ ! -e "$WORK" ]] || fail
 mkdir -m 700 "$WORK"
@@ -31,16 +32,31 @@ cleanup() {
     adb -s emulator-5554 emu kill >/dev/null 2>&1
     kill "$EMULATOR_PID" >/dev/null 2>&1
   fi
+  kvm_scope_restore
   rm -rf -- "$WORK"
 }
 trap cleanup EXIT
-# SDK license agreements must already be accepted by the configured environment.
-# No automatic license acceptance, third-party action, cache or APK upload.
-sdkmanager --install 'emulator' 'system-images;android-37;google_apis;x86_64' >"$WORK/sdk.log" 2>&1 || fail
-printf 'no\n' | avdmanager create avd --force -n classic-offline-api37 -k 'system-images;android-37;google_apis;x86_64' >"$WORK/avd.log" 2>&1 || fail
+# Reuse the already-proven protected Android17 emulator KVM and SDK gates.
+# No obsolete image, previews, PlayStore, new license consent, retries or fallback.
+kvm_scope_acquire || fail
+sdkmanager --list --channel=0 </dev/null >"$WORK/sdk-catalog.log" 2>&1 || fail
+IMAGE="$(python3 classic_source/private_ci/select_android17_image.py "$WORK/sdk-catalog.log")" || fail
+[[ "$IMAGE" == 'system-images;android-37.2;google_apis_ps16k;x86_64' ||
+   "$IMAGE" == 'system-images;android-37.1;google_apis_ps16k;x86_64' ]] || fail
+if sdkmanager --install 'emulator' "$IMAGE" --channel=0 \
+  </dev/null >"$WORK/sdk.log" 2>&1; then
+  :
+else
+  # Never automatically accept or interactively request new SDK licenses.
+  fail
+fi
+"$ANDROID_HOME/emulator/emulator" -accel-check >"$WORK/accel.log" 2>&1 || fail
+printf 'no\n' | avdmanager create avd --force -n classic-offline-api37 \
+  -k "$IMAGE" >"$WORK/avd.log" 2>&1 || fail
 "$ANDROID_HOME/emulator/emulator" -avd classic-offline-api37 -port 5554 \
   -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics \
-  -memory 4096 -gpu swiftshader_indirect >"$WORK/emulator.log" 2>&1 &
+  -memory 4096 -accel on -gpu swangle_indirect -feature -Vulkan \
+  >"$WORK/emulator.log" 2>&1 &
 EMULATOR_PID=$!
 READY=0
 for _ in $(seq 1 150); do
@@ -64,21 +80,26 @@ adb -s emulator-5554 shell ip -6 route flush table main >/dev/null || fail
 # Do not print badging: it contains private original component names.
 BADGING="$WORK/badging.txt"
 "$AAPT" dump badging "$APK" >"$BADGING" 2>"$WORK/aapt.log" || fail
-LAUNCHER="$(python3 - "$BADGING" <<'PY'
-import re,sys
-s=open(sys.argv[1],encoding='utf-8').read()
-a=re.findall(r"(?m)^launchable-activity: name='([^']+)'",s)
-p=re.findall(r"(?m)^package: name='([^']+)'",s)
-if p!=['io.lxsdd.yeelightdj'] or len(a)!=1 or not re.fullmatch(r'com\.yeelight\.[A-Za-z0-9_.$]+',a[0]):
-    sys.exit(2)
-print(a[0])
-PY
-)" || fail
+# Do not rely on aapt launchable-activity; verified Classic itself needed the
+# installed PackageManager's MAIN/LAUNCHER alias resolution.
+python3 classic_source/private_ci/clone_launcher_selection.py --preinstall \
+  --badging "$BADGING" || fail
 PIN="$(sha256sum "$APK" | cut -d' ' -f1)"
 [[ "$PIN" =~ ^[a-f0-9]{64}$ ]] || fail
 # Installed APK is confined to the disposable emulator and verified AGAINST PIN
 # using the on-device hash before launching any OEM code.
-adb -s emulator-5554 install -r "$APK" >"$WORK/install.log" 2>&1 || fail
+adb -s emulator-5554 install -r --no-streaming "$APK" >"$WORK/install.log" 2>&1 || fail
+# The installed OS, not an aapt heuristic, selects the original Classic entry.
+# Raw component strings remain in the ephemeral protected runner directory.
+adb -s emulator-5554 shell cmd package query-activities --components --user 0 \
+  -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
+  -p io.lxsdd.yeelightdj >"$WORK/query.log" 2>&1 || fail
+adb -s emulator-5554 shell cmd package resolve-activity --components --user 0 \
+  -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
+  -p io.lxsdd.yeelightdj >"$WORK/resolved.log" 2>&1 || fail
+LAUNCHER="$(python3 classic_source/private_ci/clone_launcher_selection.py --installed \
+  --badging "$BADGING" --query "$WORK/query.log" \
+  --resolved "$WORK/resolved.log")" || fail
 python3 classic_source/private_ci/android17_start_smoke.py \
  --serial emulator-5554 \
  --launcher-component "io.lxsdd.yeelightdj/$LAUNCHER" \

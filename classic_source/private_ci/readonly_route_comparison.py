@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from private_ci.readonly_vault_compare import diagnose as diagnose_baseline, MAX_RECEIPT
 from manifest_route_provenance import inspect_original_routes
 from embedded_code_inventory import inspect_pinned_embedded
+from dex_invoke_provenance import inspect_original_invokes
 
 EXPORTED = ("explicit_true", "explicit_false", "inherited", "unresolved_resource")
 LIBRARY = ("required_true", "required_false", "inherited", "unresolved_resource")
@@ -144,12 +145,80 @@ def guarded_embedded(embedded, baseline):
     }
 
 
+
+# Only these aggregate counts are permitted in public runner logs.
+INVOKE_UNIQUE = (
+    "activity_type_ids_count", "parent_type_ids_count",
+    "activity_method_id_owners_count", "parent_method_id_owners_count",
+    "activity_field_id_owners_count", "parent_field_id_owners_count",
+    "activity_invoke_targets_count", "parent_invoke_targets_count",
+    "activity_type_instruction_targets_count", "parent_type_instruction_targets_count",
+    "activity_field_access_owners_count", "parent_field_access_owners_count",
+)
+
+
+def guarded_invokes(raw, baseline, context):
+    """Class/method-use evidence is NOT dynamic reachability or a waiver."""
+    need(type(raw) is dict and type(baseline) is dict and type(context) is dict
+         and raw.get("dex_invoke_inventory_complete") is True
+         and raw.get("dynamic_and_reflective_reachability_proven") is False
+         and raw.get("absent_callsites_prove_dead_code") is False
+         and raw.get("actual_classloader_verified") is False
+         and raw.get("missing_classes_waived") == 0)
+    totals = {key: number(raw, key) for key in INVOKE_UNIQUE}
+    activity = number(baseline, "original_missing_activities")
+    parents = number(context, "unresolved_parent_distinct_types")
+    owners = number(context, "unresolved_owner_distinct_types")
+    for label, value in totals.items():
+        need(value <= (parents if label.startswith("parent_") else activity))
+    for suffix in ("method_id_owners", "field_id_owners",
+                   "invoke_targets", "type_instruction_targets",
+                   "field_access_owners"):
+        need(totals["activity_" + suffix + "_count"] <=
+             totals["activity_type_ids_count"] and
+             totals["parent_" + suffix + "_count"] <=
+             totals["parent_type_ids_count"])
+    need(totals["parent_type_ids_count"] == parents and
+         totals["activity_invoke_targets_count"] <=
+             totals["activity_method_id_owners_count"] and
+         totals["parent_invoke_targets_count"] <=
+             totals["parent_method_id_owners_count"] and
+         totals["activity_field_access_owners_count"] <=
+             totals["activity_field_id_owners_count"] and
+         totals["parent_field_access_owners_count"] <=
+             totals["parent_field_id_owners_count"])
+    reached = number(raw, "unresolved_parent_gap_owner_manifest_call_reached_count")
+    methods = number(raw, "code_items_scanned")
+    units = raw.get("instructions_scanned")
+    need(type(units) is int and methods > 0 and methods <= units <= 8000000 and
+         reached <= owners)
+    sites = {key: number(raw, key) for key in (
+        "dynamic_invoke_sites", "missing_activity_invoke_sites",
+        "missing_parent_invoke_sites")}
+    need(sum(sites.values()) <= units and
+         (sites["missing_activity_invoke_sites"] == 0 or
+          totals["activity_invoke_targets_count"] > 0) and
+         (sites["missing_parent_invoke_sites"] == 0 or
+          totals["parent_invoke_targets_count"] > 0))
+    return {
+        "dex_invocation_and_type_inventory": dict(
+            totals, unresolved_parent_gap_owner_manifest_call_reached_count=reached,
+            code_items_scanned=methods, instructions_scanned=units, **sites),
+        "dex_invoke_inventory_complete": True,
+        "direct_call_graph_is_runtime_reachability_proof": False,
+        "absence_of_static_references_proves_dead_component": False,
+        "dynamic_reflective_resolution_verified": False,
+        "dex_evidence_classloader_verified": False,
+        "dex_evidence_missing_class_waivers": 0,
+    }
+
 def diagnose(original_path, receipt):
     # SHA and original-APK structural checks are mandatory BEFORE this extra pass.
     original = diagnose_baseline(original_path, receipt)
     context = guarded_context(inspect_original_routes(original_path), original)
     embedded = guarded_embedded(inspect_pinned_embedded(original_path), original)
-    return dict(original, **context, **embedded)
+    invoked = guarded_invokes(inspect_original_invokes(original_path), original, context)
+    return dict(original, **context, **embedded, **invoked)
 
 
 def main():
