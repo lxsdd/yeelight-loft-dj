@@ -35,7 +35,7 @@ def verify_workflow(text):
     assert "rm -rf -- \"$RUNNER_TEMP/classic-original\"" in steps[-1]["run"]
     for token in ("python3 github_hosted/policy.py", "bash github_hosted/vault.sh fetch",
                   "secrets.CLASSIC_VAULT_TOKEN", "secrets.CLASSIC_PIXEL6A_READONLY_RECEIPT",
-                  "python3 classic_source/private_ci/readonly_vault_compare.py",
+                  "python3 classic_source/private_ci/readonly_route_comparison.py",
                   "printf '%s'", "set +x"):
         assert token in text
     for forbidden in ("build_private_unsigned", "private_test_sign", "upload-artifact@",
@@ -50,6 +50,16 @@ def verify_workflow(text):
 class ReadonlyWorkflowContract(unittest.TestCase):
     def test_workflow_exact_allowlist_and_zero_write(self):
         verify_workflow(SOURCE.read_text("utf-8"))
+        # The extended diagnostic must still call the original pinned receipt/
+        # Classpath gate; it never replaces the independent private-APK pin.
+        scripts = ROOT / "classic_source/private_ci"
+        new = (scripts / "readonly_route_comparison.py").read_text("utf-8")
+        old = (scripts / "readonly_vault_compare.py").read_text("utf-8")
+        self.assertIn("from private_ci.readonly_vault_compare import diagnose as diagnose_baseline", new)
+        self.assertIn("inspect_original_routes(original_path)", new)
+        self.assertIn("fingerprint(original_path, ORIGINAL_SHA256)", old)
+        self.assertIn('"manifest_context_proves_classloader": False', new)
+
 
     def test_fail_on_owner_scope_or_environment_changes(self):
         good = SOURCE.read_text("utf-8")
