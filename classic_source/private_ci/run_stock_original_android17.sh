@@ -126,22 +126,22 @@ adb -s emulator-5554 shell ip -4 route flush table main >/dev/null 2>&1 || fail 
 adb -s emulator-5554 shell ip -6 route flush table main >/dev/null 2>&1 || fail NETWORK_ISOLATION_FAILED
 # AAPT data remain only in restricted ephemeral files; no OEM names leave logs.
 "$AAPT" dump badging "$APK" >"$ROOT/badging.txt" 2>"$ROOT/aapt.log" || fail OEM_BADGING_FAILED
-LAUNCHER="$(python3 - "$ROOT/badging.txt" <<'PY'
-import re
-import sys
-from pathlib import Path
-s=Path(sys.argv[1]).read_text('utf-8')
-package=re.findall(r"(?m)^package: name='([^']+)'", s)
-activity=re.findall(r"(?m)^launchable-activity: name='([^']+)'", s)
-if package != ["com.yeelight.cherry"] or len(activity) != 1:
-    sys.exit(2)
-if re.fullmatch(r"com\.yeelight\.[A-Za-z0-9_.$]+", activity[0]) is None:
-    sys.exit(2)
-print(activity[0])
-PY
-)" || fail LAUNCHER_DISCOVERY_FAILED
-# Install unchanged OEM-signed stock archive into disposable guest ONLY.
+# aapt confirms the exact signed original package, not the launch activity.
+python3 classic_source/private_ci/stock_launcher_selection.py --preinstall \
+  --badging "$ROOT/badging.txt" || fail LAUNCHER_DISCOVERY_FAILED
+# Install unchanged OEM-signed archive only after complete guest network isolation.
 adb -s emulator-5554 install -r --no-streaming "$APK" >"$ROOT/install.log" 2>&1 || fail OEM_INSTALL_FAILED
+# The installed OS, not aapt heuristics, resolves aliases and MAIN/LAUNCHER.
+# All raw class/package names remain inside ephemeral protected files.
+adb -s emulator-5554 shell cmd package query-activities --components --user 0 \
+  -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
+  -p com.yeelight.cherry >"$ROOT/launcher-query.log" 2>&1 || fail LAUNCHER_DISCOVERY_FAILED
+adb -s emulator-5554 shell cmd package resolve-activity --components --user 0 \
+  -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
+  -p com.yeelight.cherry >"$ROOT/launcher-resolved.log" 2>&1 || fail LAUNCHER_DISCOVERY_FAILED
+LAUNCHER="$(python3 classic_source/private_ci/stock_launcher_selection.py --installed \
+  --badging "$ROOT/badging.txt" --query "$ROOT/launcher-query.log" \
+  --resolved "$ROOT/launcher-resolved.log")" || fail LAUNCHER_DISCOVERY_FAILED
 PIN="$(sha256sum "$APK" | cut -d' ' -f1)"
 [[ "$PIN" =~ ^[a-f0-9]{64}$ ]] || fail ORIGINAL_PIN_UNVERIFIED
 python3 classic_source/private_ci/stock_original_emulator_probe.py \
