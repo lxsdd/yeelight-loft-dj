@@ -18,6 +18,7 @@ from pathlib import Path
 # sys.path[0] points at private_ci/. Unit-test imports used to mask this.
 # Resolve only the adjacent product source to load its pinned OEM hash policy.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from private_ci.stock_activity_evidence import inspect_top_resumed
 
 PACKAGE = "com.yeelight.cherry"
 SERIAL = "emulator-5554"
@@ -119,15 +120,7 @@ def categorize_crash(raw):
 def launched(snapshot, activity):
     need(type(snapshot) is str and len(snapshot) <= MAX_OUTPUT,
          "STOCK_ACTIVITY_SNAPSHOT_UNVERIFIED")
-    full = PACKAGE + "/" + activity
-    short = PACKAGE + "/." + activity[len(PACKAGE) + 1:] if activity.startswith(PACKAGE + ".") else None
-    for line in snapshot.splitlines():
-        if not re.search(r"(?:mResumedActivity|topResumedActivity|ResumedActivity)\s*[:=]", line):
-            continue
-        if any(re.search(r"(?<![\w.])" + re.escape(name) + r"(?![\w.$])", line)
-               for name in (full, short) if name):
-            return True
-    return False
+    return inspect_top_resumed(snapshot, activity)["exact_launcher_top_resumed"]
 
 
 def probe(*, serial, launcher, pinned_sha256, owner_approved=False,
@@ -161,8 +154,11 @@ def probe(*, serial, launcher, pinned_sha256, owner_approved=False,
     crash = categorize_crash(adb(["logcat", "-b", "crash", "-d"], serial))
     pid = adb(["shell", "pidof", PACKAGE], serial).strip()
     running = bool(re.fullmatch(r"[0-9]+(?:\s+[0-9]+)*", pid))
-    visible = launched(current, launcher)
-    safe = observed and running and visible and not crash["target_crash"] and not crash["unattributed_fatal"]
+    activity = inspect_top_resumed(current, launcher)
+    # A running process does not qualify: require the globally top-resumed
+    # original package, including a genuine alias target / app-internal handoff.
+    resumed = activity["same_package_top_resumed"]
+    safe = observed and running and resumed and not crash["target_crash"] and not crash["unattributed_fatal"]
     return {
         "status": "STOCK_ORIGINAL_OFFLINE_LAUNCH_OBSERVED" if safe else
                   "STOCK_ORIGINAL_OFFLINE_LAUNCH_UNVERIFIED",
@@ -171,7 +167,9 @@ def probe(*, serial, launcher, pinned_sha256, owner_approved=False,
         "android_17_disposable_emulator_observed": True,
         "offline_before_and_after_launch": True,
         "stock_process_running": running,
-        "stock_launcher_resumed": visible,
+        "stock_launcher_resumed": activity["exact_launcher_top_resumed"],
+        "stock_app_top_resumed": resumed,
+        "stock_resume_category": activity["category"],
         "crash_summary": crash,
         "stock_launch_verified": bool(safe),
         "loft_dj_clone_built": False,

@@ -35,7 +35,7 @@ class FakeADB:
             ("shell", "am", "start", "-W", "-n", m.PACKAGE + "/" + LAUNCHER):
                 "Status: ok\nActivity: " + m.PACKAGE + "/" + LAUNCHER,
             ("shell", "dumpsys", "activity", "activities"):
-                "topResumedActivity: ActivityRecord{77 " + m.PACKAGE + "/" + LAUNCHER + "}",
+                "topResumedActivity: ActivityRecord{77 u0 " + m.PACKAGE + "/" + LAUNCHER + " t1}",
             ("logcat", "-b", "crash", "-d"): "",
             ("shell", "pidof", m.PACKAGE): "1234",
         }
@@ -136,6 +136,62 @@ class OriginalStockEmulatorTests(unittest.TestCase):
             a.overrides[key] = value
             with self.subTest(key=key):
                 self.assertFalse(a.run()["stock_launch_verified"])
+
+    def test_alias_target_is_original_package_top_resumed(self):
+        a = FakeADB()
+        a.overrides[("shell", "dumpsys", "activity", "activities")] = (
+            " ResumedActivity: ActivityRecord{55 u0 com.yeelight.cherry/.AfterAlias t3}")
+        result = a.run()
+        self.assertTrue(result["stock_launch_verified"])
+        self.assertFalse(result["stock_launcher_resumed"])
+        self.assertTrue(result["stock_app_top_resumed"])
+        self.assertEqual(result["stock_resume_category"], "SAME_PACKAGE_OTHER_ACTIVITY")
+        self.assertFalse(result["loft_dj_clone_tested"])
+
+    def test_global_top_record_not_old_stack_or_just_process(self):
+        outputs = (
+            ("mResumedActivity: ActivityRecord{55 u0 com.yeelight.cherry/.Behind t3}",
+             "NO_GLOBAL_RESUMED_RECORD"),
+            ("Hist #0: ActivityRecord{55 u0 com.yeelight.cherry/.Behind t3}",
+             "NO_GLOBAL_RESUMED_RECORD"),
+            ("ResumedActivity: ActivityRecord{55 u0 com.other.app/.Top t3}",
+             "FOREGROUND_OTHER_PACKAGE"),
+            ("ResumedActivity: null", "GLOBAL_RESUMED_UNPARSABLE"),
+            ("ResumedActivity: ActivityRecord{55 u10 com.yeelight.cherry/.Home t3}",
+             "GLOBAL_RESUMED_UNPARSABLE"),
+            ("ResumedActivity: ActivityRecord{55 u0 com.yeelight.cherry/.Home t3}\n"
+             " topResumedActivity=ActivityRecord{77 u0 com.other.app/.Top t4}",
+             "GLOBAL_RESUMED_CONFLICT"),
+            ("ResumedActivity: ActivityRecord{55 u0 com.yeelight.cherry/.Home t3}\n"
+             " topResumedActivity=ActivityRecord{77 u0 com.yeelight.cherry/.Home t4}",
+             "SAME_PACKAGE_OTHER_ACTIVITY"),
+        )
+        for raw, reason in outputs:
+            a = FakeADB()
+            a.overrides[("shell", "dumpsys", "activity", "activities")] = raw
+            result = a.run()
+            with self.subTest(reason=reason):
+                self.assertEqual(result["stock_resume_category"], reason)
+                self.assertEqual(result["stock_launch_verified"],
+                                 reason == "SAME_PACKAGE_OTHER_ACTIVITY")
+
+    def test_global_resume_does_not_emit_private_activity_names(self):
+        raw = (" ResumedActivity: ActivityRecord{a u0 "
+               "com.yeelight.cherry/com.yeelight.cherry.PrivateOEMActivity t9}")
+        result = m.inspect_top_resumed(raw, LAUNCHER)
+        self.assertEqual(result["category"], "SAME_PACKAGE_OTHER_ACTIVITY")
+        self.assertNotIn("PrivateOEMActivity", json.dumps(result))
+        self.assertFalse(m.launched(raw, LAUNCHER))
+
+    def test_global_resume_never_proves_other_components_or_ui_visuals(self):
+        a = FakeADB()
+        a.overrides[("shell", "dumpsys", "activity", "activities")] = (
+            " ResumedActivity: ActivityRecord{55 u0 com.yeelight.cherry/.Next t4}")
+        value = a.run()
+        for key in ("loft_dj_clone_built", "loft_dj_clone_tested",
+                    "all_oem_classes_linkable_proven", "physical_device_tested"):
+            self.assertFalse(value[key])
+        self.assertNotIn("PrivateOEMActivity", json.dumps(value))
 
     def test_launch_line_alone_is_not_resumed_ui_proof(self):
         self.assertFalse(m.launched("Activity: " + m.PACKAGE + "/" + LAUNCHER, LAUNCHER))
