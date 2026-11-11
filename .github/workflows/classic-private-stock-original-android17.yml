@@ -31,8 +31,11 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Android SDK
+      - name: Android SDK without automatic license acceptance
         uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: 'no'
+          log-accepted-android-sdk-licenses: 'false'
       - name: Download pinned OEM-signed original into ephemeral private directory
         env:
           GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}

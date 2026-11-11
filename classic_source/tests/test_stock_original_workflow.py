@@ -37,6 +37,10 @@ def verify_workflow(text):
         "actions/checkout@v7", "actions/setup-python@v6",
         "android-actions/setup-android@v4"]
     assert steps[0]["with"]["persist-credentials"] is False
+    # The third-party SDK action otherwise accepts SDK contracts by default.
+    # An owner-approved emulator test is NOT a new contractual assent.
+    assert steps[3]["with"]["accept-android-sdk-licenses"] == "no"
+    assert steps[3]["with"]["log-accepted-android-sdk-licenses"] == "false"
     assert steps[-1]["if"] == "always()"
     commands="\n".join(s.get("run","") for s in steps)
     assert commands.index("github_hosted/policy.py") < commands.index("vault.sh fetch")
@@ -55,7 +59,13 @@ def verify_shell(text):
         'GITHUB_ACTOR:-', 'GITHUB_REF:-', 'GITHUB_REPOSITORY:-',
         'GITHUB_EVENT_NAME:-', 'RUNNER_ENVIRONMENT:-',
         '-z "${GH_TOKEN:-}"', '-z "${CLASSIC_VAULT_TOKEN:-}"',
-        'sdkmanager --install', "'system-images;android-37;google_apis;x86_64'",
+        'sdkmanager --list --channel=0',
+        'select_android17_image.py',
+        "'system-images;android-37.2;google_apis_ps16k;x86_64'",
+        "'system-images;android-37.1;google_apis_ps16k;x86_64'",
+        'sdkmanager --install', '"$SYSTEM_IMAGE"',
+        '</dev/null', 'SDK_IMAGE_NOT_LISTED',
+        'SDK_LICENSE_NOT_PREAUTHORIZED',
         'inspect_original(Path(sys.argv[1]))', '"$APKSIGNER" verify',
         'adb -s emulator-5554 root', 'settings put global airplane_mode_on 1',
         'ip -4 route flush table main', 'ip -6 route flush table main',
@@ -89,6 +99,7 @@ class StockWorkflowContract(unittest.TestCase):
             ("name: classic-private-build", "name: public"),
             ("if: always()", "if: success()"),
             ("persist-credentials: false", "persist-credentials: true"),
+            ("accept-android-sdk-licenses: 'no'", "accept-android-sdk-licenses: 'yes'"),
         ):
             with self.subTest(old=old),self.assertRaises(AssertionError):
                 verify_workflow(text.replace(old,new))
