@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sourced by owner-protected/public disposable hosted emulator runners ONLY.
 # Dedicated ephemeral GitHub host: give *this job user only* KVM access and
-# restore original ownership/mode in EXIT cleanup. No global 0666 rule, no
+# restore original ownership/mode in EXIT cleanup. Never make KVM globally writable; no
 # persistent udev rules, no physical phone, bulb, LAN or user data.
 KVM_SCOPE_CHANGED=0
 KVM_SCOPE_OLD_OWNER=''
