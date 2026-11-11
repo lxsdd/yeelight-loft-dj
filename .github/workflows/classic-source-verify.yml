@@ -38,4 +38,10 @@ jobs:
           (cd classic_source && python3 -m unittest discover -s tests -q)
           (cd classic_source/checkpoint && python3 -m unittest discover -s tests -q)
           bash -n github_hosted/vault.sh
+      # Exercise the exact hosted SDK *read-only* prerequisite without OEM
+      # secrets, license acceptance, emulator installation or Android devices.
+      # This catches missing/renamed SDK images before owner-only dispatch.
+      - name: Preflight Android17 SDK catalog without OEM APK or installs
+        timeout-minutes: 4
+        run: bash classic_source/private_ci/hosted_sdk_catalog_preflight.sh --catalog
       # There is deliberately no upload-artifact, release, cache or APK build.

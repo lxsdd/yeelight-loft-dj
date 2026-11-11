@@ -27,6 +27,11 @@ STOCK_STARTUP_UNVERIFIED) code="$1" ;;
 APK="$(realpath -e -- "$1")"
 [[ "$APK" == "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk" ]] || fail
 [[ -s "$APK" ]] || fail
+# GitHub Ubuntu already ships a CLI SDK. The third-party setup-android
+# action is intentionally absent: no hidden package/license installation.
+[[ -d "$ANDROID_HOME/cmdline-tools/latest/bin" &&
+   -d "$ANDROID_HOME/platform-tools" ]] || fail TOOLCHAIN_UNAVAILABLE
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 for tool in sdkmanager avdmanager adb python3; do command -v "$tool" >/dev/null || fail TOOLCHAIN_UNAVAILABLE; done
 ROOT="$RUNNER_TEMP/classic-stock-emulator"
 [[ ! -e "$ROOT" ]] || fail
