@@ -14,7 +14,7 @@ MAX_ITEMS = 5000
 MAX_NESTED_ITEMS = 1200
 MAX_CODE_SIZE = 32 * 1024 * 1024
 MAX_ARCHIVE_SIZE = 32 * 1024 * 1024
-PRIMARY = re.compile(r"classes(?:[2-9][0-9]*)?\.dex\Z")
+PRIMARY = re.compile(r"classes(?:[2-9]|[1-9][0-9]+)\.dex\Z")
 
 
 class EmbeddedInventoryBlocked(ValueError):

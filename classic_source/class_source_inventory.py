@@ -16,7 +16,7 @@ MAX_DEX_BYTES = 48 * 1024 * 1024
 MAX_DEX_TOTAL_BYTES = 128 * 1024 * 1024
 MAX_DEX_FILES = 24
 PIN_RE = re.compile(r"[0-9a-f]{64}\Z")
-DEX_RE = re.compile(r"classes(?:[2-9][0-9]*)?\.dex\Z")
+DEX_RE = re.compile(r"classes(?:[2-9]|[1-9][0-9]+)\.dex\Z")
 
 
 class SourceInventoryError(ValueError):

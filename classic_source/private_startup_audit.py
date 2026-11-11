@@ -12,7 +12,7 @@ from classic_first import inspect_original, GateFailure
 from dex_authority_remap import assert_self_consistent_dex, DexRemapError
 from bridge.build_bridge import dex_descriptors, ToolError
 from activity_provenance import (index_activity_metadata, summarize_missing_activities, ProvenanceError)
-from class_source_inventory import classify_pinned_sources, SourceInventoryError
+from class_source_inventory import classify_pinned_sources, SourceInventoryError, DEX_RE
 from activity_provenance import (validate_diagnostic_report, ClasspathProvenanceError)
 
 OLD="com.yeelight.cherry"
@@ -123,7 +123,9 @@ def inspect_apk(path):
     with ZipFile(path) as z:
         names=z.namelist()
         require(len(names)==len(set(names)),"APK_DUPLICATE_ENTRY")
-        files=sorted(n for n in names if re.fullmatch(r"classes(?:[2-9][0-9]*)?\.dex",n))
+        require(not any(re.fullmatch(r"classes\d+\.dex", n) and not DEX_RE.fullmatch(n)
+                        for n in names), "APK_DEX_NAME_INVALID")
+        files=sorted(n for n in names if DEX_RE.fullmatch(n))
         require("classes.dex" in files,"PRIMARY_DEX_ABSENT")
         parsed=parse_binary_xml(z.read("AndroidManifest.xml"))
         defs={}
