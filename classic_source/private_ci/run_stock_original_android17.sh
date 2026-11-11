@@ -7,7 +7,8 @@ umask 077
 fail() {
   # The private runner emits only these fixed, source-reviewed stage names.
   case "${1:-}" in
-    TOOLCHAIN_UNAVAILABLE|SDK_PACKAGE_INSTALL_FAILED|SIGNATURE_TOOL_UNAVAILABLE|\
+    TOOLCHAIN_UNAVAILABLE|SDK_PACKAGE_INSTALL_FAILED|SDK_PACKAGE_CATALOG_FAILED|\
+SDK_IMAGE_NOT_LISTED|SDK_LICENSE_NOT_PREAUTHORIZED|SIGNATURE_TOOL_UNAVAILABLE|\
 ORIGINAL_PIN_UNVERIFIED|STOCK_SIGNATURE_INVALID|AVD_SETUP_FAILED|\
 EMULATOR_BOOT_FAILED|EMULATOR_ROOT_FAILED|NETWORK_ISOLATION_FAILED|\
 OEM_BADGING_FAILED|LAUNCHER_DISCOVERY_FAILED|OEM_INSTALL_FAILED|\
@@ -42,9 +43,26 @@ cleanup() {
   rm -rf -- "$ROOT"
 }
 trap cleanup EXIT
-# This script never accepts licenses. Missing SDK packages cause a closed fail.
-sdkmanager --install 'emulator' 'system-images;android-37;google_apis;x86_64' \
-  'build-tools;36.0.0' >"$ROOT/sdk.log" 2>&1 || fail SDK_PACKAGE_INSTALL_FAILED
+# Read the stable SDK package catalog first. The obsolete unversioned
+# "android-37;google_apis" image was NOT downloadable (run 43021597830).
+# Never select unknown/preview/PlayStore/non-root images or alter licensing.
+sdkmanager --list --channel=0 >"$ROOT/sdk-catalog.log" 2>&1 || fail SDK_PACKAGE_CATALOG_FAILED
+SYSTEM_IMAGE="$(python3 classic_source/private_ci/select_android17_image.py \
+  "$ROOT/sdk-catalog.log")" || fail SDK_IMAGE_NOT_LISTED
+[[ "$SYSTEM_IMAGE" == 'system-images;android-37.2;google_apis_ps16k;x86_64' ||
+   "$SYSTEM_IMAGE" == 'system-images;android-37.1;google_apis_ps16k;x86_64' ]] || fail SDK_IMAGE_NOT_LISTED
+
+# This workflow never accepts new SDK contracts on the owner's behalf.
+# A missing preaccepted license fails closed; no interactive 'yes' or retry.
+if sdkmanager --install 'emulator' "$SYSTEM_IMAGE" 'build-tools;36.0.0' \
+  --channel=0 </dev/null >"$ROOT/sdk.log" 2>&1; then
+  :
+else
+  if grep -Eiq 'licenses? (have )?not been accepted|licenses? not accepted|not accepted.*licenses?' "$ROOT/sdk.log"; then
+    fail SDK_LICENSE_NOT_PREAUTHORIZED
+  fi
+  fail SDK_PACKAGE_INSTALL_FAILED
+fi
 AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
 APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
 [[ -x "$AAPT" && -x "$APKSIGNER" ]] || fail SIGNATURE_TOOL_UNAVAILABLE
@@ -58,7 +76,7 @@ inspect_original(Path(sys.argv[1]))
 PY
 "$APKSIGNER" verify "$APK" >"$ROOT/signature.log" 2>&1 || fail STOCK_SIGNATURE_INVALID
 printf 'no\n' | avdmanager create avd --force -n classic-stock-offline-37 \
-  -k 'system-images;android-37;google_apis;x86_64' >"$ROOT/avd.log" 2>&1 || fail AVD_SETUP_FAILED
+  -k "$SYSTEM_IMAGE" >"$ROOT/avd.log" 2>&1 || fail AVD_SETUP_FAILED
 "$ANDROID_HOME/emulator/emulator" -avd classic-stock-offline-37 -port 5554 \
   -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics \
   -memory 4096 -gpu swiftshader_indirect >"$ROOT/emulator.log" 2>&1 &
