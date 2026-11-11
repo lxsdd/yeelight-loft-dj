@@ -53,7 +53,7 @@ class HostedCatalogPreflight(unittest.TestCase):
             self.assertEqual(outcome.stdout.strip(), "ANDROID17_PUBLIC_STABLE_CATALOG_PASS")
             self.assertNotIn(APPROVED, outcome.stdout + outcome.stderr)
             self.assertFalse(list(root.glob("classic-readonly-sdk.*")))
-            self.assertEqual(len(list(home.rglob("*"))), 7)
+            self.assertEqual(len(list(home.rglob("*"))), 8)
 
     def test_unlisted_package_fails_early_and_cleanly(self):
         with tempfile.TemporaryDirectory() as dirname:
