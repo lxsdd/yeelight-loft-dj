@@ -51,7 +51,7 @@ jobs:
             exit 2
           fi
           printf '%s' "$CLASSIC_PIXEL6A_READONLY_RECEIPT" | \
-            python3 classic_source/private_ci/readonly_vault_compare.py \
+            python3 classic_source/private_ci/readonly_route_comparison.py \
               --original "$RUNNER_TEMP/classic-original/com.yeelight.cherry_3.5.4.apk"
       - name: Remove ephemeral private input on all outcomes
         if: always()
