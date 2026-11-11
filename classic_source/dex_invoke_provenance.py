@@ -133,7 +133,10 @@ def instructions(buf, offset, size):
 def scan_dex(raw, missing_activities, missing_parents, definitions):
     """Validate all indices and scan actual code_item bodies for typed operands."""
     from private_startup_audit import dex_index
-    dex_index(raw)  # existing second-reader, DEX SHA1 and Adler32 integrity gate
+    try:
+        dex_index(raw)  # second-reader, DEX SHA1 and Adler32 integrity gate
+    except Exception:
+        raise InvokeProvenanceBlocked("PRIVATE_DEX_INVOKE_PROVENANCE_UNVERIFIED") from None
     types = dex_types(raw)
     fields, fo = section(raw, 80, 84, 8)
     methods, mo = section(raw, 88, 92, 8)
