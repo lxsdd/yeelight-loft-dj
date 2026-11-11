@@ -11,7 +11,7 @@ fail() {
     INVALID_CONTEXT|HOST_SDK_UNAVAILABLE|HOST_KVM_DEVICE_MISSING|\
     HOST_KVM_ACCESS_UNAVAILABLE|SDK_CATALOG_FAILED|SDK_IMAGE_UNLISTED|SDK_LICENSE_NOT_PREAUTHORIZED|\
     SDK_INSTALL_FAILED|AVD_CREATION_FAILED|EMULATOR_EXEC_UNAVAILABLE|\
-    EMULATOR_ACCELERATION_FAILED|EMULATOR_BOOT_FAILED) code="$1";;
+    EMULATOR_ACCELERATION_FAILED|EMULATOR_BOOT_FAILED|ACTIVITY_SNAPSHOT_FAILED|ACTIVITY_RESUME_UNVERIFIED) code="$1";;
     *) code="INTERNAL_ERROR";;
   esac
   printf 'ANDROID17_PUBLIC_EMULATOR_BLOCKED_%s\n' "$code" >&2
@@ -102,4 +102,23 @@ done
   boot_failed
 [[ "$("$PLAT/adb" -s emulator-5554 shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')" == "37" ]] ||
   boot_failed
+# Exercise the real Android17 *global* resumed-record grammar with NO OEM.
+# Dump remains in a private runner temp file; only an enum reaches CI output.
+"$PLAT/adb" -s emulator-5554 shell dumpsys activity activities \
+  >"$ROOT/activity-snapshot.txt" 2>&1 || fail ACTIVITY_SNAPSHOT_FAILED
+python3 - "$ROOT/activity-snapshot.txt" <<'PY' || fail ACTIVITY_RESUME_UNVERIFIED
+from pathlib import Path
+import sys
+sys.path.insert(0, "classic_source/private_ci")
+from stock_activity_evidence import inspect_top_resumed
+try:
+    snapshot = Path(sys.argv[1]).read_text("utf-8")
+    state = inspect_top_resumed(snapshot, "com.yeelight.cherry.SyntheticOnly")
+    if state["category"] != "FOREGROUND_OTHER_PACKAGE":
+        raise ValueError("fail closed")
+except Exception:
+    sys.exit(2)
+PY
+printf '%s\n' ANDROID17_PUBLIC_GLOBAL_RESUME_GRAMMAR_PROVEN_NO_OEM
+
 printf '%s\n' ANDROID17_PUBLIC_EMULATOR_COLD_BOOT_PROVEN_NO_OEM

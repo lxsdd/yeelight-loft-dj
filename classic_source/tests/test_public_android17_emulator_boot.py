@@ -39,8 +39,16 @@ class PublicAndroid17BootContracts(unittest.TestCase):
                          "kvm_scope_acquire", "kvm_scope_restore",
                          "-accel on -gpu swangle_indirect -feature -Vulkan",
                          "emulator_boot_diagnosis.py", "ANDROID17_PUBLIC_EMULATOR_COLD_BOOT_PROVEN_NO_OEM",
+                         "ANDROID17_PUBLIC_GLOBAL_RESUME_GRAMMAR_PROVEN_NO_OEM",
+                         "dumpsys activity activities", "inspect_top_resumed",
                          "trap cleanup EXIT", 'getprop ro.build.version.sdk'):
             self.assertIn(required, script)
+        self.assertLess(script.index("dumpsys activity activities"),
+                        script.index("ANDROID17_PUBLIC_GLOBAL_RESUME_GRAMMAR_PROVEN_NO_OEM"))
+        self.assertLess(script.index("ANDROID17_PUBLIC_GLOBAL_RESUME_GRAMMAR_PROVEN_NO_OEM"),
+                        script.index("ANDROID17_PUBLIC_EMULATOR_COLD_BOOT_PROVEN_NO_OEM"))
+        self.assertIn('state["category"] != "FOREGROUND_OTHER_PACKAGE"', script)
+        self.assertIn("ACTIVITY_RESUME_UNVERIFIED", script)
         for forbidden in ("apksigner", "vault.sh", "CLASSIC_VAULT_TOKEN", "sign ",
                           "gh release", "upload-artifact", "chmod 666", "chmod 777",
                           "sudo ", "adb -d ", "adb install", "sdkmanager --licenses",
