@@ -31,11 +31,12 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Android SDK without automatic license acceptance
-        uses: android-actions/setup-android@v4
-        with:
-          accept-android-sdk-licenses: 'no'
-          log-accepted-android-sdk-licenses: 'false'
+      # The hosted Ubuntu image has an existing SDK (confirmed by run
+      # 43025024759). Avoid setup-android: its boolean input rejected 'no'
+      # and the action can otherwise accept third-party SDK licenses.
+      # This exact public, read-only check also runs in source-verify CI.
+      - name: Verify preinstalled hosted Android17 SDK catalog (read-only)
+        run: bash classic_source/private_ci/hosted_sdk_catalog_preflight.sh --catalog
       - name: Download pinned OEM-signed original into ephemeral private directory
         env:
           GH_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}

@@ -34,14 +34,16 @@ def verify_workflow(text):
     steps=job["steps"]
     assert len(steps)==7
     assert [s["uses"] for s in steps if "uses" in s] == [
-        "actions/checkout@v7", "actions/setup-python@v6",
-        "android-actions/setup-android@v4"]
+        "actions/checkout@v7", "actions/setup-python@v6"]
     assert steps[0]["with"]["persist-credentials"] is False
-    # The third-party SDK action otherwise accepts SDK contracts by default.
-    # An owner-approved emulator test is NOT a new contractual assent.
-    assert steps[3]["with"]["accept-android-sdk-licenses"] == "no"
-    assert steps[3]["with"]["log-accepted-android-sdk-licenses"] == "false"
+    # The v4 action's boolean input rejected 'no' at run 43025024759.
+    # Eliminate the action altogether, including automatic SDK consent.
+    assert steps[3]["run"].strip() == (
+        "bash classic_source/private_ci/hosted_sdk_catalog_preflight.sh --catalog")
     assert steps[-1]["if"] == "always()"
+    assert "android-actions/setup-android" not in text
+    assert "accept-android-sdk-licenses" not in text
+    assert "sdkmanager --licenses" not in text
     commands="\n".join(s.get("run","") for s in steps)
     assert commands.index("github_hosted/policy.py") < commands.index("vault.sh fetch")
     assert commands.index("vault.sh fetch") < commands.index("run_stock_original_android17.sh")
@@ -59,6 +61,7 @@ def verify_shell(text):
         'GITHUB_ACTOR:-', 'GITHUB_REF:-', 'GITHUB_REPOSITORY:-',
         'GITHUB_EVENT_NAME:-', 'RUNNER_ENVIRONMENT:-',
         '-z "${GH_TOKEN:-}"', '-z "${CLASSIC_VAULT_TOKEN:-}"',
+        'export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"',
         'sdkmanager --list --channel=0',
         'select_android17_image.py',
         "'system-images;android-37.2;google_apis_ps16k;x86_64'",
@@ -99,7 +102,8 @@ class StockWorkflowContract(unittest.TestCase):
             ("name: classic-private-build", "name: public"),
             ("if: always()", "if: success()"),
             ("persist-credentials: false", "persist-credentials: true"),
-            ("accept-android-sdk-licenses: 'no'", "accept-android-sdk-licenses: 'yes'"),
+            ("bash classic_source/private_ci/hosted_sdk_catalog_preflight.sh --catalog",
+             "echo skipped sdk safety preflight"),
         ):
             with self.subTest(old=old),self.assertRaises(AssertionError):
                 verify_workflow(text.replace(old,new))
