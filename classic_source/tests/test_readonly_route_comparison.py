@@ -69,15 +69,39 @@ def embedded():
     }
 
 
+
+def invokes():
+    return {
+        "activity_type_ids_count":2, "parent_type_ids_count":4,
+        "activity_method_id_owners_count":1, "parent_method_id_owners_count":1,
+        "activity_field_id_owners_count":1, "parent_field_id_owners_count":1,
+        "activity_invoke_targets_count":1, "parent_invoke_targets_count":1,
+        "activity_type_instruction_targets_count":1,
+        "parent_type_instruction_targets_count":1,
+        "activity_field_access_owners_count":1, "parent_field_access_owners_count":1,
+        "unresolved_parent_gap_owner_manifest_call_reached_count":2,
+        "code_items_scanned":4, "instructions_scanned":20,
+        "dynamic_invoke_sites":1, "missing_activity_invoke_sites":2,
+        "missing_parent_invoke_sites":1,
+        "dex_invoke_inventory_complete":True,
+        "dynamic_and_reflective_reachability_proven":False,
+        "absent_callsites_prove_dead_code":False,
+        "actual_classloader_verified":False,
+        "missing_classes_waived":0,
+    }
+
+
 class ProtectedRouteTests(unittest.TestCase):
     def test_positive_uses_real_pinned_gate_and_proves_nothing_about_loader(self):
         with patch.object(module,"diagnose_baseline",return_value=original()) as gate, \
              patch.object(module,"inspect_original_routes",return_value=routes()) as raw, \
-             patch.object(module,"inspect_pinned_embedded",return_value=embedded()) as nested:
+             patch.object(module,"inspect_pinned_embedded",return_value=embedded()) as nested, \
+             patch.object(module,"inspect_original_invokes",return_value=invokes()) as xrefs:
             report=module.diagnose("private-fixture.apk","synthetic-receipt")
         gate.assert_called_once_with("private-fixture.apk","synthetic-receipt")
         raw.assert_called_once_with("private-fixture.apk")
         nested.assert_called_once_with("private-fixture.apk")
+        xrefs.assert_called_once_with("private-fixture.apk")
         self.assertEqual(report["missing_activity_exported_buckets"]["inherited"],2)
         self.assertEqual(report["declared_library_required_buckets"]["required_false"],1)
         self.assertEqual(report["missing_activity_route_counts"]["main_launcher_filters"],1)
@@ -88,6 +112,9 @@ class ProtectedRouteTests(unittest.TestCase):
         self.assertEqual(report["embedded_code_candidate_inventory"]["embedded_missing_activity_candidate_count"],2)
         self.assertFalse(report["embedded_code_sources_classloader_verified"])
         self.assertTrue(report["embedded_inventory_complete"])
+        self.assertEqual(report["dex_invocation_and_type_inventory"]["missing_activity_invoke_sites"],2)
+        self.assertFalse(report["absence_of_static_references_proves_dead_component"])
+        self.assertFalse(report["dex_evidence_classloader_verified"])
 
     def test_deny_unverified_graph_counters_and_fake_runtime(self):
         changes=(
@@ -179,6 +206,50 @@ class ProtectedRouteTests(unittest.TestCase):
         self.assertEqual(result,2)
         self.assertEqual(json.loads(captured.getvalue()),
                          {"status":"BLOCKED","reason":"PRIVATE_ROUTE_DIAGNOSIS_BLOCKED"})
+
+
+
+    def test_all_dex_reference_claims_are_strictly_validated(self):
+        correct = module.guarded_invokes(invokes(), original(),
+                                         module.guarded_context(routes(),original()))
+        self.assertEqual(correct["dex_invocation_and_type_inventory"]["code_items_scanned"],4)
+        self.assertEqual(correct["dex_evidence_missing_class_waivers"],0)
+        mutations = (
+            lambda d:d.update({"parent_type_ids_count":3}),
+            lambda d:d.update({"activity_invoke_targets_count":2}),
+            lambda d:d.update({"missing_activity_invoke_sites":0,
+                                "activity_invoke_targets_count":0,
+                                "parent_invoke_targets_count":0,
+                                "missing_parent_invoke_sites":1}),
+            lambda d:d.update({"code_items_scanned":0}),
+            lambda d:d.update({"instructions_scanned":1}),
+            lambda d:d.update({"dynamic_invoke_sites":50}),
+            lambda d:d.update({"dex_invoke_inventory_complete":False}),
+            lambda d:d.update({"absent_callsites_prove_dead_code":True}),
+            lambda d:d.update({"dynamic_and_reflective_reachability_proven":True}),
+            lambda d:d.update({"actual_classloader_verified":True}),
+            lambda d:d.update({"missing_classes_waived":1}),
+            lambda d:d.update({"parent_type_ids_count":True}),
+            lambda d:d.update({"activity_field_access_owners_count":3}),
+            lambda d:d.update({"unresolved_parent_gap_owner_manifest_call_reached_count":6}),
+        )
+        for change in mutations:
+            case = invokes()
+            change(case)
+            with self.subTest(line=change.__code__.co_firstlineno), \
+                 self.assertRaises(module.RouteDiagnosticBlocked):
+                module.guarded_invokes(case,original(),
+                                       module.guarded_context(routes(),original()))
+
+    def test_oem_labels_or_proprietary_symbols_never_leave_dex_summary(self):
+        case=invokes()
+        case["manufacturer_private_descriptor"]="Lsecret/VendorActivity;"
+        report=module.guarded_invokes(case,original(),
+                                      module.guarded_context(routes(),original()))
+        payload=json.dumps(report)
+        self.assertNotIn("VendorActivity",payload)
+        self.assertNotIn("secret/",payload)
+        self.assertNotIn("manufacturer_private",payload)
 
 
 if __name__=="__main__":
