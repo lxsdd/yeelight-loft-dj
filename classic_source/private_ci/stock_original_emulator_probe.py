@@ -12,6 +12,12 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+# A standalone protected CLI is executed from the repository root while
+# sys.path[0] points at private_ci/. Unit-test imports used to mask this.
+# Resolve only the adjacent product source to load its pinned OEM hash policy.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 PACKAGE = "com.yeelight.cherry"
 SERIAL = "emulator-5554"

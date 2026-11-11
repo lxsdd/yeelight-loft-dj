@@ -11,6 +11,15 @@ PROBE=ROOT / "classic_source/private_ci/stock_original_emulator_probe.py"
 
 
 def verify_workflow(text):
+    # GitHub's standalone owner-dispatch policy MUST recognize this exact
+    # workflow; merely calling policy.py is insufficient (run 43012985357).
+    import importlib.util
+    module=ROOT / "github_hosted/policy.py"
+    spec=importlib.util.spec_from_file_location("classic_owner_policy", module)
+    policy=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(policy)
+    required=policy.SOURCE_REPO+"/"+str(WORKFLOW.relative_to(ROOT))+"@refs/heads/main"
+    assert required in policy.ALLOWED_WORKFLOW_REFS, "protected workflow is not policy allowlisted"
     y=yaml.safe_load(text)
     assert set(y.get("on", y.get(True))) == {"workflow_dispatch"}
     assert y["permissions"] == {"contents":"read"}

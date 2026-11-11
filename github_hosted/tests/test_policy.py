@@ -24,14 +24,67 @@ class PolicyTests(unittest.TestCase):
         return {'repository':{'full_name':policy.SOURCE_REPO,'private':False},'ref':'refs/heads/main'}
     def test_owner_protected_main_passes(self):
         self.assertEqual(policy.require_approved_dispatch(self.valid(),self.event())['source_sha'],'a'*40)
-    def test_exact_four_private_classic_workflows_allowed(self):
-        allowed = (policy.WORKFLOW_FILE, policy.SIGNED_WORKFLOW_FILE, policy.AUDIT_WORKFLOW_FILE, policy.READONLY_WORKFLOW_FILE)
-        self.assertEqual(len(policy.ALLOWED_WORKFLOW_REFS), 4)
+    def test_exact_five_private_classic_workflows_allowed(self):
+        allowed = (policy.WORKFLOW_FILE, policy.SIGNED_WORKFLOW_FILE,
+                   policy.AUDIT_WORKFLOW_FILE, policy.READONLY_WORKFLOW_FILE,
+                   policy.STOCK_ORIGINAL_WORKFLOW_FILE)
+        self.assertEqual(len(policy.ALLOWED_WORKFLOW_REFS), 5)
         for path in allowed:
             with self.subTest(path=path):
                 e=self.valid()
                 e['GITHUB_WORKFLOW_REF']=policy.SOURCE_REPO+'/'+path+'@refs/heads/main'
                 self.assertEqual(policy.require_approved_dispatch(e,self.event())['source_sha'], 'a'*40)
+    def test_owner_stock_original_workflow_exactly_matches_protected_implementation(self):
+        ref = policy.SOURCE_REPO + '/' + policy.STOCK_ORIGINAL_WORKFLOW_FILE + '@refs/heads/main'
+        path = Path(__file__).resolve().parents[2] / policy.STOCK_ORIGINAL_WORKFLOW_FILE
+        self.assertTrue(path.is_file())
+        self.assertIn(ref, policy.ALLOWED_WORKFLOW_REFS)
+        env = self.valid()
+        env['GITHUB_WORKFLOW_REF'] = ref
+        self.assertEqual(policy.require_approved_dispatch(env, self.event())['source_sha'], 'a'*40)
+        for bad_ref in (
+            ref.replace('@refs/heads/main', '@refs/heads/feature'),
+            ref.replace('@refs/heads/main', '@refs/tags/release'),
+            ref.replace('@refs/heads/main', '@refs/pull/90/merge'),
+            ref.replace('@refs/heads/main', '@refs/heads/main/'),
+            ref.replace('/classic-private-stock-original-android17.yml', '/classic-private-stock-original-android17.yml.bak'),
+            ref.replace(policy.SOURCE_REPO, 'attacker/yeelight-loft-dj', 1),
+            ref.replace('/classic-private-stock-original-android17.yml', '/classic-private-test-signed.yml'),
+        ):
+            with self.subTest(ref=bad_ref):
+                env['GITHUB_WORKFLOW_REF'] = bad_ref
+                if bad_ref in policy.ALLOWED_WORKFLOW_REFS:
+                    # The old signed workflow remains authorized on main, but
+                    # stock tests must not implicitly claim it is a stock run.
+                    self.assertNotEqual(bad_ref, ref)
+                else:
+                    with self.assertRaisesRegex(policy.PolicyFailure, 'DISPATCH_DENIED_WORKFLOW_REF'):
+                        policy.require_approved_dispatch(env, self.event())
+        for key, value in (
+            ('GITHUB_ACTOR', 'other'),
+            ('GITHUB_REF', 'refs/heads/feature'),
+            ('GITHUB_EVENT_NAME', 'push'),
+            ('GITHUB_REPOSITORY', 'attacker/yeelight-loft-dj'),
+            ('RUNNER_ENVIRONMENT', 'self-hosted'),
+            ('GITHUB_HEAD_REF', 'branch'),
+        ):
+            env = self.valid()
+            env['GITHUB_WORKFLOW_REF'] = ref
+            env[key] = value
+            with self.subTest(key=key), self.assertRaises(policy.PolicyFailure):
+                policy.require_approved_dispatch(env, self.event())
+        for bad_event in (
+            {'repository': {'full_name': policy.SOURCE_REPO, 'private': True},
+             'ref':'refs/heads/main'},
+            {'repository': {'full_name': 'attacker/yeelight-loft-dj', 'private': False},
+             'ref':'refs/heads/main'},
+            {'repository': {'full_name': policy.SOURCE_REPO, 'private': False},
+             'ref':'refs/heads/feature'},
+        ):
+            with self.subTest(event=bad_event), self.assertRaises(policy.PolicyFailure):
+                policy.require_approved_dispatch(env=self.valid() |
+                    {'GITHUB_WORKFLOW_REF': ref}, event=bad_event)
+
     def test_unlisted_workflows_and_unprotected_refs_rejected(self):
         forbidden=(
             policy.SOURCE_REPO+'/.github/workflows/not-classic.yml@refs/heads/main',

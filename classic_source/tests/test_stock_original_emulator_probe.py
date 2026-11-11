@@ -154,6 +154,58 @@ class OriginalStockEmulatorTests(unittest.TestCase):
         self.assertEqual(json.loads(output.call_args.args[0]),
                          {"status":"BLOCKED","reason":"STOCK_ORIGINAL_EMULATOR_UNVERIFIED"})
 
+    def test_cli_executed_from_repository_root_uses_synthetic_adb_only(self):
+        """Exercise the real protected CLI import path, masked by in-process tests."""
+        import os
+        import subprocess
+        import tempfile
+
+        commands={
+            ("shell","getprop","ro.kernel.qemu"): "1",
+            ("shell","getprop","ro.build.version.sdk"): "37",
+            ("shell","settings","get","global","airplane_mode_on"): "1",
+            ("shell","settings","get","global","wifi_on"): "0",
+            ("shell","settings","get","global","mobile_data"): "0",
+            ("shell","ip","-4","route","show","table","main"): "",
+            ("shell","ip","-6","route","show","table","main"): "",
+            ("shell","pm","path",m.PACKAGE): "package:"+APK,
+            ("shell","sha256sum",APK): ORIGINAL_SHA256+"  "+APK,
+            ("logcat","-b","crash","-c"): "",
+            ("shell","am","start","-W","-n",m.PACKAGE+"/"+LAUNCHER):
+                "Status: ok\nActivity: "+m.PACKAGE+"/"+LAUNCHER,
+            ("shell","dumpsys","activity","activities"):
+                "topResumedActivity: ActivityRecord{77 "+m.PACKAGE+"/"+LAUNCHER+"}",
+            ("logcat","-b","crash","-d"): "",
+            ("shell","pidof",m.PACKAGE): "1234",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            adb=Path(tmp)/"adb"
+            adb.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "commands="+repr(commands)+"\n"
+                "args=tuple(sys.argv[1:])\n"
+                "if args[:2]!=('-s','emulator-5554') or args[2:] not in commands:\n"
+                "  raise SystemExit(22)\n"
+                "print(commands[args[2:]])\n",encoding="utf-8")
+            adb.chmod(0o700)
+            env=dict(os.environ)
+            env["PATH"]=tmp+os.pathsep+env.get("PATH","")
+            env.pop("PYTHONPATH",None)
+            script=Path(m.__file__).resolve()
+            p=subprocess.run([sys.executable,str(script),
+                "--serial",m.SERIAL,
+                "--launcher",LAUNCHER,
+                "--pinned-sha256",ORIGINAL_SHA256,
+                "--explicit-owner-approved-private-emulator"],
+                cwd=str(script.parents[2]),env=env,
+                capture_output=True,text=True,timeout=20)
+            self.assertEqual(p.returncode,0,p.stderr+" "+p.stdout)
+            result=json.loads(p.stdout)
+            self.assertTrue(result["stock_launch_verified"])
+            self.assertFalse(result["loft_dj_clone_tested"])
+            self.assertNotIn("secret",p.stdout.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
