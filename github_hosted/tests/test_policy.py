@@ -24,11 +24,11 @@ class PolicyTests(unittest.TestCase):
         return {'repository':{'full_name':policy.SOURCE_REPO,'private':False},'ref':'refs/heads/main'}
     def test_owner_protected_main_passes(self):
         self.assertEqual(policy.require_approved_dispatch(self.valid(),self.event())['source_sha'],'a'*40)
-    def test_exact_five_private_classic_workflows_allowed(self):
+    def test_exact_six_private_classic_workflows_allowed(self):
         allowed = (policy.WORKFLOW_FILE, policy.SIGNED_WORKFLOW_FILE,
                    policy.AUDIT_WORKFLOW_FILE, policy.READONLY_WORKFLOW_FILE,
-                   policy.STOCK_ORIGINAL_WORKFLOW_FILE)
-        self.assertEqual(len(policy.ALLOWED_WORKFLOW_REFS), 5)
+                   policy.STOCK_ORIGINAL_WORKFLOW_FILE, policy.PROBE_WORKFLOW_FILE)
+        self.assertEqual(len(policy.ALLOWED_WORKFLOW_REFS), 6)
         for path in allowed:
             with self.subTest(path=path):
                 e=self.valid()
@@ -162,6 +162,33 @@ class PolicyTests(unittest.TestCase):
             env = self.valid()
             env['GITHUB_WORKFLOW_REF'] = ref
             env[key] = wrong
+            with self.subTest(key=key), self.assertRaises(policy.PolicyFailure):
+                policy.require_approved_dispatch(env, self.event())
+
+    def test_runtime_probe_requires_exact_approved_manual_main_and_is_not_release(self):
+        ref = policy.SOURCE_REPO + '/' + policy.PROBE_WORKFLOW_FILE + '@refs/heads/main'
+        self.assertIn(ref, policy.ALLOWED_WORKFLOW_REFS)
+        env = self.valid()
+        env['GITHUB_WORKFLOW_REF'] = ref
+        self.assertEqual(
+            policy.require_approved_dispatch(env, self.event())['source_sha'], 'a'*40)
+        for wrong in (
+                ref.replace('@refs/heads/main', '@refs/heads/test'),
+                ref.replace('@refs/heads/main', '@refs/pull/98/merge'),
+                ref.replace(policy.SOURCE_REPO, 'attacker/yeelight-loft-dj', 1),
+                ref.replace('.yml', '.yml.bak')):
+            with self.subTest(ref=wrong), self.assertRaises(policy.PolicyFailure):
+                env['GITHUB_WORKFLOW_REF'] = wrong
+                policy.require_approved_dispatch(env, self.event())
+        for key, value in (
+                ('GITHUB_ACTOR', 'not-owner'),
+                ('GITHUB_EVENT_NAME', 'pull_request'),
+                ('GITHUB_REF', 'refs/heads/feature'),
+                ('RUNNER_ENVIRONMENT', 'self-hosted'),
+                ('GITHUB_HEAD_REF', 'untrusted')):
+            env = self.valid()
+            env['GITHUB_WORKFLOW_REF'] = ref
+            env[key] = value
             with self.subTest(key=key), self.assertRaises(policy.PolicyFailure):
                 policy.require_approved_dispatch(env, self.event())
 
