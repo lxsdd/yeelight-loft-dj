@@ -230,7 +230,7 @@ class OriginalStockEmulatorTests(unittest.TestCase):
             ("shell","am","start","-W","-n",m.PACKAGE+"/"+LAUNCHER):
                 "Status: ok\nActivity: "+m.PACKAGE+"/"+LAUNCHER,
             ("shell","dumpsys","activity","activities"):
-                "topResumedActivity: ActivityRecord{77 "+m.PACKAGE+"/"+LAUNCHER+"}",
+                "topResumedActivity: ActivityRecord{77 u0 "+m.PACKAGE+"/"+LAUNCHER+" t1}",
             ("logcat","-b","crash","-d"): "",
             ("shell","pidof",m.PACKAGE): "1234",
         }
