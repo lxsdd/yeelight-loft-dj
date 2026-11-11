@@ -79,6 +79,11 @@ def verify_shell(text):
         'adb -s emulator-5554 root', 'settings put global airplane_mode_on 1',
         'ip -4 route flush table main', 'ip -6 route flush table main',
         'install -r --no-streaming', 'stock_original_emulator_probe.py',
+        'stock_launcher_selection.py --preinstall',
+        'stock_launcher_selection.py --installed',
+        'cmd package query-activities --components --user 0',
+        'cmd package resolve-activity --components --user 0',
+        '-a android.intent.action.MAIN -c android.intent.category.LAUNCHER',
         'STOCK_ORIGINAL_ANDROID17_EMULATOR_BLOCKED_',
         'STOCK_SIGNATURE_INVALID', 'STOCK_STARTUP_UNVERIFIED',
         'SDK_PACKAGE_INSTALL_FAILED', 'EMULATOR_BOOT_FAILED',
@@ -91,6 +96,11 @@ def verify_shell(text):
                       "adb -d ", "adb -s Pixel", "gh release", "upload-artifact"):
         assert forbidden not in text
     assert text.index("ip -6 route flush table main") < text.index("install -r --no-streaming")
+    assert text.index("stock_launcher_selection.py --preinstall") < text.index("install -r --no-streaming")
+    assert text.index("install -r --no-streaming") < text.index("cmd package query-activities --components --user 0")
+    assert text.index("cmd package query-activities --components --user 0") < text.index("cmd package resolve-activity --components --user 0")
+    assert text.index("cmd package resolve-activity --components --user 0") < text.index("stock_launcher_selection.py --installed")
+    assert text.index("stock_launcher_selection.py --installed") < text.index("stock_original_emulator_probe.py")
 
 
 class StockWorkflowContract(unittest.TestCase):
@@ -122,6 +132,9 @@ class StockWorkflowContract(unittest.TestCase):
             ("--explicit-owner-approved-private-emulator", "--skip-owner"),
             ("adb -s emulator-5554 root", "adb -d root"),
             ('-z "${GH_TOKEN:-}"', '-n "${GH_TOKEN:-}"'),
+            ("cmd package query-activities --components --user 0", "echo unchecked"),
+            ("cmd package resolve-activity --components --user 0", "echo unchecked"),
+            ("stock_launcher_selection.py --installed", "echo unchecked"),
         ):
             with self.subTest(old=old),self.assertRaises(AssertionError):
                 verify_shell(text.replace(old,new))
