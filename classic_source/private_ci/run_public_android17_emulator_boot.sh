@@ -58,7 +58,7 @@ IMAGE="$(python3 classic_source/private_ci/select_android17_image.py "$ROOT/cata
 [[ "$IMAGE" == "system-images;android-37.2;google_apis_ps16k;x86_64" ||
    "$IMAGE" == "system-images;android-37.1;google_apis_ps16k;x86_64" ]] ||
   fail SDK_IMAGE_UNLISTED
-# No 'yes |', no automatic SDK licenses, no device/phone.
+# SDK installer reads from /dev/null; automatic license acceptance disabled.
 if "$CLI/sdkmanager" --install --channel=0 "emulator" "$IMAGE" \
   </dev/null >"$ROOT/sdk-install.log" 2>&1; then
   :
