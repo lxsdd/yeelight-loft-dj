@@ -369,5 +369,74 @@ class Android17StartupTest(unittest.TestCase):
         self.assertEqual(result["exception_depth"], "TOP_LEVEL")
         self.assertTrue(result["target_crash"])
 
+
+    def test_private_provider_class_missing_distinguished_from_transitive_dependency(self):
+        provider = "hidden.vendor.PrivateProvider"
+        dependency = "com.yeelight.cherry.internal.SecretDependency"
+        prefix = "11-12 10:15:27.231  2468  2468 E AndroidRuntime: "
+        def fatal(missing):
+            return (prefix + "FATAL EXCEPTION: main\n" +
+                    prefix + "Process: " + PACKAGE + ", PID: 2468\n" +
+                    prefix + "java.lang.RuntimeException: Unable to get provider " +
+                    provider + ": java.lang.ClassNotFoundException\n" +
+                    prefix + " at android.app.ActivityThread.installContentProviders\n" +
+                    prefix + 'Caused by: java.lang.ClassNotFoundException: Didn' +
+                    "'t find class \"" + missing + "\" on path: privatePath\n")
+        defs = {"Lhidden/vendor/PrivateProvider;"}
+        graph = {"definitions": frozenset(defs),
+                 "manifest_providers": frozenset({provider})}
+        direct = classify_crash(fatal(provider), candidate_graph=graph)
+        self.assertEqual(direct["exception_category"], "CLASS_LOADER_MISSING")
+        self.assertEqual(direct["failure_stage"], "PROVIDER_INIT")
+        self.assertEqual(direct["provider_instantiation_relation"], "DIRECT_PROVIDER_CLASS")
+        self.assertEqual(direct["provider_declared_in_candidate_manifest"], "DECLARED")
+        self.assertEqual(direct["provider_defined_in_candidate_dex"], "PRESENT")
+        self.assertEqual(direct["missing_class_defined_in_candidate_dex"], "PRESENT")
+        self.assertEqual(direct["missing_class_namespace"], "OTHER_RUNTIME_LIBRARY")
+        indirect = classify_crash(fatal(dependency), candidate_graph=graph)
+        self.assertEqual(indirect["provider_instantiation_relation"],
+                         "PROVIDER_DEPENDENCY_OR_REFLECTION")
+        self.assertEqual(indirect["missing_class_namespace"], "OEM_CLASS_FAMILY")
+        self.assertEqual(indirect["missing_class_defined_in_candidate_dex"], "ABSENT")
+        for value in (provider, dependency, "privatePath", "SecretDependency"):
+            self.assertNotIn(value, str(direct))
+            self.assertNotIn(value, str(indirect))
+        no_graph = classify_crash(fatal(provider))
+        self.assertEqual(no_graph["classloader_provenance"], "LOG_ONLY")
+        self.assertEqual(no_graph["provider_defined_in_candidate_dex"], "NOT_CHECKED")
+
+    def test_provider_class_missing_absent_from_dex_is_not_claimed_resolved(self):
+        provider = "hidden.vendor.UnavailableProvider"
+        log = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+               ", PID: 7\njava.lang.RuntimeException: Unable to get provider " +
+               provider + ": ClassNotFoundException\n" +
+               "at android.app.ActivityThread.installContentProviders\n" +
+               "Caused by: java.lang.ClassNotFoundException: " + provider + "\n")
+        graph = {"definitions": frozenset(),
+                 "manifest_providers": frozenset({provider})}
+        evidence = classify_crash(log, candidate_graph=graph)
+        self.assertEqual(evidence["missing_class_defined_in_candidate_dex"], "ABSENT")
+        self.assertEqual(evidence["provider_defined_in_candidate_dex"], "ABSENT")
+        self.assertEqual(evidence["provider_declared_in_candidate_manifest"], "DECLARED")
+        self.assertEqual(evidence["provider_instantiation_relation"], "DIRECT_PROVIDER_CLASS")
+        self.assertNotIn("UnavailableProvider", str(evidence))
+
+    def test_foreign_tag_cannot_inject_private_classloader_provenance(self):
+        injected = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                    ", PID: 8\njava.lang.RuntimeException: unavailable\n" +
+                    "at android.app.ActivityThread.installContentProviders\n" +
+                    "11-12 10:15:27.231  999  999 E OtherTag: " +
+                    "Caused by: java.lang.ClassNotFoundException: hidden.Inject\n")
+        classified = classify_crash(injected)
+        self.assertEqual(classified["exception_category"], "OTHER_FATAL_RUNTIME")
+        self.assertNotIn("provider_instantiation_relation", classified)
+        self.assertNotIn("hidden.Inject", str(classified))
+
+    def test_private_candidate_evidence_invalid_path_blocks_without_legacy_fallback(self):
+        from android17_start_smoke import _private_candidate_graph
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_PRIVATE_CANDIDATE_PATH_REQUIRED"):
+            _private_candidate_graph("/tmp/other.apk")
+
+
 if __name__ == "__main__":
     unittest.main()

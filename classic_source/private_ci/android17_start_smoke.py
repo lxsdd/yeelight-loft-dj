@@ -9,9 +9,12 @@ public/source CI should only exercise the pure evidence classifier with fixtures
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 import subprocess
+import sys
 import time
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 PACKAGE = "io.lxsdd.yeelightdj"
@@ -154,6 +157,105 @@ NESTED_EXCEPTION_TYPES = (
 )
 
 
+
+# Privacy-safe, exact candidate provider evidence. We extract names only inside
+# the disposable private runner; reports contain fixed enums and booleans.
+# A class not in the candidate DEX is distinct from a runtime loader failure
+# for a class that *is* defined; neither is silently treated as a repair.
+JAVA_CLASS = r"(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*"
+PROVIDER_FAILURE = re.compile(r"\bUnable to get provider\s+(" + JAVA_CLASS + r")(?=[:\s])")
+MISSING_QUOTED = re.compile(
+    r'\bClassNotFoundException:\s*Didn.t find class\s+"(' + JAVA_CLASS + r')"'
+)
+MISSING_DIRECT = re.compile(
+    r"\bClassNotFoundException:\s*(" + JAVA_CLASS + r")(?=\s|$)"
+)
+
+
+def _runtime_namespace(name):
+    if name is None:
+        return "UNIDENTIFIED"
+    if name.startswith("io.github.lxsdd.yeelightclassicdj."):
+        return "NATIVE_DJ_BRIDGE"
+    if name.startswith(PACKAGE + "."):
+        return "CLONE_APP_NAMESPACE"
+    if name.startswith("com.yeelight."):
+        return "OEM_CLASS_FAMILY"
+    if name.startswith(("android.", "java.", "javax.", "dalvik.")):
+        return "PLATFORM_CLASS"
+    if name.startswith(("androidx.", "com.google.")):
+        return "ANDROID_SUPPORT_OR_GOOGLE_LIBRARY"
+    return "OTHER_RUNTIME_LIBRARY"
+
+
+def _sanitized_classloader_provenance(rows, candidate_graph):
+    """Correlate a *target* provider FATAL with optional signed-APK definitions.
+
+    A recovered name is never part of the return value, even on error. A
+    matching provider declaration does not prove runtime reachability or UI.
+    """
+    provider = missing = None
+    for row in rows[:MAX_FATAL_BLOCK_LINES]:
+        message = _android_runtime_message(row)
+        root = ROOT_CAUSE.match(message)
+        if root is None:
+            continue
+        if provider is None and not root.group(1):
+            match = PROVIDER_FAILURE.search(message)
+            if match is not None:
+                provider = match.group(1)
+        if root.group(2).rsplit(".", 1)[-1] == "ClassNotFoundException":
+            match = MISSING_QUOTED.search(message) or MISSING_DIRECT.search(message)
+            if match is not None:
+                missing = match.group(1)
+    match_relation = ("DIRECT_PROVIDER_CLASS" if missing is not None and missing == provider else
+                      "PROVIDER_DEPENDENCY_OR_REFLECTION" if missing and provider else
+                      "UNIDENTIFIED")
+    manifest = dex_provider = dex_missing = "NOT_CHECKED"
+    if candidate_graph is not None:
+        definitions = candidate_graph["definitions"]
+        declared = candidate_graph["manifest_providers"]
+        manifest = ("DECLARED" if provider in declared else
+                    "NOT_DECLARED" if provider else "UNIDENTIFIED")
+        dex_provider = ("PRESENT" if "L" + provider.replace(".", "/") + ";" in definitions else
+                        "ABSENT") if provider else "UNIDENTIFIED"
+        dex_missing = ("PRESENT" if "L" + missing.replace(".", "/") + ";" in definitions else
+                       "ABSENT") if missing else "UNIDENTIFIED"
+    return {
+        "provider_instantiation_relation": match_relation,
+        "missing_class_namespace": _runtime_namespace(missing),
+        "provider_class_namespace": _runtime_namespace(provider),
+        "provider_declared_in_candidate_manifest": manifest,
+        "provider_defined_in_candidate_dex": dex_provider,
+        "missing_class_defined_in_candidate_dex": dex_missing,
+        "classloader_provenance": "SIGNED_APK_GRAPH_CORRELATED" if candidate_graph is not None else "LOG_ONLY",
+    }
+
+
+def _private_candidate_graph(path):
+    """Read signed APK on same ephemeral owner runner; never print class names."""
+    temp = os.environ.get("RUNNER_TEMP")
+    if not temp or not isinstance(path, str):
+        raise SmokeBlocked("SMOKE_PRIVATE_CANDIDATE_PATH_REQUIRED")
+    expected = Path(temp) / "private-output" / "classic-loft-dj-TEST-SIGNED.apk"
+    supplied = Path(path)
+    if supplied != expected or not expected.is_file() or expected.is_symlink():
+        raise SmokeBlocked("SMOKE_PRIVATE_CANDIDATE_PATH_REQUIRED")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from private_startup_audit import inspect_apk
+        graph = inspect_apk(expected)
+    except Exception:
+        raise SmokeBlocked("SMOKE_PRIVATE_CANDIDATE_GRAPH_INVALID") from None
+    if graph["package"] != PACKAGE:
+        raise SmokeBlocked("SMOKE_PRIVATE_CANDIDATE_PACKAGE_MISMATCH")
+    return {
+        "definitions": frozenset(graph["definitions"]),
+        "manifest_providers": frozenset(name for (kind, name) in graph["components"]
+                                         if kind == "provider"),
+    }
+
+
 def _sanitized_exception_chain(rows):
     """Choose the *last explicit nested cause*, without disclosing its text.
 
@@ -183,7 +285,7 @@ def _sanitized_exception_chain(rows):
     }
 
 
-def classify_crash(logcat, package=PACKAGE):
+def classify_crash(logcat, package=PACKAGE, candidate_graph=None):
     """Classify actual AndroidRuntime target crash, not a guessed OEM failure.
 
     Process ownership comes from the adjacent Process/PID header (first 14
@@ -213,6 +315,8 @@ def classify_crash(logcat, package=PACKAGE):
             found_unattributed = True
             continue
         e = _sanitized_exception_chain(window)
+        provenance = (_sanitized_classloader_provenance(window, candidate_graph)
+                      if e["exception_category"] == "CLASS_LOADER_MISSING" else {})
         trace = "\n".join(window)
         if "installContentProviders" in trace or "installProvider(" in trace or "Provider.onCreate" in trace:
             stage = "PROVIDER_INIT"
@@ -222,13 +326,13 @@ def classify_crash(logcat, package=PACKAGE):
             stage = "ACTIVITY_LAUNCH"
         else:
             stage = "UNDETERMINED"
-        return {**result, **e, "target_crash": True,
+        return {**result, **e, **provenance, "target_crash": True,
                 "unattributed_fatal": found_unattributed, "failure_stage": stage}
     return {**result, "unattributed_fatal": found_unattributed}
 
 
 def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash_log,
-                           observed_ms):
+                           observed_ms, candidate_graph=None):
     """Assess one honest, bounded launch window; not an app/user acceptance.
 
     The positive state means only that a private emulator reported a resumed
@@ -252,7 +356,7 @@ def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash
                 and valid_component
                 and bool(re.search(r"^Complete\s*$", launch_output, re.M))
                 and not re.search(r"(?:^Error:|^Security exception:|^Warning: Activity not started)", launch_output, re.M))
-    crash = classify_crash(crash_log)
+    crash = classify_crash(crash_log, candidate_graph=candidate_graph)
     resumed, resume_category = _classic_foreground(activity_snapshot)
     return {
         "status": ("BLOCKED_CRASH" if crash["target_crash"] else
@@ -344,13 +448,13 @@ def entry_button_coordinates(dump, display):
 
 
 def evaluate_navigation_window(*, component, activity_snapshot, crash_log, ui_dump,
-                               observed_ms):
+                               observed_ms, candidate_graph=None):
     """Test in-app navigation, not an exported direct-Activity shortcut."""
     component = _component(component)
     if type(observed_ms) is not int or observed_ms < 2000 or observed_ms > 120000:
         raise SmokeBlocked("SMOKE_OBSERVATION_WINDOW_INVALID")
     _bounded(activity_snapshot, "SMOKE_BAD_ACTIVITY_SNAPSHOT")
-    crash = classify_crash(crash_log)
+    crash = classify_crash(crash_log, candidate_graph=candidate_graph)
     # Navigation MUST resume the exact native DJ class, not merely any clone.
     resumed = _resumed(activity_snapshot, component)
     ui = (classify_visible_ui(ui_dump, stage="native_dj")
@@ -388,7 +492,7 @@ def _adb(args, *, serial, timeout=18):
 
 def probe_private_emulator(serial, *, owner_approved, launcher_component,
                            expected_installed_apk_sha256, dwell_ms=3000,
-                           adb=_adb, pause=time.sleep):
+                           adb=_adb, pause=time.sleep, candidate_graph=None):
     """Explicitly authorized PRIVATE offline emulator only; NEVER a real phone.
 
     Requires preinstalled private candidate, Android 17, emulator kernel,
@@ -449,7 +553,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     crashes = run(["logcat", "-b", "crash", "-d"])
     home = evaluate_launch_window(component=launcher_component,
                                   launch_output=am_output, activity_snapshot=snapshot,
-                                  crash_log=crashes, observed_ms=dwell_ms)
+                                  crash_log=crashes, observed_ms=dwell_ms,
+                                  candidate_graph=candidate_graph)
     ui_data = None
     if home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
         ui_data = run(["shell", "uiautomator", "dump", "/dev/tty"])
@@ -478,7 +583,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     dj = evaluate_navigation_window(component=PACKAGE + "/" + DJ_ACTIVITY,
                                     activity_snapshot=dj_snapshot,
                                     crash_log=dj_crashes, ui_dump=dj_ui,
-                                    observed_ms=dwell_ms)
+                                    observed_ms=dwell_ms,
+                                    candidate_graph=candidate_graph)
     reports.append(dj)
     success = dj["status"] == "EMULATOR_NATIVE_DJ_NAVIGATION_OBSERVED"
     return {
@@ -502,13 +608,16 @@ def main(argv=None):
     p.add_argument("--launcher-component", required=True)
     p.add_argument("--expected-installed-apk-sha256", required=True)
     p.add_argument("--explicit-owner-approved-private-emulator", action="store_true")
+    p.add_argument("--candidate-apk", required=True)
     args = p.parse_args(argv)
     try:
+        candidate_graph = _private_candidate_graph(args.candidate_apk)
         report = probe_private_emulator(
             args.serial,
             owner_approved=args.explicit_owner_approved_private_emulator,
             launcher_component=args.launcher_component,
-            expected_installed_apk_sha256=args.expected_installed_apk_sha256)
+            expected_installed_apk_sha256=args.expected_installed_apk_sha256,
+            candidate_graph=candidate_graph)
     except SmokeBlocked as e:
         # Fixed code only. Never print the raw adb/logcat/OEM identity.
         print(json.dumps({"status": "BLOCKED", "code": str(e)}, sort_keys=True))

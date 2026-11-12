@@ -110,5 +110,6 @@ python3 classic_source/private_ci/android17_start_smoke.py \
  --serial emulator-5554 \
  --launcher-component "io.lxsdd.yeelightdj/$LAUNCHER" \
  --expected-installed-apk-sha256 "$PIN" \
+ --candidate-apk "$APK" \
  --explicit-owner-approved-private-emulator || fail
 printf 'PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS\n'
