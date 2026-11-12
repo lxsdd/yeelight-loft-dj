@@ -5,7 +5,7 @@ Android sign block and ZIP offsets can differ; Manifest and every DEX payload
 must remain byte-for-byte unchanged, otherwise never publish a signed APK.
 """
 from pathlib import Path
-from zipfile import ZipFile, BadZipFile
+from zipfile import ZipFile, BadZipFile, ZIP_STORED
 import argparse
 import hashlib
 import re
@@ -22,6 +22,12 @@ def parity(unsigned:Path,signed:Path):
         ib={n for n in nb if n=="AndroidManifest.xml" or re.fullmatch(r"classes(?:[2-9][0-9]*)?\.dex",n)}
         if ia!=ib or "classes.dex" not in ia or "AndroidManifest.xml" not in ia:
             raise Refused("STARTUP_PAYLOAD_SET_CHANGED")
+        dex_entries = ia - {"AndroidManifest.xml"}
+        if dex_entries != {"classes.dex", "classes2.dex", "classes3.dex"}:
+            raise Refused("SIGNED_MULTIDEX_ENTRY_SET_CHANGED")
+        if any(a.getinfo(n).compress_type != ZIP_STORED or
+               b.getinfo(n).compress_type != ZIP_STORED for n in dex_entries):
+            raise Refused("SIGNED_MULTIDEX_NOT_ZIP_STORED")
         for n in ia:
             if hashlib.sha256(a.read(n)).digest()!=hashlib.sha256(b.read(n)).digest():
                 raise Refused("SIGNED_STARTUP_PAYLOAD_CHANGED")

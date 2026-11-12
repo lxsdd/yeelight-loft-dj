@@ -14,6 +14,8 @@ fail() { echo "PRIVATE_ANDROID17_EMULATOR_BLOCKED" >&2; exit 2; }
 APK="$(realpath -e -- "$1")"
 [[ "$APK" == "$RUNNER_TEMP"/private-output/* && "$(basename -- "$APK")" == "classic-loft-dj-TEST-SIGNED.apk" ]] || fail
 [[ -s "$APK" ]] || fail
+# Print only allowlisted booleans; no private OEM classes, paths, or APK bytes.
+python3 classic_source/secondary_dex_transport.py --owner-only-transport-status || fail
 command -v sdkmanager >/dev/null || fail
 command -v avdmanager >/dev/null || fail
 command -v adb >/dev/null || fail
