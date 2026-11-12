@@ -26,6 +26,41 @@ JAVA = "Ljava/lang/Object;"
 
 
 class StaticLinkageTests(unittest.TestCase):
+    def test_valid_dex_flat_and_obfuscated_class_names(self):
+        # DEX FullClassName permits an empty package prefix, digits and '-'.
+        # Reproduce the exact full-archive graph validation path without OEM
+        # bytes: each graph member AND its superclass descriptor is checked.
+        for name in ("La;", "L1;", "L-;", "L$;", "Lpkg/9;", "Lpkg/-$Lambda$3;"):
+            with self.subTest(name=name):
+                graph = {A: [name], name: [JAVA]}
+                origins = {A: "SECONDARY_OEM_DEX", name: "PRIMARY_OEM_DEX"}
+                report = summarize_linkage(graph, dict(graph), origins, A)
+                self.assertEqual(report["clone_direct_unresolved_parent_bucket"], "NONE")
+                self.assertEqual(report["clone_transitive_unresolved_parent_bucket"], "NONE")
+                self.assertTrue(report["target_parents_preserved"])
+                self.assertFalse(report["art_class_loading_verified"])
+                direct = summarize_linkage({name: [JAVA]}, {name: [JAVA]},
+                                           {name: "SECONDARY_OEM_DEX"}, name)
+                self.assertEqual(direct["clone_target_definition"], "PRESENT")
+                self.assertFalse(direct["art_class_loading_verified"])
+
+    def test_valid_flat_name_does_not_waive_missing_parent(self):
+        root = "L1;"
+        report = summarize_linkage({A: [root]}, {A: [root]},
+                                   {A: "SECONDARY_OEM_DEX"}, A)
+        self.assertEqual(report["clone_direct_unresolved_parent_bucket"], "ONE")
+        self.assertEqual(report["clone_transitive_unresolved_parent_bucket"], "ONE")
+        self.assertFalse(report["art_class_loading_verified"])
+
+    def test_invalid_dex_class_descriptors_still_fail_closed(self):
+        for malformed in ("L;", "L/bad;", "Lbad//Name;", "Lbad/;",
+                          "Lbad Name;", "Lbad[Array;", "L../secret;",
+                          "Lbad.Type;", "Lbad/Type;extra;"):
+            with self.subTest(malformed=malformed):
+                with self.assertRaisesRegex(ForensicsBlocked, "^CLASS_GRAPH_INVALID$"):
+                    summarize_linkage({A: [malformed]}, {A: [malformed]},
+                                      {A: "SECONDARY_OEM_DEX"}, A)
+
     def test_existing_target_no_parent_gaps_still_unverified(self):
         g = {A: [B], B: [JAVA]}
         result = summarize_linkage(g, dict(g), {A: "SECONDARY_OEM_DEX",
