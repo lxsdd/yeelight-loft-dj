@@ -21,6 +21,7 @@ SHA = re.compile(r"[a-f0-9]{40}\Z")
 MAX_PR = 1000000
 MAX_RUNS = 100
 MAX_COMMITS = 8
+MAX_MAIN_ADVANCE = 8
 MAX_FILES = 100
 MAX_BYTES = 4_000_000
 EXPECTED = {
@@ -78,7 +79,7 @@ def _api(path, token):
         raise CandidateBlocked("PUBLIC_GITHUB_EVIDENCE_UNAVAILABLE") from None
 
 
-def _ci_runs_validate(runs, jobs_by_run, artifacts_by_run, *, pr, sha, branch, base):
+def _ci_runs_validate(runs, jobs_by_run, artifacts_by_run, *, pr, sha, branch, allowed_bases):
     require(isinstance(runs, dict) and type(runs.get("total_count")) is int and
             0 <= runs["total_count"] <= MAX_RUNS and
             isinstance(runs.get("workflow_runs"), list) and
@@ -111,7 +112,7 @@ def _ci_runs_validate(runs, jobs_by_run, artifacts_by_run, *, pr, sha, branch, b
                     isinstance(row.get("head"), dict) and
                     row["head"].get("sha") == sha and
                     isinstance(row.get("base"), dict) and
-                    row["base"].get("sha") == base for row in prs),
+                    row["base"].get("sha") in allowed_bases for row in prs),
                 "CI_SHA_OR_PR_UNQUALIFIED")
         jobs = jobs_by_run.get(run_id)
         require(isinstance(jobs, dict) and isinstance(jobs.get("jobs"), list)
@@ -131,7 +132,8 @@ def _ci_runs_validate(runs, jobs_by_run, artifacts_by_run, *, pr, sha, branch, b
 
 
 def validate_candidate(main_sha, pr_number, candidate_sha, *, main, pull,
-                       comparison, runs, jobs_by_run, artifacts_by_run):
+                       comparison, runs, jobs_by_run, artifacts_by_run,
+                       pinned_delta=None):
     """Strict, no-network metadata validator, used by synthetic mutations."""
     require(isinstance(main, dict) and
             main.get("commit", {}).get("sha") == main_sha,
@@ -157,15 +159,29 @@ def validate_candidate(main_sha, pr_number, candidate_sha, *, main, pull,
             base.get("ref") == "main" and
             base.get("sha") == main_sha,
             "PR_BRANCH_HEAD_OR_BASE_DRIFT")
-    require(comparison.get("status") == "ahead" and
-            comparison.get("behind_by") == 0 and
-            type(comparison.get("ahead_by")) is int and
-            1 <= comparison["ahead_by"] <= MAX_COMMITS and
-            comparison.get("merge_base_commit", {}).get("sha") == main_sha and
-            comparison.get("base_commit", {}).get("sha") == main_sha,
+    # main can have advanced since the PR was created (e.g. by merging this
+    # QA workflow itself). Require a bounded, genuine common ancestor.
+    # Candidate-only files MUST be taken from an immutable SHA comparison
+    # with that merge-base, never a moving PR/files listing.
+    common = comparison.get("merge_base_commit", {}).get("sha")
+    behind, ahead = comparison.get("behind_by"), comparison.get("ahead_by")
+    require(isinstance(common, str) and SHA.fullmatch(common) and
+            comparison.get("base_commit", {}).get("sha") == main_sha and
+            type(behind) is int and 0 <= behind <= MAX_MAIN_ADVANCE and
+            type(ahead) is int and 1 <= ahead <= MAX_COMMITS and
+            ((comparison.get("status") == "ahead" and behind == 0 and
+              common == main_sha) or
+             (comparison.get("status") == "diverged" and behind > 0 and
+              common != main_sha)),
             "PR_ANCESTRY_UNQUALIFIED")
-    commits = comparison.get("commits")
-    files = comparison.get("files")
+    delta = comparison if common == main_sha else pinned_delta
+    require(isinstance(delta, dict) and delta.get("status") == "ahead" and
+            delta.get("behind_by") == 0 and delta.get("ahead_by") == ahead and
+            delta.get("merge_base_commit", {}).get("sha") == common and
+            delta.get("base_commit", {}).get("sha") == common,
+            "PR_PINNED_DELTA_UNVERIFIED")
+    commits = delta.get("commits")
+    files = delta.get("files")
     require(isinstance(commits, list) and
             len(commits) == comparison["ahead_by"] and
             isinstance(files, list) and
@@ -189,7 +205,7 @@ def validate_candidate(main_sha, pr_number, candidate_sha, *, main, pull,
                 "PR_UNTRUSTED_FILE_SCOPE_DENIED")
     _ci_runs_validate(runs, jobs_by_run, artifacts_by_run,
                       pr=pr_number, sha=candidate_sha, branch=branch,
-                      base=main_sha)
+                      allowed_bases=frozenset((main_sha, common)))
     return {"mode": "OWNER_PINNED_PR", "source_sha": candidate_sha}
 
 
@@ -216,6 +232,11 @@ def execute_gate(env, api=_api):
                                   jobs_by_run=None, artifacts_by_run=None)
     pull = api("/repos/" + REPO + "/pulls/" + str(number), token)
     comparison = api("/repos/" + REPO + "/compare/" + trusted + "..." + sha, token)
+    common = comparison.get("merge_base_commit", {}).get("sha")
+    require(isinstance(common, str) and SHA.fullmatch(common),
+            "PR_ANCESTRY_UNQUALIFIED")
+    pinned_delta = (comparison if common == trusted else
+                    api("/repos/" + REPO + "/compare/" + common + "..." + sha, token))
     runs = api("/repos/" + REPO +
                "/actions/runs?head_sha=" + sha +
                "&event=pull_request&per_page=100", token)
@@ -236,7 +257,8 @@ def execute_gate(env, api=_api):
                                 "/actions/runs/" + str(run_id) + "/artifacts?per_page=100", token)
     return validate_candidate(trusted, number, sha, main=main, pull=pull,
                               comparison=comparison, runs=runs,
-                              jobs_by_run=jobs, artifacts_by_run=artifacts)
+                              jobs_by_run=jobs, artifacts_by_run=artifacts,
+                              pinned_delta=pinned_delta)
 
 
 def main():

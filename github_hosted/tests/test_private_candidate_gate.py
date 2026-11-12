@@ -186,6 +186,78 @@ class StrictPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.CandidateBlocked, "CI_PUBLIC_ARTIFACT_PRESENT"):
             check(vals)
 
+    def test_bounded_main_advance_preserves_immutable_candidate_only_diff(self):
+        """A new workflow merged to main must not force a retest PR rebase.
+
+        Compare main...HEAD can be diverged; the PR source-only changes are
+        verified via separate immutable merge-base...HEAD, not a mutable
+        PR-file-list. Historical PR CI may identify that merge-base as base.
+        """
+        values = copy.deepcopy(self.data)
+        common = "c" * 40
+        candidate_diff = copy.deepcopy(values[2])
+        candidate_diff["merge_base_commit"]["sha"] = common
+        candidate_diff["base_commit"]["sha"] = common
+        values[2]["status"] = "diverged"
+        values[2]["behind_by"] = 1
+        values[2]["merge_base_commit"]["sha"] = common
+        for run in values[3]["workflow_runs"]:
+            run["pull_requests"][0]["base"]["sha"] = common
+        def qualified(delta):
+            return gate.validate_candidate(
+                BASE, 104, HEAD, main=values[0], pull=values[1],
+                comparison=values[2], pinned_delta=delta, runs=values[3],
+                jobs_by_run=values[4], artifacts_by_run=values[5])
+        self.assertEqual(qualified(candidate_diff)["source_sha"], HEAD)
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_PINNED_DELTA_UNVERIFIED"):
+            qualified(None)
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_PINNED_DELTA_UNVERIFIED"):
+            bad = copy.deepcopy(candidate_diff)
+            bad["merge_base_commit"]["sha"] = BASE
+            qualified(bad)
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_UNTRUSTED_FILE_SCOPE_DENIED"):
+            bad = copy.deepcopy(candidate_diff)
+            bad["files"][0]["filename"] = "github_hosted/vault.sh"
+            qualified(bad)
+        values[2]["behind_by"] = gate.MAX_MAIN_ADVANCE + 1
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_ANCESTRY_UNQUALIFIED"):
+            qualified(candidate_diff)
+
+    def test_diverged_head_only_api_is_exact_sha_pinned(self):
+        values = copy.deepcopy(self.data)
+        common = "c" * 40
+        candidate_diff = copy.deepcopy(values[2])
+        candidate_diff["merge_base_commit"]["sha"] = common
+        candidate_diff["base_commit"]["sha"] = common
+        values[2]["status"] = "diverged"
+        values[2]["behind_by"] = 1
+        values[2]["merge_base_commit"]["sha"] = common
+        for run in values[3]["workflow_runs"]:
+            run["pull_requests"][0]["base"]["sha"] = common
+        endpoints = {
+            "/repos/" + gate.REPO + "/branches/main": values[0],
+            "/repos/" + gate.REPO + "/pulls/104": values[1],
+            "/repos/" + gate.REPO + "/compare/" + BASE + "..." + HEAD: values[2],
+            "/repos/" + gate.REPO + "/compare/" + common + "..." + HEAD: candidate_diff,
+            "/repos/" + gate.REPO + "/actions/runs?head_sha=" + HEAD +
+            "&event=pull_request&per_page=100": values[3],
+        }
+        for run_id in RUNS:
+            endpoints[f"/repos/{gate.REPO}/actions/runs/{run_id}/jobs?per_page=100"] = values[4][run_id]
+            endpoints[f"/repos/{gate.REPO}/actions/runs/{run_id}/artifacts?per_page=100"] = values[5][run_id]
+        calls = []
+        def api(path, token):
+            calls.append(path)
+            return copy.deepcopy(endpoints[path])
+        env = {"CLASSIC_CANDIDATE_PR": "104", "CLASSIC_CANDIDATE_SHA": HEAD,
+               "GH_PUBLIC_READ_TOKEN": "synthetic_public_only_token"}
+        with mock.patch.object(gate, "verify_owner_environment", return_value=BASE):
+            result = gate.execute_gate(env, api=api)
+        self.assertEqual(result["source_sha"], HEAD)
+        self.assertIn("/repos/" + gate.REPO + "/compare/" + common + "..." + HEAD, calls)
+        self.assertEqual(len(calls), 11)
+
+
     def test_no_network_action_or_vault_fetch_in_pure_validator(self):
         with mock.patch.object(gate.urllib.request, "urlopen") as url:
             check(self.data)
