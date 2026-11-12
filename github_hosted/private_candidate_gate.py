@@ -151,19 +151,24 @@ def validate_candidate(main_sha, pr_number, candidate_sha, *, main, pull,
             pull.get("user", {}).get("login") == OWNER and
             isinstance(head, dict) and isinstance(base, dict),
             "PR_OWNER_OR_STATE_DENIED")
+    # GitHub may retain the PR's original base SHA after main advances,
+    # although its base *ref* remains main. Validate that historical SHA
+    # against the immutable compare merge-base; never require an
+    # unnecessary rebase of the older, exact-CI-qualified candidate.
+    common = comparison.get("merge_base_commit", {}).get("sha")
     branch = head.get("ref")
     require(isinstance(branch, str) and
             re.fullmatch(r"chat/classic-[a-z0-9/-]{8,100}", branch) and
             head.get("repo", {}).get("full_name") == REPO and
             head.get("sha") == candidate_sha and
             base.get("ref") == "main" and
-            base.get("sha") == main_sha,
+            isinstance(common, str) and SHA.fullmatch(common) and
+            base.get("sha") in (main_sha, common),
             "PR_BRANCH_HEAD_OR_BASE_DRIFT")
     # main can have advanced since the PR was created (e.g. by merging this
     # QA workflow itself). Require a bounded, genuine common ancestor.
     # Candidate-only files MUST be taken from an immutable SHA comparison
     # with that merge-base, never a moving PR/files listing.
-    common = comparison.get("merge_base_commit", {}).get("sha")
     behind, ahead = comparison.get("behind_by"), comparison.get("ahead_by")
     require(isinstance(common, str) and SHA.fullmatch(common) and
             comparison.get("base_commit", {}).get("sha") == main_sha and

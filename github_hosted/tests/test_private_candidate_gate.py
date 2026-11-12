@@ -201,6 +201,9 @@ class StrictPreflightTests(unittest.TestCase):
         values[2]["status"] = "diverged"
         values[2]["behind_by"] = 1
         values[2]["merge_base_commit"]["sha"] = common
+        # This is the real GitHub behavior after merging QA infrastructure:
+        # PR.base.sha still denotes the original shared ancestor.
+        values[1]["base"]["sha"] = common
         for run in values[3]["workflow_runs"]:
             run["pull_requests"][0]["base"]["sha"] = common
         def qualified(delta):
@@ -209,6 +212,14 @@ class StrictPreflightTests(unittest.TestCase):
                 comparison=values[2], pinned_delta=delta, runs=values[3],
                 jobs_by_run=values[4], artifacts_by_run=values[5])
         self.assertEqual(qualified(candidate_diff)["source_sha"], HEAD)
+        # Either the historical true merge-base or current main may be
+        # reflected by GitHub's PR metadata, but no unrelated old base.
+        values[1]["base"]["sha"] = BASE
+        self.assertEqual(qualified(candidate_diff)["source_sha"], HEAD)
+        values[1]["base"]["sha"] = "d" * 40
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_BRANCH_HEAD_OR_BASE_DRIFT"):
+            qualified(candidate_diff)
+        values[1]["base"]["sha"] = common
         with self.assertRaisesRegex(gate.CandidateBlocked, "PR_PINNED_DELTA_UNVERIFIED"):
             qualified(None)
         with self.assertRaisesRegex(gate.CandidateBlocked, "PR_PINNED_DELTA_UNVERIFIED"):
@@ -223,6 +234,14 @@ class StrictPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.CandidateBlocked, "PR_ANCESTRY_UNQUALIFIED"):
             qualified(candidate_diff)
 
+    def test_historical_pr_base_without_real_divergence_is_not_valid(self):
+        values = copy.deepcopy(self.data)
+        values[1]["base"]["sha"] = "c" * 40
+        # The SHA cannot be treated as historical simply because it appears
+        # in PR metadata; it must equal GitHub's verified common ancestor.
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_BRANCH_HEAD_OR_BASE_DRIFT"):
+            check(values)
+
     def test_diverged_head_only_api_is_exact_sha_pinned(self):
         values = copy.deepcopy(self.data)
         common = "c" * 40
@@ -232,6 +251,9 @@ class StrictPreflightTests(unittest.TestCase):
         values[2]["status"] = "diverged"
         values[2]["behind_by"] = 1
         values[2]["merge_base_commit"]["sha"] = common
+        # This is the real GitHub behavior after merging QA infrastructure:
+        # PR.base.sha still denotes the original shared ancestor.
+        values[1]["base"]["sha"] = common
         for run in values[3]["workflow_runs"]:
             run["pull_requests"][0]["base"]["sha"] = common
         endpoints = {
