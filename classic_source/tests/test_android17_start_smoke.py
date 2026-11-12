@@ -438,5 +438,68 @@ class Android17StartupTest(unittest.TestCase):
             _private_candidate_graph("/tmp/other.apk")
 
 
+
+    def test_classloader_origin_and_installed_apk_path_are_correlated_privately(self):
+        provider = "com.yeelight.internal.ExampleProvider"
+        missing = "com.yeelight.internal.HiddenDependency"
+        apk = "/data/app/~~safe/io.lxsdd.yeelightdj-abc==/base.apk"
+        prefix = "11-12 11:42:04.231  1234  1234 E AndroidRuntime: "
+        def log(path):
+            return (prefix + "FATAL EXCEPTION: main\n" +
+                    prefix + "Process: " + PACKAGE + ", PID: 1234\n" +
+                    prefix + "java.lang.RuntimeException: Unable to instantiate provider " +
+                    provider + ": bad\n" +
+                    prefix + " at android.app.ActivityThread.installContentProviders\n" +
+                    prefix + "Caused by: java.lang.ClassNotFoundException: Didn't find class \"" +
+                    missing + "\" on path: DexPathList[[zip file \"" + path + "\"]]\n")
+        descriptor = "L" + missing.replace(".", "/") + ";"
+        graph = {"definitions": frozenset({descriptor}),
+                 "dex_origin": {descriptor: "SECONDARY_OEM_DEX"},
+                 "manifest_providers": frozenset({provider})}
+        good = classify_crash(log(apk), candidate_graph=graph, installed_apk_path=apk)
+        self.assertEqual(good["exception_category"], "CLASS_LOADER_MISSING")
+        self.assertEqual(good["provider_instantiation_relation"], "PROVIDER_DEPENDENCY_OR_REFLECTION")
+        self.assertEqual(good["missing_class_defined_in_candidate_dex"], "PRESENT")
+        self.assertEqual(good["missing_class_dex_location"], "SECONDARY_OEM_DEX")
+        self.assertEqual(good["loader_apk_path_relation"], "INSTALLED_CANDIDATE_INCLUDED")
+        self.assertEqual(good["provider_declared_in_candidate_manifest"], "DECLARED")
+        self.assertTrue(good["provider_wrapper_seen"])
+        other = classify_crash(log("/data/app/another.app/base.apk"),
+                               candidate_graph=graph, installed_apk_path=apk)
+        self.assertEqual(other["loader_apk_path_relation"], "OTHER_DEX_SOURCE")
+        self.assertEqual(good["provider_defined_in_candidate_dex"], "ABSENT")
+        for value in (missing, provider, apk, "another.app"):
+            self.assertNotIn(value, str(good))
+            self.assertNotIn(value, str(other))
+
+    def test_classloader_path_absent_is_not_assumed_to_be_installed_apk(self):
+        provider = "com.yeelight.internal.SomeProvider"
+        log = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+               ", PID: 123\njava.lang.RuntimeException: Unable to get provider " +
+               provider + ": error\nat android.app.ActivityThread.installContentProviders\n" +
+               "Caused by: java.lang.ClassNotFoundException: " + provider + "\n")
+        result = classify_crash(
+            log, candidate_graph={"definitions": frozenset(),
+                                  "dex_origin": {},
+                                  "manifest_providers": frozenset({provider})},
+            installed_apk_path="/data/app/~~safe/io.lxsdd.yeelightdj-abc==/base.apk")
+        self.assertEqual(result["loader_apk_path_relation"], "NO_APK_PATH_IN_EXCEPTION")
+        self.assertEqual(result["missing_class_dex_location"], "ABSENT")
+        self.assertTrue(result["provider_wrapper_seen"])
+        self.assertEqual(result["provider_instantiation_relation"], "DIRECT_PROVIDER_CLASS")
+
+    def test_foreign_log_tag_cannot_forge_an_installed_classloader_path(self):
+        apk = "/data/app/~~safe/io.lxsdd.yeelightdj-abc==/base.apk"
+        log = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+               ", PID: 10\njava.lang.RuntimeException: missing\n" +
+               "at android.app.ActivityThread.installContentProviders\n" +
+               "Caused by: java.lang.ClassNotFoundException: com.yeelight.internal.Missing\n" +
+               "11-12 11:42:04.231  1111  1111 E OtherTag: " +
+               "on path: DexPathList[[zip file \"" + apk + "\"]]\n")
+        report = classify_crash(log, installed_apk_path=apk)
+        self.assertEqual(report["loader_apk_path_relation"], "NO_APK_PATH_IN_EXCEPTION")
+        self.assertFalse(report["provider_wrapper_seen"])
+
+
 if __name__ == "__main__":
     unittest.main()

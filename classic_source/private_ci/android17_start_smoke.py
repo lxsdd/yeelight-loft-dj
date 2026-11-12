@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from zipfile import ZipFile
 import xml.etree.ElementTree as ET
 
 PACKAGE = "io.lxsdd.yeelightdj"
@@ -163,7 +164,11 @@ NESTED_EXCEPTION_TYPES = (
 # A class not in the candidate DEX is distinct from a runtime loader failure
 # for a class that *is* defined; neither is silently treated as a repair.
 JAVA_CLASS = r"(?:[A-Za-z_$][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*"
-PROVIDER_FAILURE = re.compile(r"\bUnable to get provider\s+(" + JAVA_CLASS + r")(?=[:\s])")
+PROVIDER_FAILURE = re.compile(
+    r"\bUnable to (?:get|instantiate|create) provider\s+(" + JAVA_CLASS + r")(?=[:\s])"
+)
+PROVIDER_WRAPPER = re.compile(r"\bUnable to (?:get|instantiate|create) provider\b")
+DEX_PATH_ZIP = re.compile(r'\bzip file "([^"\n]+\.apk)"')
 MISSING_QUOTED = re.compile(
     r'\bClassNotFoundException:\s*Didn.t find class\s+"(' + JAVA_CLASS + r')"'
 )
@@ -188,18 +193,22 @@ def _runtime_namespace(name):
     return "OTHER_RUNTIME_LIBRARY"
 
 
-def _sanitized_classloader_provenance(rows, candidate_graph):
+def _sanitized_classloader_provenance(rows, candidate_graph, installed_apk_path=None):
     """Correlate a *target* provider FATAL with optional signed-APK definitions.
 
     A recovered name is never part of the return value, even on error. A
     matching provider declaration does not prove runtime reachability or UI.
     """
     provider = missing = None
+    path_evidence = []
+    provider_wrapper_seen = False
     for row in rows[:MAX_FATAL_BLOCK_LINES]:
         message = _android_runtime_message(row)
         root = ROOT_CAUSE.match(message)
         if root is None:
             continue
+        if not root.group(1):
+            provider_wrapper_seen |= bool(PROVIDER_WRAPPER.search(message))
         if provider is None and not root.group(1):
             match = PROVIDER_FAILURE.search(message)
             if match is not None:
@@ -208,10 +217,13 @@ def _sanitized_classloader_provenance(rows, candidate_graph):
             match = MISSING_QUOTED.search(message) or MISSING_DIRECT.search(message)
             if match is not None:
                 missing = match.group(1)
+            if "on path:" in message:
+                path_evidence.extend(DEX_PATH_ZIP.findall(message.split("on path:", 1)[1]))
     match_relation = ("DIRECT_PROVIDER_CLASS" if missing is not None and missing == provider else
                       "PROVIDER_DEPENDENCY_OR_REFLECTION" if missing and provider else
                       "UNIDENTIFIED")
     manifest = dex_provider = dex_missing = "NOT_CHECKED"
+    dex_location = "NOT_CHECKED"
     if candidate_graph is not None:
         definitions = candidate_graph["definitions"]
         declared = candidate_graph["manifest_providers"]
@@ -221,6 +233,16 @@ def _sanitized_classloader_provenance(rows, candidate_graph):
                         "ABSENT") if provider else "UNIDENTIFIED"
         dex_missing = ("PRESENT" if "L" + missing.replace(".", "/") + ";" in definitions else
                        "ABSENT") if missing else "UNIDENTIFIED"
+        if missing:
+            descriptor = "L" + missing.replace(".", "/") + ";"
+            dex_location = (candidate_graph.get("dex_origin", {}).get(
+                descriptor, "NOT_INDEXED" if descriptor in definitions else "ABSENT"))
+        else:
+            dex_location = "UNIDENTIFIED"
+    loader_path = "NOT_CHECKED" if installed_apk_path is None else (
+        "NO_APK_PATH_IN_EXCEPTION" if not path_evidence else
+        "INSTALLED_CANDIDATE_INCLUDED" if installed_apk_path in path_evidence else
+        "OTHER_DEX_SOURCE")
     return {
         "provider_instantiation_relation": match_relation,
         "missing_class_namespace": _runtime_namespace(missing),
@@ -228,6 +250,9 @@ def _sanitized_classloader_provenance(rows, candidate_graph):
         "provider_declared_in_candidate_manifest": manifest,
         "provider_defined_in_candidate_dex": dex_provider,
         "missing_class_defined_in_candidate_dex": dex_missing,
+        "missing_class_dex_location": dex_location,
+        "provider_wrapper_seen": bool(provider_wrapper_seen),
+        "loader_apk_path_relation": loader_path,
         "classloader_provenance": "SIGNED_APK_GRAPH_CORRELATED" if candidate_graph is not None else "LOG_ONLY",
     }
 
@@ -243,14 +268,33 @@ def _private_candidate_graph(path):
         raise SmokeBlocked("SMOKE_PRIVATE_CANDIDATE_PATH_REQUIRED")
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from private_startup_audit import inspect_apk
+        from private_startup_audit import inspect_apk, dex_index
         graph = inspect_apk(expected)
+        dex_origin = {}
+        dex_labels = {
+            "classes.dex": "PRIMARY_OEM_DEX",
+            "classes2.dex": "SECONDARY_OEM_DEX",
+            "classes3.dex": "NATIVE_BRIDGE_DEX",
+        }
+        with ZipFile(expected) as archive:
+            dex_names = sorted(name for name in archive.namelist()
+                               if re.fullmatch(r"classes(?:[2-9][0-9]*)?\.dex", name))
+            if set(dex_names) != set(dex_labels):
+                raise ValueError("UNEXPECTED_DEX_SET")
+            for dex_name in dex_names:
+                for descriptor in dex_index(archive.read(dex_name)):
+                    if descriptor in dex_origin:
+                        raise ValueError("DUPLICATE_CLASS")
+                    dex_origin[descriptor] = dex_labels[dex_name]
+        if set(dex_origin) != set(graph["definitions"]):
+            raise ValueError("DEX_READER_MISMATCH")
     except Exception:
         raise SmokeBlocked("SMOKE_PRIVATE_CANDIDATE_GRAPH_INVALID") from None
     if graph["package"] != PACKAGE:
         raise SmokeBlocked("SMOKE_PRIVATE_CANDIDATE_PACKAGE_MISMATCH")
     return {
         "definitions": frozenset(graph["definitions"]),
+        "dex_origin": dex_origin,
         "manifest_providers": frozenset(name for (kind, name) in graph["components"]
                                          if kind == "provider"),
     }
@@ -285,7 +329,7 @@ def _sanitized_exception_chain(rows):
     }
 
 
-def classify_crash(logcat, package=PACKAGE, candidate_graph=None):
+def classify_crash(logcat, package=PACKAGE, candidate_graph=None, installed_apk_path=None):
     """Classify actual AndroidRuntime target crash, not a guessed OEM failure.
 
     Process ownership comes from the adjacent Process/PID header (first 14
@@ -315,7 +359,7 @@ def classify_crash(logcat, package=PACKAGE, candidate_graph=None):
             found_unattributed = True
             continue
         e = _sanitized_exception_chain(window)
-        provenance = (_sanitized_classloader_provenance(window, candidate_graph)
+        provenance = (_sanitized_classloader_provenance(window, candidate_graph, installed_apk_path)
                       if e["exception_category"] == "CLASS_LOADER_MISSING" else {})
         trace = "\n".join(window)
         if "installContentProviders" in trace or "installProvider(" in trace or "Provider.onCreate" in trace:
@@ -332,7 +376,7 @@ def classify_crash(logcat, package=PACKAGE, candidate_graph=None):
 
 
 def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash_log,
-                           observed_ms, candidate_graph=None):
+                           observed_ms, candidate_graph=None, installed_apk_path=None):
     """Assess one honest, bounded launch window; not an app/user acceptance.
 
     The positive state means only that a private emulator reported a resumed
@@ -356,7 +400,8 @@ def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash
                 and valid_component
                 and bool(re.search(r"^Complete\s*$", launch_output, re.M))
                 and not re.search(r"(?:^Error:|^Security exception:|^Warning: Activity not started)", launch_output, re.M))
-    crash = classify_crash(crash_log, candidate_graph=candidate_graph)
+    crash = classify_crash(crash_log, candidate_graph=candidate_graph,
+                           installed_apk_path=installed_apk_path)
     resumed, resume_category = _classic_foreground(activity_snapshot)
     return {
         "status": ("BLOCKED_CRASH" if crash["target_crash"] else
@@ -448,13 +493,14 @@ def entry_button_coordinates(dump, display):
 
 
 def evaluate_navigation_window(*, component, activity_snapshot, crash_log, ui_dump,
-                               observed_ms, candidate_graph=None):
+                               observed_ms, candidate_graph=None, installed_apk_path=None):
     """Test in-app navigation, not an exported direct-Activity shortcut."""
     component = _component(component)
     if type(observed_ms) is not int or observed_ms < 2000 or observed_ms > 120000:
         raise SmokeBlocked("SMOKE_OBSERVATION_WINDOW_INVALID")
     _bounded(activity_snapshot, "SMOKE_BAD_ACTIVITY_SNAPSHOT")
-    crash = classify_crash(crash_log, candidate_graph=candidate_graph)
+    crash = classify_crash(crash_log, candidate_graph=candidate_graph,
+                           installed_apk_path=installed_apk_path)
     # Navigation MUST resume the exact native DJ class, not merely any clone.
     resumed = _resumed(activity_snapshot, component)
     ui = (classify_visible_ui(ui_dump, stage="native_dj")
@@ -554,7 +600,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     home = evaluate_launch_window(component=launcher_component,
                                   launch_output=am_output, activity_snapshot=snapshot,
                                   crash_log=crashes, observed_ms=dwell_ms,
-                                  candidate_graph=candidate_graph)
+                                  candidate_graph=candidate_graph,
+                                  installed_apk_path=installed_path)
     ui_data = None
     if home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
         ui_data = run(["shell", "uiautomator", "dump", "/dev/tty"])
@@ -584,7 +631,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                                     activity_snapshot=dj_snapshot,
                                     crash_log=dj_crashes, ui_dump=dj_ui,
                                     observed_ms=dwell_ms,
-                                    candidate_graph=candidate_graph)
+                                    candidate_graph=candidate_graph,
+                                    installed_apk_path=installed_path)
     reports.append(dj)
     success = dj["status"] == "EMULATOR_NATIVE_DJ_NAVIGATION_OBSERVED"
     return {
