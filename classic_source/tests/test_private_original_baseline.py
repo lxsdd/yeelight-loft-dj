@@ -189,10 +189,19 @@ class OriginalBaselineRegression(unittest.TestCase):
                 }
                 if key in offline:
                     return offline[key]
+                if len(key) == 8 and key[:7] == (
+                        "shell", "cmd", "package", "list", "packages", "--user", "0"):
+                    if key[7] == CLONE:
+                        return "package:" + CLONE if state["clone"] else ""
+                    if key[7] == ORIGINAL:
+                        return "package:" + ORIGINAL if state["original"] else ""
+                    raise AssertionError("Foreign package filter")
                 if key == ("shell", "pm", "path", CLONE):
-                    return "package:" + clone_path if state["clone"] else ""
+                    self.assertTrue(state["clone"])
+                    return "package:" + clone_path
                 if key == ("shell", "pm", "path", ORIGINAL):
-                    return "package:" + original_path if state["original"] else ""
+                    self.assertTrue(state["original"])
+                    return "package:" + original_path
                 if key == ("shell", "sha256sum", clone_path):
                     return clone_pin + "  " + clone_path
                 if key == ("shell", "sha256sum", original_path):
@@ -263,6 +272,60 @@ class OriginalBaselineRegression(unittest.TestCase):
             self.assertEqual(events.count(
                 ("shell", "am", "start", "-W", "-n", original_component)), 1)
             self.assertEqual(events.count(("uninstall", ORIGINAL)), 1)
+
+    def test_absent_original_does_not_call_pm_path(self):
+        queries = []
+        def absent(args, *, timeout=30):
+            queries.append(tuple(args))
+            if args == ["shell", "cmd", "package", "list", "packages",
+                        "--user", "0", ORIGINAL]:
+                return ""
+            raise AssertionError("Absent package must not be queried by pm path")
+        with mock.patch.object(m, "adb", side_effect=absent):
+            self.assertIsNone(m.installed_path(ORIGINAL))
+        self.assertEqual(queries, [("shell", "cmd", "package", "list", "packages",
+                                   "--user", "0", ORIGINAL)])
+        for listing in ("package:com.yeelight.cherry.other",
+                        "package:" + ORIGINAL + "\npackage:foreign",
+                        "Error: not authorized", "package:"):
+            with self.subTest(listing=listing):
+                with mock.patch.object(m, "adb", return_value=listing):
+                    with self.assertRaisesRegex(
+                            m.BaselineBlocked, "^BASELINE_PACKAGE_LIST_INVALID$"):
+                        m.installed_path(ORIGINAL)
+        with mock.patch.object(m, "adb", return_value="package:" + ORIGINAL):
+            with self.assertRaisesRegex(
+                    m.BaselineBlocked, "^BASELINE_INSTALLED_APK_INVALID$"):
+                m.installed_path(ORIGINAL)
+
+    def test_failed_adb_reports_only_fixed_phase(self):
+        phases = [
+            (["shell", "cmd", "package", "list", "packages", "--user", "0",
+              "com.yeelight.cherry"], "BASELINE_PACKAGE_LIST_ADB_FAILED"),
+            (["shell", "pm", "path", "com.yeelight.cherry"],
+             "BASELINE_INSTALLED_PATH_ADB_FAILED"),
+            (["shell", "sha256sum", "/data/app/PrivateSecret/base.apk"],
+             "BASELINE_INSTALLED_HASH_ADB_FAILED"),
+            (["shell", "ip", "-6", "route", "show"], "BASELINE_ISOLATION_ADB_FAILED"),
+            (["logcat", "-b", "crash", "-d"], "BASELINE_CRASH_BUFFER_ADB_FAILED"),
+            (["shell", "cmd", "package", "resolve-activity", "PrivateSecret"],
+             "BASELINE_LAUNCHER_QUERY_ADB_FAILED"),
+            (["shell", "dumpsys", "activity", "activities"],
+             "BASELINE_ACTIVITY_SNAPSHOT_ADB_FAILED"),
+            (["uninstall", ORIGINAL], "BASELINE_CLEANUP_ADB_FAILED"),
+        ]
+        response = mock.Mock(returncode=1, stdout=b"PrivateSecret",
+                             stderr=b"PrivateSecret")
+        with mock.patch.object(m.subprocess, "run", return_value=response):
+            for args, code in phases:
+                with self.subTest(args=args), self.assertRaisesRegex(
+                        m.BaselineBlocked, "^" + code + "$") as cm:
+                    m.run_adb(args)
+                self.assertNotIn("PrivateSecret", str(cm.exception))
+            status, stdout = m.run_adb(
+                ["shell", "pm", "path", ORIGINAL], allow_failure=True)
+            self.assertEqual(status, 1)
+            self.assertEqual(stdout, "PrivateSecret")
 
     def test_original_foreground_only_current_global_original_oem_activity(self):
         ok = "topResumedActivity=ActivityRecord{abc u0 com.yeelight.cherry/.MainActivity t1}"

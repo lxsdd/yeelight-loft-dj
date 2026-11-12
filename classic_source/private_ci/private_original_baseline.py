@@ -64,6 +64,29 @@ def require_scope(serial, original, candidate, approved, environ=None):
             "BASELINE_PRIVATE_APK_SCOPE_INVALID")
 
 
+def adb_failure_code(args):
+    """Map failed ADB commands to fixed phases without OEM command text."""
+    if args[:7] == ["shell", "cmd", "package", "list", "packages", "--user", "0"]:
+        return "BASELINE_PACKAGE_LIST_ADB_FAILED"
+    if args[:3] == ["shell", "pm", "path"]:
+        return "BASELINE_INSTALLED_PATH_ADB_FAILED"
+    if args[:2] == ["shell", "sha256sum"]:
+        return "BASELINE_INSTALLED_HASH_ADB_FAILED"
+    if args[:2] in (["shell", "getprop"], ["shell", "settings"],
+                    ["shell", "ip"], ["shell", "id"]):
+        return "BASELINE_ISOLATION_ADB_FAILED"
+    if args[:3] == ["logcat", "-b", "crash"]:
+        return "BASELINE_CRASH_BUFFER_ADB_FAILED"
+    if args[:4] in (["shell", "cmd", "package", "query-activities"],
+                    ["shell", "cmd", "package", "resolve-activity"]):
+        return "BASELINE_LAUNCHER_QUERY_ADB_FAILED"
+    if args[:3] == ["shell", "dumpsys", "activity"]:
+        return "BASELINE_ACTIVITY_SNAPSHOT_ADB_FAILED"
+    if args[:3] == ["shell", "am", "force-stop"] or args[:1] == ["uninstall"]:
+        return "BASELINE_CLEANUP_ADB_FAILED"
+    return "BASELINE_ADB_COMMAND_FAILED"
+
+
 def run_adb(args, *, timeout=30, allow_failure=False):
     require(type(args) is list and all(type(s) is str for s in args),
             "BASELINE_ADB_ARGUMENTS_INVALID")
@@ -75,7 +98,7 @@ def run_adb(args, *, timeout=30, allow_failure=False):
     require(len(p.stdout) <= MAX_ADB and len(p.stderr) <= MAX_ADB,
             "BASELINE_ADB_OUTPUT_OVERSIZED")
     if not allow_failure:
-        require(p.returncode == 0, "BASELINE_ADB_COMMAND_FAILED")
+        require(p.returncode == 0, adb_failure_code(args))
     try:
         return p.returncode, p.stdout.decode("utf-8", errors="strict").strip()
     except UnicodeDecodeError:
@@ -88,9 +111,15 @@ def adb(args, *, timeout=30):
 
 def installed_path(package):
     require(package in (ORIGINAL, CLONE), "BASELINE_PACKAGE_OUT_OF_SCOPE")
-    raw = adb(["shell", "pm", "path", package]).splitlines()
-    if not raw:
+    # Android17 may exit with code 1 from pm path if a package is absent.
+    # A successful PackageManager list must prove exact installation first.
+    listed = adb(["shell", "cmd", "package", "list", "packages",
+                  "--user", "0", package]).splitlines()
+    require(listed in ([], ["package:" + package]),
+            "BASELINE_PACKAGE_LIST_INVALID")
+    if not listed:
         return None
+    raw = adb(["shell", "pm", "path", package]).splitlines()
     require(len(raw) == 1 and raw[0].startswith("package:") and
             APK_PATH.fullmatch(raw[0][8:]), "BASELINE_INSTALLED_APK_INVALID")
     return raw[0][8:]
