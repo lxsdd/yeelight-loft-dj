@@ -22,6 +22,19 @@ class CloneLauncherContract(unittest.TestCase):
         self.assertEqual(m.select_installed_launcher(GOOD + "\n" + OTHER, OTHER),
                          "com.yeelight.cherry.OtherLauncher")
 
+    def test_original_baseline_launcher_is_explicit_and_clone_mode_remains_strict(self):
+        original = m.ORIGINAL + "/com.yeelight.cherry.MainActivity"
+        m.verify_badging("package: name='com.yeelight.cherry' versionCode='35402'\n",
+                         package=m.ORIGINAL)
+        self.assertEqual(m.select_installed_launcher(original, original,
+                             package=m.ORIGINAL), "com.yeelight.cherry.MainActivity")
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.select_installed_launcher(original, original)
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.verify_badging(BADGING, package=m.ORIGINAL)
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.select_installed_launcher(original, original, package="foreign.app")
+
     def test_aapt_launchable_heuristics_not_required_for_clone(self):
         m.verify_badging(BADGING)
         self.assertEqual(m.select_installed_launcher(GOOD, GOOD),

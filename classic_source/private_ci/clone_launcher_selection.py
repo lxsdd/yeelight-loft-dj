@@ -10,6 +10,7 @@ import re
 import sys
 
 PACKAGE = "io.lxsdd.yeelightdj"
+ORIGINAL = "com.yeelight.cherry"
 ALLOWED_OEM_ACTIVITY = re.compile(r"com\.yeelight\.[A-Za-z_$][A-Za-z0-9_.$]*\Z")
 BADGING_PACKAGE = re.compile(r"(?m)^package: name='([^']+)'(?:\s|$)")
 REASONS = frozenset((
@@ -24,17 +25,21 @@ class CloneLauncherBlocked(ValueError):
     pass
 
 
-def verify_badging(raw):
+def verify_badging(raw, *, package=PACKAGE):
+    if package not in (PACKAGE, ORIGINAL):
+        raise CloneLauncherBlocked("PRIVATE_INPUT_INVALID")
     if type(raw) is not str or len(raw) > 65536:
         raise CloneLauncherBlocked("PRIVATE_INPUT_INVALID")
-    if BADGING_PACKAGE.findall(raw) != [PACKAGE]:
+    if BADGING_PACKAGE.findall(raw) != [package]:
         raise CloneLauncherBlocked("BADGING_PACKAGE_MISMATCH")
 
 
-def canonical(value):
+def canonical(value, *, package=PACKAGE):
+    if package not in (PACKAGE, ORIGINAL):
+        raise CloneLauncherBlocked("INSTALLED_LAUNCHER_UNTRUSTED")
     if type(value) is not str or len(value) > 256:
         raise CloneLauncherBlocked("INSTALLED_LAUNCHER_UNTRUSTED")
-    prefix = PACKAGE + "/"
+    prefix = package + "/"
     if not value.startswith(prefix):
         raise CloneLauncherBlocked("INSTALLED_LAUNCHER_UNTRUSTED")
     activity = value[len(prefix):]
@@ -45,7 +50,9 @@ def canonical(value):
     return activity
 
 
-def select_installed_launcher(queried, resolved):
+def select_installed_launcher(queried, resolved, *, package=PACKAGE):
+    if package not in (PACKAGE, ORIGINAL):
+        raise CloneLauncherBlocked("PRIVATE_INPUT_INVALID")
     if any(type(x) is not str or len(x) > 65536 for x in (queried, resolved)):
         raise CloneLauncherBlocked("PRIVATE_INPUT_INVALID")
     candidates = [s.strip() for s in queried.splitlines() if s.strip()]
@@ -53,13 +60,13 @@ def select_installed_launcher(queried, resolved):
         raise CloneLauncherBlocked("NO_INSTALLED_LAUNCHER")
     if len(candidates) > 32:
         raise CloneLauncherBlocked("INSTALLED_LAUNCHER_AMBIGUOUS")
-    chosen = [canonical(s) for s in candidates]
+    chosen = [canonical(s, package=package) for s in candidates]
     if len(set(chosen)) != len(chosen):
         raise CloneLauncherBlocked("INSTALLED_LAUNCHER_AMBIGUOUS")
     result = [s.strip() for s in resolved.splitlines() if s.strip()]
     if len(result) != 1 or result == ["No activity found"]:
         raise CloneLauncherBlocked("RESOLVED_LAUNCHER_MISSING")
-    selected = canonical(result[0])
+    selected = canonical(result[0], package=package)
     if selected not in chosen:
         raise CloneLauncherBlocked("RESOLVED_LAUNCHER_MISMATCH")
     return selected

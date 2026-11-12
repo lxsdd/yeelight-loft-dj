@@ -116,6 +116,23 @@ class PrivateEmulatorWorkflowContract(unittest.TestCase):
         with self.assertRaises(AssertionError):
             verify_private_shell(text.replace("install -r --no-streaming", "install -r"))
 
+    def test_original_baseline_only_after_failed_clone_and_forensics(self):
+        text = SHELL.read_text("utf-8")
+        self.assertEqual(text.count("private_original_baseline.py"), 1)
+        self.assertIn("private_original_baseline.py", text)
+        self.assertIn("--explicit-owner-approved-private-emulator || fail", text)
+        self.assertTrue(
+            text.index("android17_start_smoke.py") <
+            text.index("classloader_linkage_forensics.py") <
+            text.index("private_original_baseline.py") <
+            text.rfind("  fail\nfi")
+        )
+        self.assertIn('if python3 classic_source/private_ci/android17_start_smoke.py', text)
+        self.assertIn('PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS', text)
+        with self.assertRaises(AssertionError):
+            self.assertFalse("private_original_baseline.py" in
+                             text.replace("private_original_baseline.py", "unsafe"))
+
     def test_probe_never_directly_exports_private_dj_activity(self):
         value = PROBE.read_text("utf-8")
         self.assertIn('run(["shell", "input", "tap"', value)
