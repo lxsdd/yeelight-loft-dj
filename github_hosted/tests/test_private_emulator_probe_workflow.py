@@ -15,7 +15,8 @@ def validate_contract(source):
     assert inputs['candidate_pr']['default'] == '0'
     assert inputs['candidate_sha']['default'] == ''
     assert all(i['type'] == 'string' for i in inputs.values())
-    assert w['permissions'] == {'contents': 'read'}
+    assert w['permissions'] == {'contents': 'read', 'actions': 'read',
+                                'pull-requests': 'read'}
     assert w['concurrency']['cancel-in-progress'] == 'false'
     assert set(w['jobs']) == {'guarded-private-emulator-only'}
     job = w['jobs']['guarded-private-emulator-only']
