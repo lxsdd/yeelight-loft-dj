@@ -16,7 +16,8 @@ from zipfile import ZipFile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "private_ci"))
 from classloader_linkage_forensics import (
     ForensicsBlocked, bucket, summarize_linkage, target_crash_descriptor,
-    load_dex_graphs, verify_compiler, safe_main, stage_guard,
+    summarize_target_suppressed_errors, load_dex_graphs, verify_compiler,
+    safe_main, stage_guard,
 )
 
 A = "Ltest/fixture/Target;"
@@ -186,6 +187,47 @@ class CrashSelectionTests(unittest.TestCase):
                 target_crash_descriptor(bad)
 
 
+
+    def test_suppressed_causes_are_target_scoped_and_privacy_safe(self):
+        log = ("FATAL EXCEPTION: main\nProcess: foreign.app, PID: 2\n"
+               "Suppressed: java.lang.VerifyError: PRIVATE_FOREIGN\n"
+               "FATAL EXCEPTION: main\nProcess: io.lxsdd.yeelightdj, PID: 3\n"
+               "Caused by: java.lang.ClassNotFoundException: PRIVATE_APP\n"
+               "Suppressed: java.io.IOException: /private/file/path\n"
+               "Suppressed: java.lang.NoClassDefFoundError: PRIVATE_LINK\n")
+        report = summarize_target_suppressed_errors(log)
+        self.assertEqual(report["status"], "TARGET_SUPPRESSED_CAUSE_EVIDENCE_ONLY")
+        self.assertEqual(report["suppressed_count_bucket"], "TWO_TO_THREE")
+        self.assertTrue(report["suppressed_io_failure_present"])
+        self.assertTrue(report["suppressed_linkage_failure_present"])
+        self.assertFalse(report["suppressed_verifier_failure_present"])
+        self.assertFalse(report["suppressed_security_failure_present"])
+        self.assertFalse(report["art_class_loading_verified"])
+        self.assertNotIn("PRIVATE_", json.dumps(report))
+        self.assertNotIn("/private/", json.dumps(report))
+
+    def test_target_suppressed_verify_is_not_confused_with_foreign_crash(self):
+        log = ("FATAL EXCEPTION: main\nProcess: foreign.app, PID: 2\n"
+               "Suppressed: java.io.IOException: FOREIGN\n"
+               "FATAL EXCEPTION: main\nProcess: io.lxsdd.yeelightdj, PID: 3\n"
+               "Suppressed: java.lang.VerifyError: PRIVATE_TARGET\n"
+               "Suppressed: java.lang.SecurityException: PRIVATE_REDACTED\n")
+        report = summarize_target_suppressed_errors(log)
+        self.assertTrue(report["suppressed_verifier_failure_present"])
+        self.assertTrue(report["suppressed_security_failure_present"])
+        self.assertFalse(report["suppressed_io_failure_present"])
+        self.assertFalse(report["suppressed_other_failure_present"])
+        self.assertNotIn("PRIVATE_", json.dumps(report))
+
+    def test_suppressed_absence_and_invalid_inputs_fail_closed(self):
+        no_target = "FATAL EXCEPTION: main\nProcess: foreign.app, PID: 2\n"
+        report = summarize_target_suppressed_errors(no_target)
+        self.assertEqual(report["status"], "TARGET_FATAL_NOT_FOUND")
+        self.assertEqual(report["suppressed_count_bucket"], "NONE")
+        for invalid in (b"no", "x" * 2_000_001):
+            with self.assertRaisesRegex(ForensicsBlocked, "^CRASH_LOG_INVALID$"):
+                summarize_target_suppressed_errors(invalid)
+
 class CliImportAndStageFailureTests(unittest.TestCase):
     def test_real_script_import_layout_from_clean_python_process(self):
         """Catch the original private_ci -> classic_source import bug pre-merge.
@@ -284,7 +326,17 @@ class ArchiveAndRunnerTests(unittest.TestCase):
         denied = subprocess.CompletedProcess([], 1, b"Failure", b"")
         with mock.patch("subprocess.run", return_value=denied):
             self.assertEqual(verify_compiler("emulator-5554"),
-                             "ART_VERIFY_COMMAND_REJECTED")
+                             "ART_VERIFY_REPORTED_FAILURE")
+        for result, expected in (
+            (subprocess.CompletedProcess([], 0, b"Failure", b""), "ART_VERIFY_REPORTED_FAILURE"),
+            (subprocess.CompletedProcess([], 1, b"Permission denied", b""), "ART_VERIFY_COMMAND_EXIT_NONZERO"),
+            (subprocess.CompletedProcess([], 1, b"Success", b""), "ART_VERIFY_COMMAND_EXIT_NONZERO"),
+            (subprocess.CompletedProcess([], 0, b"Success not really", b""), "ART_VERIFY_COMMAND_UNRECOGNIZED_OUTPUT"),
+            (subprocess.CompletedProcess([], 0, b"", b""), "ART_VERIFY_COMMAND_UNRECOGNIZED_OUTPUT"),
+        ):
+            with self.subTest(expected=expected):
+                with mock.patch("subprocess.run", return_value=result):
+                    self.assertEqual(verify_compiler("emulator-5554"), expected)
         with mock.patch("subprocess.run",
                         side_effect=subprocess.TimeoutExpired([], 120)):
             self.assertEqual(verify_compiler("emulator-5554"),

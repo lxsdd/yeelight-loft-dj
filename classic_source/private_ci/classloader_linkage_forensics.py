@@ -177,6 +177,74 @@ def target_crash_descriptor(logcat: str) -> tuple[str, str | None]:
     return "NO_TARGET_FATAL", None
 
 
+def summarize_target_suppressed_errors(logcat: str) -> dict:
+    """Scope suppressed ART/linkage failures to the target process's FATAL.
+
+    The ClassNotFoundException wrapper can hide a suppressed verifier, dex I/O
+    or linkage exception. Never echo message text, descriptors, paths or stacks.
+    This records evidence only: absence of a suppressed cause is NOT proof
+    that ART loaded the class or that the original OEM app is compatible.
+    """
+    require(type(logcat) is str and len(logcat) <= MAX_LOG,
+            "CRASH_LOG_INVALID")
+    from android17_start_smoke import _android_runtime_message, MAX_FATAL_BLOCK_LINES
+    lines = logcat.splitlines()
+    for i, line in enumerate(lines):
+        if "FATAL EXCEPTION" not in line:
+            continue
+        block = []
+        for row in lines[i + 1:i + 1 + MAX_FATAL_BLOCK_LINES]:
+            if "FATAL EXCEPTION" in row:
+                break
+            block.append(row)
+        process = re.search(r"\bProcess:\s*([A-Za-z0-9_.:]+)\s*,\s*PID:",
+                            "\n".join(block[:14]))
+        if process is None or not (process.group(1) == PACKAGE or
+                                   process.group(1).startswith(PACKAGE + ":")):
+            continue
+        count, verifier, linkage, io_error, security, other = 0, False, False, False, False, False
+        suppressed = re.compile(r"^\s*Suppressed:\s*([A-Za-z_$][\w.$]*)")
+        for row in block:
+            message = _android_runtime_message(row)
+            match = suppressed.match(message)
+            if match is None:
+                continue
+            count += 1
+            name = match.group(1).rsplit(".", 1)[-1]
+            if name in ("VerifyError", "ClassFormatError"):
+                verifier = True
+            elif name in ("NoClassDefFoundError", "ClassNotFoundException",
+                          "IncompatibleClassChangeError", "LinkageError",
+                          "IllegalAccessError"):
+                linkage = True
+            elif name in ("IOException", "FileNotFoundException", "ZipException"):
+                io_error = True
+            elif name in ("SecurityException",):
+                security = True
+            else:
+                other = True
+        return {
+            "status": "TARGET_SUPPRESSED_CAUSE_EVIDENCE_ONLY",
+            "suppressed_count_bucket": bucket(count),
+            "suppressed_verifier_failure_present": verifier,
+            "suppressed_linkage_failure_present": linkage,
+            "suppressed_io_failure_present": io_error,
+            "suppressed_security_failure_present": security,
+            "suppressed_other_failure_present": other,
+            "art_class_loading_verified": False,
+        }
+    return {
+        "status": "TARGET_FATAL_NOT_FOUND",
+        "suppressed_count_bucket": "NONE",
+        "suppressed_verifier_failure_present": False,
+        "suppressed_linkage_failure_present": False,
+        "suppressed_io_failure_present": False,
+        "suppressed_security_failure_present": False,
+        "suppressed_other_failure_present": False,
+        "art_class_loading_verified": False,
+    }
+
+
 def load_dex_graphs(original: Path, candidate: Path) -> tuple[dict, dict, dict]:
     """Only read private archives, verify complete DEX member sets and hashes."""
     # Python invokes this file as classic_source/private_ci/<script>.py from
@@ -235,8 +303,17 @@ def verify_compiler(serial: str) -> str:
         return "ART_VERIFY_COMMAND_UNAVAILABLE"
     if len(completed.stdout) > 50000 or len(completed.stderr) > 50000:
         return "ART_VERIFY_COMMAND_UNTRUSTED_OUTPUT"
-    return ("ART_VERIFY_COMMAND_ACCEPTED" if completed.returncode == 0 and
-            b"Success" in completed.stdout else "ART_VERIFY_COMMAND_REJECTED")
+    # Android's command returns an output token; a zero exit code alone or
+    # a substring "Success" inside an error is not verifier success.
+    # Never forward stdout/stderr; they can include private package metadata.
+    token = completed.stdout.strip()
+    if completed.returncode == 0 and token == b"Success":
+        return "ART_VERIFY_COMMAND_ACCEPTED"
+    if token == b"Failure":
+        return "ART_VERIFY_REPORTED_FAILURE"
+    if completed.returncode != 0:
+        return "ART_VERIFY_COMMAND_EXIT_NONZERO"
+    return "ART_VERIFY_COMMAND_UNRECOGNIZED_OUTPUT"
 
 
 # Catch unexpected private-input failures at their exact diagnostic phase.
@@ -298,11 +375,15 @@ def safe_main(args) -> dict:
     evidence = stage_guard(
         "CLASS_LINKAGE_ANALYSIS_FAILED",
         lambda: summarize_linkage(original, candidate, origin, target))
+    suppressed = stage_guard(
+        "TARGET_CRASH_CLASSIFICATION_FAILED",
+        lambda: summarize_target_suppressed_errors(logcat))
     art = stage_guard(
         "ART_VERIFY_EXECUTION_FAILED",
         lambda: verify_compiler(args.serial))
     return {
         "status": "PRIVATE_CLASSLOADER_FORENSICS_DIAGNOSTIC_ONLY",
+        "target_suppressed_evidence": suppressed,
         "target_evidence": status,
         "linkage": evidence,
         "post_crash_art_verify_command": art,
