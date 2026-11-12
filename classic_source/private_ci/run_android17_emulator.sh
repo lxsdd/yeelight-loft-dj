@@ -125,5 +125,13 @@ else
     --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
     --candidate "$APK" \
     --serial emulator-5554 || fail
+  # Only AFTER the clone has actually failed: inspect its exact crash first,
+  # uninstall it, then run one unmodified original on THIS offline emulator.
+  # No original install/launch if the clone passed; never turn a crash to PASS.
+  python3 classic_source/private_ci/private_original_baseline.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --candidate "$APK" \
+    --serial emulator-5554 \
+    --explicit-owner-approved-private-emulator || fail
   fail
 fi
