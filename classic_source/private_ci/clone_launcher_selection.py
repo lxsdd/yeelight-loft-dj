@@ -12,6 +12,7 @@ import sys
 PACKAGE = "io.lxsdd.yeelightdj"
 ORIGINAL = "com.yeelight.cherry"
 ALLOWED_OEM_ACTIVITY = re.compile(r"com\.yeelight\.[A-Za-z_$][A-Za-z0-9_.$]*\Z")
+OEM_SHORT_CLASS = re.compile(r"\.[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\Z")
 BADGING_PACKAGE = re.compile(r"(?m)^package: name='([^']+)'(?:\s|$)")
 REASONS = frozenset((
     "PRIVATE_INPUT_INVALID", "BADGING_PACKAGE_MISMATCH",
@@ -43,9 +44,16 @@ def canonical(value, *, package=PACKAGE):
     if not value.startswith(prefix):
         raise CloneLauncherBlocked("INSTALLED_LAUNCHER_UNTRUSTED")
     activity = value[len(prefix):]
+    # Android PackageManager --components uses ComponentName's *short*
+    # representation for a same-package launcher (e.g. ORIGINAL/.Main).
+    # Relative names are ONLY trusted for pinned ORIGINAL. For our clone
+    # the OEM Activity is in a different package; a relative clone launcher
+    # would point at an injected/synthetic class and must remain forbidden.
+    if activity.startswith("."):
+        if package != ORIGINAL or not OEM_SHORT_CLASS.fullmatch(activity):
+            raise CloneLauncherBlocked("INSTALLED_LAUNCHER_UNTRUSTED")
+        activity = package + activity
     if not ALLOWED_OEM_ACTIVITY.fullmatch(activity):
-        # Do not mistake a synthetic clone or native DJ Activity for Classic's
-        # original OEM launcher. A relative ".Main" resolves into our clone.
         raise CloneLauncherBlocked("INSTALLED_LAUNCHER_UNTRUSTED")
     return activity
 

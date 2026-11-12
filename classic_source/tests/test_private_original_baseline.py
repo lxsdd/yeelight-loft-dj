@@ -167,6 +167,7 @@ class OriginalBaselineRegression(unittest.TestCase):
             clone_path = "/data/app/syntheticclone/base.apk"
             original_path = "/data/app/syntheticoriginal/base.apk"
             original_component = ORIGINAL + "/com.yeelight.cherry.MainActivity"
+            original_short = ORIGINAL + "/.MainActivity"
             state = {"clone": True, "original": False, "original_launched": False}
             events = []
             env = {"RUNNER_TEMP": temp, "GITHUB_REPOSITORY": "lxsdd/yeelight-loft-dj",
@@ -226,9 +227,9 @@ class OriginalBaselineRegression(unittest.TestCase):
                     return ("topResumedActivity=ActivityRecord{abc u0 "
                             "com.yeelight.cherry/.MainActivity t1}")
                 if key[:4] == ("shell", "cmd", "package", "query-activities"):
-                    return original_component
+                    return original_short
                 if key[:4] == ("shell", "cmd", "package", "resolve-activity"):
-                    return original_component
+                    return original_short
                 raise AssertionError("Unexpected synthetic adb request " + repr(key))
 
             def fake_run_adb(args, *, timeout=30, allow_failure=False):
@@ -326,6 +327,31 @@ class OriginalBaselineRegression(unittest.TestCase):
                 ["shell", "pm", "path", ORIGINAL], allow_failure=True)
             self.assertEqual(status, 1)
             self.assertEqual(stdout, "PrivateSecret")
+
+    def test_original_short_component_is_normalized_before_real_launch(self):
+        short = ORIGINAL + "/.MainActivity"
+        full = ORIGINAL + "/com.yeelight.cherry.MainActivity"
+        self.assertEqual(m.resolve_original_launcher(short, short),
+                         "com.yeelight.cherry.MainActivity")
+        self.assertEqual(m.resolve_original_launcher(short, full),
+                         "com.yeelight.cherry.MainActivity")
+        for bad_query, bad_resolved, reason in (
+            ("No activities found", short, "NO_INSTALLED_LAUNCHER"),
+            (short, "No activity found", "RESOLVED_LAUNCHER_MISSING"),
+            (short, ORIGINAL + "/.Unlisted", "RESOLVED_LAUNCHER_MISMATCH"),
+            (ORIGINAL + "/.Bad..Class", short, "INSTALLED_LAUNCHER_UNTRUSTED"),
+            ("com.other/.Hidden", short, "INSTALLED_LAUNCHER_UNTRUSTED"),
+        ):
+            with self.subTest(reason=reason), self.assertRaisesRegex(
+                    m.BaselineBlocked, "^BASELINE_ORIGINAL_LAUNCHER_" + reason + "$") as err:
+                m.resolve_original_launcher(bad_query, bad_resolved)
+            self.assertNotIn("Hidden", str(err.exception))
+        # No exact class/Activity/PackageManager bytes enter fixed errors.
+        with mock.patch.object(m, "select_installed_launcher",
+                               side_effect=m.CloneLauncherBlocked("PrivateSecret")):
+            with self.assertRaisesRegex(m.BaselineBlocked,
+                                        "^BASELINE_ORIGINAL_LAUNCHER_PRIVATE_INPUT_INVALID$"):
+                m.resolve_original_launcher(short, short)
 
     def test_original_foreground_only_current_global_original_oem_activity(self):
         ok = "topResumedActivity=ActivityRecord{abc u0 com.yeelight.cherry/.MainActivity t1}"

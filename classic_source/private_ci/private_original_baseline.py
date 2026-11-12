@@ -28,6 +28,7 @@ from android17_start_smoke import (
 )
 from clone_launcher_selection import (
     ORIGINAL, PACKAGE as CLONE, CloneLauncherBlocked, select_installed_launcher,
+    REASONS as LAUNCHER_REASONS,
 )
 
 SERIAL = "emulator-5554"
@@ -258,6 +259,17 @@ def report_original_install_refusal(clone_crash):
     }
 
 
+def resolve_original_launcher(queried, resolved):
+    """Validate Android's absolute OR short ComponentName, with safe errors."""
+    try:
+        return select_installed_launcher(queried, resolved, package=ORIGINAL)
+    except CloneLauncherBlocked as error:
+        reason = str(error)
+        if reason not in LAUNCHER_REASONS:
+            reason = "PRIVATE_INPUT_INVALID"
+        raise BaselineBlocked("BASELINE_ORIGINAL_LAUNCHER_" + reason) from None
+
+
 def compare_private_emulator(original, candidate, *, serial, approved,
                              pause=time.sleep):
     require_scope(serial, original, candidate, approved)
@@ -307,11 +319,7 @@ def compare_private_emulator(original, candidate, *, serial, approved,
                        "--components", "--user", "0", *action])
         resolved = adb(["shell", "cmd", "package", "resolve-activity",
                         "--components", "--user", "0", *action])
-        try:
-            launcher = select_installed_launcher(queried, resolved,
-                                                 package=ORIGINAL)
-        except CloneLauncherBlocked:
-            raise BaselineBlocked("BASELINE_ORIGINAL_LAUNCHER_INVALID") from None
+        launcher = resolve_original_launcher(queried, resolved)
         offline_guard()
         adb(["logcat", "-b", "crash", "-c"])
         adb(["shell", "am", "force-stop", ORIGINAL])
