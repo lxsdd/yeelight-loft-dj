@@ -57,7 +57,7 @@ def require_scope(serial, original, candidate, approved, environ=None):
             and not env.get("GH_TOKEN") and not env.get("CLASSIC_VAULT_TOKEN"),
             "BASELINE_OWNER_SCOPE_REQUIRED")
     root = Path(tmp)
-    require(type(original) is Path and type(candidate) is Path and
+    require(isinstance(original, Path) and isinstance(candidate, Path) and
             original == root / "private-original/com.yeelight.cherry_3.5.4.apk"
             and candidate == root / "private-output/classic-loft-dj-TEST-SIGNED.apk"
             and all(p.is_file() and not p.is_symlink() for p in (original, candidate)),

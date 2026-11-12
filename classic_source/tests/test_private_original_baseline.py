@@ -1,7 +1,10 @@
 """Synthetic original-vs-clone startup comparison: no OEM APK or ADB."""
 import json
 from pathlib import Path
+import hashlib
+import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -107,6 +110,159 @@ class OriginalBaselineRegression(unittest.TestCase):
         with self.assertRaisesRegex(m.BaselineBlocked,
                                     "BASELINE_PRIVATE_APK_SCOPE_INVALID"):
             m.require_scope("emulator-5554", stock, Path("/other.apk"), True, env)
+
+    def test_positive_real_path_scope_with_real_files_and_symlink_denial(self):
+        # Path(...) is PosixPath/WindowsPath, never type(...) is Path. This
+        # exact owner runner gate must accept legitimate pinned regular files.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stock = root / "private-original/com.yeelight.cherry_3.5.4.apk"
+            clone = root / "private-output/classic-loft-dj-TEST-SIGNED.apk"
+            stock.parent.mkdir()
+            clone.parent.mkdir()
+            stock.write_bytes(b"synthetic original")
+            clone.write_bytes(b"synthetic candidate")
+            env = {"RUNNER_TEMP": temp,
+                   "GITHUB_REPOSITORY": "lxsdd/yeelight-loft-dj",
+                   "GITHUB_ACTOR": "lxsdd",
+                   "GITHUB_REF": "refs/heads/main",
+                   "GITHUB_EVENT_NAME": "workflow_dispatch",
+                   "RUNNER_ENVIRONMENT": "github-hosted"}
+            self.assertIsNone(m.require_scope("emulator-5554", stock, clone, True, env))
+            with self.assertRaisesRegex(m.BaselineBlocked,
+                                        "^BASELINE_PRIVATE_APK_SCOPE_INVALID$"):
+                m.require_scope("emulator-5554", str(stock), clone, True, env)
+            old_content = stock.read_bytes()
+            stock.unlink()
+            target = root / "target.bin"
+            target.write_bytes(old_content)
+            stock.symlink_to(target)
+            with self.assertRaisesRegex(m.BaselineBlocked,
+                                        "^BASELINE_PRIVATE_APK_SCOPE_INVALID$"):
+                m.require_scope("emulator-5554", stock, clone, True, env)
+            stock.unlink()
+            stock.write_bytes(old_content)
+            clone.unlink()
+            clone.symlink_to(target)
+            with self.assertRaisesRegex(m.BaselineBlocked,
+                                        "^BASELINE_PRIVATE_APK_SCOPE_INVALID$"):
+                m.require_scope("emulator-5554", stock, clone, True, env)
+
+    def test_full_mocked_owner_runner_original_launch_and_cleanup_sequence(self):
+        """Exercise production CLI logic, not only pure helper functions.
+
+        The synthetic emulator starts with only a signed clone installed;
+        its target crash is real-shaped, and the original must be installed,
+        hash-checked, launched once, observed, uninstalled, then still FAIL.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stock = root / "private-original/com.yeelight.cherry_3.5.4.apk"
+            clone = root / "private-output/classic-loft-dj-TEST-SIGNED.apk"
+            stock.parent.mkdir()
+            clone.parent.mkdir()
+            stock.write_bytes(b"synthetic pinned OEM fixture, never used as OEM")
+            clone.write_bytes(b"synthetic signed candidate")
+            clone_pin = hashlib.sha256(clone.read_bytes()).hexdigest()
+            clone_path = "/data/app/syntheticclone/base.apk"
+            original_path = "/data/app/syntheticoriginal/base.apk"
+            original_component = ORIGINAL + "/com.yeelight.cherry.MainActivity"
+            state = {"clone": True, "original": False, "original_launched": False}
+            events = []
+            env = {"RUNNER_TEMP": temp, "GITHUB_REPOSITORY": "lxsdd/yeelight-loft-dj",
+                   "GITHUB_ACTOR": "lxsdd", "GITHUB_REF": "refs/heads/main",
+                   "GITHUB_EVENT_NAME": "workflow_dispatch",
+                   "RUNNER_ENVIRONMENT": "github-hosted"}
+
+            def fake_adb(args, *, timeout=30):
+                events.append(tuple(args))
+                key = tuple(args)
+                offline = {
+                    ("shell", "getprop", "ro.kernel.qemu"): "1",
+                    ("shell", "getprop", "ro.build.version.release"): "17",
+                    ("shell", "id", "-u"): "0",
+                    ("shell", "settings", "get", "global", "airplane_mode_on"): "1",
+                    ("shell", "settings", "get", "global", "wifi_on"): "0",
+                    ("shell", "settings", "get", "global", "mobile_data"): "0",
+                    ("shell", "ip", "-4", "route", "show"): "",
+                    ("shell", "ip", "-6", "route", "show"): "",
+                }
+                if key in offline:
+                    return offline[key]
+                if key == ("shell", "pm", "path", CLONE):
+                    return "package:" + clone_path if state["clone"] else ""
+                if key == ("shell", "pm", "path", ORIGINAL):
+                    return "package:" + original_path if state["original"] else ""
+                if key == ("shell", "sha256sum", clone_path):
+                    return clone_pin + "  " + clone_path
+                if key == ("shell", "sha256sum", original_path):
+                    return m.ORIGINAL_SHA256 + "  " + original_path
+                if key == ("logcat", "-b", "crash", "-d"):
+                    if state["original_launched"]:
+                        return fatal(ORIGINAL, "com.yeelight.internal.HiddenDependency")
+                    return fatal(CLONE, "com.yeelight.internal.HiddenDependency")
+                if key == ("shell", "am", "force-stop", CLONE):
+                    return ""
+                if key == ("uninstall", CLONE):
+                    state["clone"] = False
+                    return "Success"
+                if key == ("shell", "am", "force-stop", ORIGINAL):
+                    return ""
+                if key == ("uninstall", ORIGINAL):
+                    state["original"] = False
+                    return "Success"
+                if key == ("logcat", "-b", "crash", "-c"):
+                    return ""
+                if key == ("shell", "dumpsys", "activity", "activities"):
+                    return ("topResumedActivity=ActivityRecord{abc u0 "
+                            "com.yeelight.cherry/.MainActivity t1}")
+                if key[:4] == ("shell", "cmd", "package", "query-activities"):
+                    return original_component
+                if key[:4] == ("shell", "cmd", "package", "resolve-activity"):
+                    return original_component
+                raise AssertionError("Unexpected synthetic adb request " + repr(key))
+
+            def fake_run_adb(args, *, timeout=30, allow_failure=False):
+                events.append(tuple(args))
+                if args == ["install", "--no-streaming", str(stock)]:
+                    self.assertFalse(state["clone"])
+                    self.assertFalse(state["original"])
+                    state["original"] = True
+                    return 0, "Success"
+                if args == ["shell", "am", "start", "-W", "-n", original_component]:
+                    self.assertTrue(state["original"])
+                    self.assertFalse(state["original_launched"])
+                    state["original_launched"] = True
+                    return (0, "Status: ok\nActivity: " + original_component + "\nComplete")
+                raise AssertionError("Unexpected synthetic run_adb " + repr(args))
+
+            with mock.patch.dict(os.environ, env, clear=True), \
+                 mock.patch.object(m, "inspect_original") as audit, \
+                 mock.patch.object(m, "adb", side_effect=fake_adb), \
+                 mock.patch.object(m, "run_adb", side_effect=fake_run_adb):
+                report = m.compare_private_emulator(
+                    stock, clone, serial="emulator-5554", approved=True,
+                    pause=lambda seconds: self.assertEqual(seconds, 3))
+            audit.assert_called_once_with(stock)
+            self.assertEqual(report["runtime_relation"], "BOTH_TARGET_CLASS_NOT_FOUND")
+            self.assertEqual(report["missing_class_identity_relation"], "SAME")
+            self.assertFalse(report["original_functionally_accepted"])
+            self.assertFalse(report["clone_functionally_accepted"])
+            self.assertNotIn("HiddenDependency", json.dumps(report))
+            self.assertFalse(state["clone"])
+            self.assertFalse(state["original"])
+            self.assertTrue(state["original_launched"])
+            clone_remove = events.index(("uninstall", CLONE))
+            original_install = events.index(("install", "--no-streaming", str(stock)))
+            original_launch = events.index(
+                ("shell", "am", "start", "-W", "-n", original_component))
+            original_remove = events.index(("uninstall", ORIGINAL))
+            self.assertLess(clone_remove, original_install)
+            self.assertLess(original_install, original_launch)
+            self.assertLess(original_launch, original_remove)
+            self.assertEqual(events.count(
+                ("shell", "am", "start", "-W", "-n", original_component)), 1)
+            self.assertEqual(events.count(("uninstall", ORIGINAL)), 1)
 
     def test_original_foreground_only_current_global_original_oem_activity(self):
         ok = "topResumedActivity=ActivityRecord{abc u0 com.yeelight.cherry/.MainActivity t1}"
