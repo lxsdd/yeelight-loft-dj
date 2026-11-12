@@ -116,15 +116,15 @@ ROOT_CAUSE = re.compile(
 # Only strip an exact AndroidRuntime record prefix: a similarly worded
 # message from another tag is never allowed to inject an exception category.
 ANDROID_RUNTIME_THREADTIME = re.compile(
-    r"^\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3,9}\\s+"
-    r"\\d+\\s+\\d+\\s+[A-Z]\\s+AndroidRuntime\\s*:\\s*(.*)$"
+    r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3,9}\s+"
+    r"\d+\s+\d+\s+[A-Z]\s+AndroidRuntime\s*:\s*(.*)$"
 )
 ANDROID_RUNTIME_BRIEF = re.compile(
-    r"^[A-Z]/AndroidRuntime\\(\\s*\\d+\\s*\\):\\s*(.*)$"
+    r"^[A-Z]/AndroidRuntime\(\s*\d+\s*\):\s*(.*)$"
 )
 ANDROID_RUNTIME_TIME = re.compile(
-    r"^\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3,9}\\s+"
-    r"[A-Z]/AndroidRuntime\\(\\s*\\d+\\s*\\):\\s*(.*)$"
+    r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3,9}\s+"
+    r"[A-Z]/AndroidRuntime\(\s*\d+\s*\):\s*(.*)$"
 )
 
 
