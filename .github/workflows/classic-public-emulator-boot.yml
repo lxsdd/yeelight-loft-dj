@@ -10,6 +10,9 @@ on:
       - 'classic_source/**'
       # A CI/protected-emulator contract change must also retrigger QA.
       - '.github/workflows/classic-*.yml'
+      # Protected candidate SHA gate source changes must qualify no-OEM runner too.
+      - 'github_hosted/private_candidate_gate.py'
+      - 'github_hosted/tests/test_private_candidate_gate.py'
       # Avoid expensive public emulator boots for documentation-only PRs.
       - '!classic_source/*.md'
       - '!classic_source/**/*.md'

@@ -16,6 +16,8 @@ KVM = ROOT / "classic_source/private_ci/hosted_kvm_scope.sh"
 REQUIRED_PATHS = (
     'classic_source/**',
     '.github/workflows/classic-*.yml',
+    'github_hosted/private_candidate_gate.py',
+    'github_hosted/tests/test_private_candidate_gate.py',
     '!classic_source/*.md',
     '!classic_source/**/*.md',
 )
@@ -72,6 +74,8 @@ class PublicAndroid17BootContracts(unittest.TestCase):
             ("github.event.pull_request.head.repo.full_name == 'lxsdd/yeelight-loft-dj'", 'true'),
             ('classic_source/**', 'classic_source/tests/**'),
             ('.github/workflows/classic-*.yml', '.github/workflows/classic-public-*.yml'),
+            ('github_hosted/private_candidate_gate.py', 'github_hosted/vault.sh'),
+            ('github_hosted/tests/test_private_candidate_gate.py', 'github_hosted/tests/unused.py'),
             ('!classic_source/*.md', 'classic_source/*.md'),
             ('persist-credentials: false', 'persist-credentials: true'),
             ('contents: read', 'contents: write'),
