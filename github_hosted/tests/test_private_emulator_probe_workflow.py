@@ -10,6 +10,11 @@ PATH = ROOT / '.github/workflows/classic-private-emulator-probe.yml'
 def validate_contract(source):
     w = yaml.load(source, Loader=yaml.BaseLoader)
     assert list(w['on']) == ['workflow_dispatch']
+    inputs = w['on']['workflow_dispatch']['inputs']
+    assert set(inputs) == {'candidate_pr', 'candidate_sha'}
+    assert inputs['candidate_pr']['default'] == '0'
+    assert inputs['candidate_sha']['default'] == ''
+    assert all(i['type'] == 'string' for i in inputs.values())
     assert w['permissions'] == {'contents': 'read'}
     assert w['concurrency']['cancel-in-progress'] == 'false'
     assert set(w['jobs']) == {'guarded-private-emulator-only'}
@@ -23,11 +28,31 @@ def validate_contract(source):
         assert expr in job['if']
     steps = job['steps']
     joined = '\n'.join(x.get('run', '') for x in steps)
-    checkout = next(x for x in steps if x.get('uses', '').startswith('actions/checkout'))
-    assert checkout['with']['persist-credentials'] == 'false'
-    assert checkout['with']['ref'] == '${{ github.sha }}'
+    checkouts = [x for x in steps if x.get('uses', '').startswith('actions/checkout')]
+    assert len(checkouts) == 2
+    trusted, candidate = checkouts
+    assert trusted['with'] == {'persist-credentials': 'false',
+                              'ref': '${{ github.sha }}'}
+    assert candidate['with'] == {'persist-credentials': 'false',
+                                'ref': '${{ steps.candidate.outputs.source_sha }}'}
+    gate = next(x for x in steps if x.get('id') == 'candidate')
+    assert gate['name'] == 'Verify owner-pinned PR, ancestry, file scope and three public CI jobs'
+    assert gate['env'] == {
+        'GH_PUBLIC_READ_TOKEN': '${{ github.token }}',
+        'CLASSIC_CANDIDATE_PR': '${{ inputs.candidate_pr }}',
+        'CLASSIC_CANDIDATE_SHA': '${{ inputs.candidate_sha }}',
+    }
+    assert 'python3 github_hosted/private_candidate_gate.py' in gate['run']
+    assert 'CLASSIC_VAULT_TOKEN' not in str(gate)
+    def stepindex(step):
+        return steps.index(step)
+    assert stepindex(trusted) < stepindex(gate) < stepindex(candidate)
+    assert stepindex(candidate) < next(i for i, x in enumerate(steps)
+                                      if 'CLASSIC_VAULT_TOKEN' in str(x))
     assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in joined
     assert 'python3 github_hosted/policy.py' in joined
+    assert 'python3 github_hosted/private_candidate_gate.py' in joined
+    assert 'test "$(git rev-parse HEAD)" = "${{ steps.candidate.outputs.source_sha }}"' in joined
     assert 'classic_source/private_emulator_probe.py' in joined
     assert 'classic_source/run_real_oem_tests.py' in joined
     assert 'classic_source/build_private_unsigned.py' in joined
@@ -55,6 +80,12 @@ def validate_contract(source):
         assert names.index(a) < names.index(b), (a, b)
     before('Verify pinned source SHA and protected manual dispatch identity',
            'Fetch only pinned private original (no persistent cache)')
+    before('Verify pinned source SHA and protected manual dispatch identity',
+           'Verify owner-pinned PR, ancestry, file scope and three public CI jobs')
+    before('Verify owner-pinned PR, ancestry, file scope and three public CI jobs',
+           'Checkout immutable prequalified Classic source')
+    before('Verify exact checked out candidate source',
+           'Fetch only pinned private original (no persistent cache)')
     before('Require exact old OEM gaps for diagnostic only, never qualify them',
            'Assemble quarantined unsigned Classic candidate with original DEX parity')
     before('Reject any candidate OEM graph drift or new classpath defect',
@@ -75,6 +106,10 @@ class PrivateEmulatorOnlyWorkflow(unittest.TestCase):
             ("github.ref == 'refs/heads/main'", "github.ref != 'refs/heads/main'"),
             ('persist-credentials: false', 'persist-credentials: true'),
             ('ref: ${{ github.sha }}', 'ref: main'),
+            ('ref: ${{ steps.candidate.outputs.source_sha }}', 'ref: main'),
+            ('python3 github_hosted/private_candidate_gate.py', 'true'),
+            ('GH_PUBLIC_READ_TOKEN: ${{ github.token }}', 'GH_PUBLIC_READ_TOKEN: ${{ secrets.CLASSIC_VAULT_TOKEN }}'),
+            ("default: '0'", "default: '999999'"),
             ('  workflow_dispatch:', '  pull_request:'),
             ('cache-disabled: true', 'cache-disabled: false'),
             ('  contents: read', '  contents: write'),

@@ -5,6 +5,17 @@ name: Classic PRIVATE offline modified-APK emulator probe (no distribution)
 run-name: Classic private emulator-only diagnostic ${{ github.sha }}
 on:
   workflow_dispatch:
+    inputs:
+      candidate_pr:
+        description: 'Exact owner-controlled Classic PR number, 0 = main'
+        required: true
+        default: '0'
+        type: string
+      candidate_sha:
+        description: 'Pinned full 40-char PR HEAD SHA, blank for main'
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -33,6 +44,27 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python3 github_hosted/policy.py
           printf 'CLASSIC_PRIVATE_PROBE_SOURCE_SHA=%s\n' "$GITHUB_SHA"
+      # Gate executes from trusted protected main before replacing the source.
+      # It sees only public GitHub metadata, not the vault secret or OEM input.
+      - name: Verify owner-pinned PR, ancestry, file scope and three public CI jobs
+        id: candidate
+        env:
+          GH_PUBLIC_READ_TOKEN: ${{ github.token }}
+          CLASSIC_CANDIDATE_PR: ${{ inputs.candidate_pr }}
+          CLASSIC_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          python3 github_hosted/private_candidate_gate.py
+      - name: Checkout immutable prequalified Classic source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ steps.candidate.outputs.source_sha }}
+      - name: Verify exact checked out candidate source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.candidate.outputs.source_sha }}"
+          echo 'CLASSIC_PRIVATE_PINNED_CANDIDATE_CHECKOUT_PASS'
       - name: Setup Java 17
         uses: actions/setup-java@v6
         with:
