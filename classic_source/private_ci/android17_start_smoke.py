@@ -105,44 +105,100 @@ def _classic_foreground(snapshot):
     return True, "SAME_CLONE_ORIGINAL_ACTIVITY"
 
 
-def classify_crash(logcat, package=PACKAGE):
-    """Conservatively reject unattributed FATALs and target-process crashes.
+# Logcat may nest the *real* Caused by after dozens of AndroidRuntime
+# framework stack frames. The old 14-line window hid that exception and
+# reported OTHER_FATAL_RUNTIME. Never serialize OEM/stack text into reports.
+ROOT_CAUSE = re.compile(
+    r"^\s*(Caused by:\s*)?([A-Za-z_$][\w.$]*(?:Exception|Error))(?::|$)"
+)
+MAX_FATAL_BLOCK_LINES = 256
+NESTED_EXCEPTION_TYPES = (
+    ("NoSuchMethodError", "METHOD_LINKAGE"),
+    ("NoSuchFieldError", "FIELD_LINKAGE"),
+    ("VerifyError", "DEX_VERIFICATION"),
+    ("IncompatibleClassChangeError", "CLASS_LINKAGE_INCOMPATIBLE"),
+    ("IllegalAccessError", "CLASS_MEMBER_ACCESS"),
+    ("AbstractMethodError", "ABSTRACT_DISPATCH"),
+    ("UnsatisfiedLinkError", "NATIVE_LIBRARY_LINKAGE"),
+    ("ExceptionInInitializerError", "STATIC_INITIALIZER"),
+    ("Resources$NotFoundException", "RESOURCE_REFERENCE"),
+    ("SQLiteException", "SQLITE_INIT"),
+    ("NullPointerException", "NULL_DEREFERENCE"),
+    ("IllegalArgumentException", "ARGUMENT_CONTRACT"),
+)
 
-    Logcat is never serialized. The caller must capture a clean window from
-    an owner-approved disposable private emulator. FATAL in a foreign named
-    process is ignored; FATAL with no explicit process is ambiguous/fail-closed.
+
+def _sanitized_exception_chain(rows):
+    """Choose the *last explicit nested cause*, without disclosing its text.
+
+    Do not hunt for exception names in stack-frame messages, log chatter or
+    another process's FATAL. Every returned value is a fixed allowlisted enum.
+    """
+    top = None
+    nested = []
+    for row in rows[:MAX_FATAL_BLOCK_LINES]:
+        match = ROOT_CAUSE.match(row)
+        if match is None:
+            continue
+        name = match.group(2).rsplit(".", 1)[-1]
+        code = next((code for token, code in (*EXCEPTIONS, *NESTED_EXCEPTION_TYPES)
+                     if name == token), None)
+        category = code or ("OTHER_NESTED_CAUSE" if match.group(1) else
+                            "OTHER_FATAL_RUNTIME")
+        if match.group(1):
+            nested.append(category)
+        elif top is None:
+            top = category
+    return {
+        "exception_category": nested[-1] if nested else (top or "OTHER_FATAL_RUNTIME"),
+        "nested_cause_count": min(len(nested), 16),
+        "exception_depth": "NESTED_CAUSE" if nested else
+                           "TOP_LEVEL" if top else "NO_EXCEPTION_HEADER",
+    }
+
+
+def classify_crash(logcat, package=PACKAGE):
+    """Classify actual AndroidRuntime target crash, not a guessed OEM failure.
+
+    Process ownership comes from the adjacent Process/PID header (first 14
+    lines), but cause classification uses a bounded 256-line FATAL block.
+    It never borrows the nested exception of the next crash/process and never
+    prints class names, stack frames, raw logs, or OEM identity.
     """
     _bounded(logcat, "SMOKE_BAD_LOGCAT")
     lines = logcat.splitlines()
-    found_target = False
     found_unattributed = False
-    failure_kind = "NONE"
-    stage = "UNDETERMINED"
+    result = {"target_crash": False, "unattributed_fatal": False,
+              "exception_category": "NONE", "failure_stage": "UNDETERMINED",
+              "nested_cause_count": 0, "exception_depth": "NONE"}
     for i, line in enumerate(lines):
         if "FATAL EXCEPTION" not in line:
             continue
-        following = "\n".join(lines[i + 1:i + 14])
-        process = re.search(r"\bProcess:\s*([A-Za-z0-9_.:]+)\s*,\s*PID:", following)
+        window = []
+        for row in lines[i + 1:i + 1 + MAX_FATAL_BLOCK_LINES]:
+            if "FATAL EXCEPTION" in row:
+                break
+            window.append(row)
+        process = re.search(r"\bProcess:\s*([A-Za-z0-9_.:]+)\s*,\s*PID:",
+                            "\n".join(window[:14]))
         if process and process.group(1) != package and not process.group(1).startswith(package + ":"):
             continue
         if not process:
             found_unattributed = True
             continue
-        found_target = True
-        failure_kind = next((code for token, code in EXCEPTIONS if token in following), "OTHER_FATAL_RUNTIME")
-        if "installContentProviders" in following or "Provider.onCreate" in following:
+        e = _sanitized_exception_chain(window)
+        trace = "\n".join(window)
+        if "installContentProviders" in trace or "installProvider(" in trace or "Provider.onCreate" in trace:
             stage = "PROVIDER_INIT"
-        elif "Application.onCreate" in following or "makeApplication" in following:
+        elif "Application.onCreate" in trace or "makeApplication" in trace:
             stage = "APPLICATION_INIT"
-        elif "performLaunchActivity" in following or "Activity.onCreate" in following:
+        elif "performLaunchActivity" in trace or "Activity.onCreate" in trace:
             stage = "ACTIVITY_LAUNCH"
-        break
-    return {
-        "target_crash": found_target,
-        "unattributed_fatal": found_unattributed,
-        "exception_category": failure_kind,
-        "failure_stage": stage,
-    }
+        else:
+            stage = "UNDETERMINED"
+        return {**result, **e, "target_crash": True,
+                "unattributed_fatal": found_unattributed, "failure_stage": stage}
+    return {**result, "unattributed_fatal": found_unattributed}
 
 
 def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash_log,
