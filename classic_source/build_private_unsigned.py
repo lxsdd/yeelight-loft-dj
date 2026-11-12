@@ -20,6 +20,7 @@ from classic_first import GateFailure, NEW_PACKAGE, digest_file, inspect_origina
 from dex_authority_remap import remap_dex, DexRemapError, assert_self_consistent_dex
 from bridge.build_bridge import build as build_sidecar, ToolError, find_sdk_tools, no_oem_class_collisions, dex_descriptors
 from apk_readonly_audit import parse_binary_xml, AxmlError
+from secondary_dex_transport import normalize_private_multidex, DexTransportBlocked
 
 ROOT = Path(__file__).resolve().parent
 
@@ -186,7 +187,9 @@ def build(original: Path, output: Path, sdk: Path):
         # JSON preparation note does not belong in APK; private report lives next to output.
         (staged/'classic_first_preparation.json').unlink()
         run([*apktool, 'b', '-o', unsigned, staged])
+        zip_layout = normalize_private_multidex(original, unsigned)
         report = verify_unsigned(unsigned, original, dex, str(aapt))
+        report['secondary_dex_transport'] = zip_layout
         report["firebase_early_init_boundary"] = verify_final_firebase_boundary(unsigned)
         report["component_resolution_gate"] = verify_final_component_classes(unsigned)
         report['class_collision_check'] = collision_report
@@ -209,7 +212,7 @@ def main() -> int:
         result = build(args.original, args.output, args.android_sdk)
         print(json.dumps(result, indent=2))
         return 0
-    except (GateFailure, DexRemapError, ToolError, subprocess.SubprocessError, OSError, zipfile.BadZipFile) as e:
+    except (GateFailure, DexRemapError, ToolError, DexTransportBlocked, subprocess.SubprocessError, OSError, zipfile.BadZipFile) as e:
         print(json.dumps({'status':'BLOCKED', 'reason':str(e), 'signed':False, 'installed':False}), file=sys.stderr)
         return 2
 
