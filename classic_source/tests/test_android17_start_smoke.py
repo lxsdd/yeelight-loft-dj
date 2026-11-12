@@ -241,5 +241,133 @@ class Android17StartupTest(unittest.TestCase):
         self.assertNotIn(("shell", "am", "start", "-W", "-n", DJ), a.calls)
 
 
+    def test_deep_provider_causes_are_not_lost_after_fourteen_frames(self):
+        padding = "".join("    at android.app.ActivityThread.installProvider(Source:31)\n" for _ in range(28))
+        for cause, expected in (
+                ("java.lang.NoClassDefFoundError", "MISSING_RUNTIME_DEFINITION"),
+                ("java.lang.NoSuchMethodError", "METHOD_LINKAGE"),
+                ("java.lang.NoSuchFieldError", "FIELD_LINKAGE"),
+                ("java.lang.VerifyError", "DEX_VERIFICATION"),
+                ("java.lang.UnsatisfiedLinkError", "NATIVE_LIBRARY_LINKAGE"),
+                ("android.content.res.Resources$NotFoundException", "RESOURCE_REFERENCE")):
+            with self.subTest(cause=cause):
+                text = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                        ", PID: 77\njava.lang.RuntimeException: private OEM content\n" +
+                        padding + "Caused by: " + cause + ": privateDescriptorMustNeverLeak\n")
+                result = classify_crash(text)
+                self.assertTrue(result["target_crash"])
+                self.assertEqual(result["failure_stage"], "PROVIDER_INIT")
+                self.assertEqual(result["exception_category"], expected)
+                self.assertEqual(result["nested_cause_count"], 1)
+                self.assertEqual(result["exception_depth"], "NESTED_CAUSE")
+                self.assertNotIn("privateDescriptorMustNeverLeak", str(result))
+
+    def test_last_nested_cause_wins_without_leaking_original_exception_names(self):
+        text = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                ", PID: 12\njava.lang.RuntimeException: vendorOuter\n"
+                "    at android.app.ActivityThread.installContentProviders(Source:7)\n"
+                "Caused by: java.lang.IllegalStateException: vendorMiddle\n"
+                "    at hidden.Vendor.init(Unknown Source)\n"
+                "Caused by: java.lang.NoSuchMethodError: vendorRoot\n")
+        result = classify_crash(text)
+        self.assertEqual(result["exception_category"], "METHOD_LINKAGE")
+        self.assertEqual(result["nested_cause_count"], 2)
+        for name in ("vendorOuter", "vendorMiddle", "vendorRoot", "hidden.Vendor"):
+            self.assertNotIn(name, str(result))
+
+    def test_other_process_causes_are_never_attributed_to_target(self):
+        text = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                ", PID: 12\njava.lang.RuntimeException: targetOnly\n"
+                "    at android.app.ActivityThread.installContentProviders(Source:7)\n"
+                "FATAL EXCEPTION: main\nProcess: com.other.app, PID: 14\n"
+                "Caused by: java.lang.NoClassDefFoundError: unrelated\n")
+        result = classify_crash(text)
+        self.assertEqual(result["exception_category"], "OTHER_FATAL_RUNTIME")
+        self.assertEqual(result["nested_cause_count"], 0)
+        self.assertEqual(result["failure_stage"], "PROVIDER_INIT")
+
+    def test_foreign_fatal_before_target_does_not_poison_target(self):
+        text = ("FATAL EXCEPTION: main\nProcess: com.other.app, PID: 11\n"
+                "java.lang.NoClassDefFoundError: other\n"
+                "FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                ", PID: 12\njava.lang.RuntimeException: targetOnly\n"
+                "    at android.app.ActivityThread.installContentProviders(Source:7)\n"
+                "Caused by: java.lang.IllegalArgumentException: targetRoot\n")
+        result = classify_crash(text)
+        self.assertEqual(result["exception_category"], "ARGUMENT_CONTRACT")
+        self.assertTrue(result["target_crash"])
+        self.assertEqual(result["failure_stage"], "PROVIDER_INIT")
+
+    def test_unknown_nested_vendor_exception_is_sanitized_not_evidence_of_resolution(self):
+        text = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                ", PID: 12\njava.lang.RuntimeException: wrapper\n"
+                "    at android.app.ActivityThread.installContentProviders(Source:7)\n"
+                "Caused by: hidden.vendor.SecretException: externalPrivateData\n")
+        result = classify_crash(text)
+        self.assertEqual(result["exception_category"], "OTHER_NESTED_CAUSE")
+        self.assertEqual(result["nested_cause_count"], 1)
+        self.assertNotIn("Secret", str(result))
+        self.assertNotIn("externalPrivateData", str(result))
+
+    def test_unattributed_fatal_still_blocks_without_source_disclosure(self):
+        text = ("FATAL EXCEPTION: main\njava.lang.NoClassDefFoundError: unknown\n"
+                "FATAL EXCEPTION: main\nProcess: com.other.app, PID: 90\n"
+                "Caused by: java.lang.NoSuchMethodError: unrelated\n")
+        result = classify_crash(text)
+        self.assertTrue(result["unattributed_fatal"])
+        self.assertFalse(result["target_crash"])
+        self.assertEqual(result["exception_category"], "NONE")
+
+
+    def test_real_threadtime_prefixed_android_runtime_cause(self):
+        # adb logcat -b crash -d formats its lines; plain synthetic lines
+        # alone did not exercise the real owner-only emulator observation.
+        prefix = "11-12 08:11:15.123  2451  2451 E AndroidRuntime: "
+        padding = "".join(prefix + "    at android.app.ActivityThread.installProvider(Source:9)\n"
+                          for _ in range(28))
+        log = (prefix + "FATAL EXCEPTION: main\n" +
+               prefix + "Process: " + PACKAGE + ", PID: 2451\n" +
+               prefix + "java.lang.RuntimeException: privateTop\n" +
+               padding +
+               prefix + "Caused by: java.lang.NoSuchMethodError: secretMethod\n")
+        result = classify_crash(log)
+        self.assertTrue(result["target_crash"])
+        self.assertEqual(result["failure_stage"], "PROVIDER_INIT")
+        self.assertEqual(result["exception_category"], "METHOD_LINKAGE")
+        self.assertEqual(result["nested_cause_count"], 1)
+        self.assertEqual(result["exception_depth"], "NESTED_CAUSE")
+        self.assertNotIn("secretMethod", str(result))
+
+    def test_brief_and_time_logcat_formats_are_equivalent(self):
+        prefixes = (
+            "E/AndroidRuntime( 2451): ",
+            "11-12 08:11:15.123 E/AndroidRuntime( 2451): ",
+        )
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                log = (prefix + "FATAL EXCEPTION: main\n" +
+                       prefix + "Process: " + PACKAGE + ", PID: 2451\n" +
+                       prefix + "java.lang.RuntimeException: hidden\n" +
+                       prefix + "    at android.app.ActivityThread.installContentProviders(Source:9)\n" +
+                       prefix + "Caused by: java.lang.NoClassDefFoundError: hiddenClass\n")
+                result = classify_crash(log)
+                self.assertEqual(result["exception_category"], "MISSING_RUNTIME_DEFINITION")
+                self.assertEqual(result["failure_stage"], "PROVIDER_INIT")
+                self.assertEqual(result["exception_depth"], "NESTED_CAUSE")
+                self.assertNotIn("hiddenClass", str(result))
+
+    def test_unrelated_log_tag_cannot_inject_a_nested_cause(self):
+        prefix = "11-12 08:11:15.123  2451  2451 E AndroidRuntime: "
+        log = (prefix + "FATAL EXCEPTION: main\n" +
+               prefix + "Process: " + PACKAGE + ", PID: 2451\n" +
+               prefix + "java.lang.RuntimeException: wrapper\n" +
+               prefix + "    at android.app.ActivityThread.installContentProviders(Source:9)\n" +
+               "11-12 08:11:15.124  2451  2451 E AnotherTag: Caused by: java.lang.NoSuchMethodError: fake\n")
+        result = classify_crash(log)
+        self.assertEqual(result["exception_category"], "OTHER_FATAL_RUNTIME")
+        self.assertEqual(result["nested_cause_count"], 0)
+        self.assertEqual(result["exception_depth"], "TOP_LEVEL")
+        self.assertTrue(result["target_crash"])
+
 if __name__ == "__main__":
     unittest.main()
