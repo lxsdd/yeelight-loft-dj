@@ -236,7 +236,8 @@ def compare_private_emulator(original, candidate, *, serial, approved,
         inspect_original(original)
     except (GateFailure, OSError, ValueError):
         raise BaselineBlocked("BASELINE_ORIGINAL_INTEGRITY_FAILED") from None
-    digest = hashlib.file_digest(candidate.open("rb"), "sha256").hexdigest()
+    with candidate.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
     offline_guard()
     verify_installed_hash(CLONE, digest)
     require(installed_path(ORIGINAL) is None,

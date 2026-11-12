@@ -22,6 +22,18 @@ def fatal(package, missing):
 
 
 class OriginalBaselineRegression(unittest.TestCase):
+    def test_original_diagnostic_is_not_a_clone_pass_or_hardware_acceptance(self):
+        clone = {"target_crash": True, "exception_category": "CLASS_LOADER_MISSING",
+                 "failure_stage": "PROVIDER_INIT"}
+        original = {"target_crash": True, "exception_category": "OTHER_FATAL_RUNTIME",
+                    "failure_stage": "PROVIDER_INIT"}
+        result = m.compare_results(clone, "com.yeelight.Hidden", original, None, False)
+        self.assertEqual(result["runtime_relation"],
+                         "ORIGINAL_DIFFERENT_OR_UNRESOLVED_CRASH")
+        self.assertEqual(result["missing_class_identity_relation"], "UNAVAILABLE")
+        self.assertFalse(result["original_launcher_resumed"])
+        self.assertFalse(result["original_functionally_accepted"])
+
     def test_target_scoped_class_equality_never_serializes_private_names(self):
         a = "com.yeelight.internal.HiddenDependency"
         log = (fatal("foreign.app", "com.yeelight.internal.ForeignSecret") +
