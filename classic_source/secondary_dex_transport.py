@@ -94,3 +94,46 @@ def normalize_private_multidex(original: Path, candidate: Path):
             return report
     except (BadZipFile, OSError, RuntimeError, NotImplementedError) as exc:
         raise DexTransportBlocked("MULTIDEX_ARCHIVE_UNREADABLE") from exc
+
+
+def private_multidex_status_lines(preflight: dict) -> tuple[str, ...]:
+    """Only static yes/no values can escape a protected owner's runner."""
+    if type(preflight) is not dict:
+        raise DexTransportBlocked("MULTIDEX_REPORT_INVALID")
+    value = preflight.get("secondary_dex_transport")
+    if type(value) is not dict or value.get("status") != "PRIVATE_MULTIDEX_ZIP_STORED_RUNTIME_UNVERIFIED":
+        raise DexTransportBlocked("MULTIDEX_REPORT_INVALID")
+    keys = ("original_secondary_stored", "candidate_secondary_stored_before",
+            "all_candidate_dex_stored_after", "transport_changed", "oem_dex_payload_changed")
+    if any(type(value.get(key)) is not bool for key in keys):
+        raise DexTransportBlocked("MULTIDEX_REPORT_INVALID")
+    if not value["all_candidate_dex_stored_after"] or value["oem_dex_payload_changed"]:
+        raise DexTransportBlocked("MULTIDEX_REPORT_UNSAFE")
+    return (
+        "PRIVATE_CLASSIC_ORIGINAL_SECONDARY_DEX_STORED=" +
+        ("YES" if value["original_secondary_stored"] else "NO"),
+        "PRIVATE_CLASSIC_CLONE_SECONDARY_DEX_PREVIOUSLY_STORED=" +
+        ("YES" if value["candidate_secondary_stored_before"] else "NO"),
+        "PRIVATE_CLASSIC_MULTIDEX_ZIP_REPACK_APPLIED=" +
+        ("YES" if value["transport_changed"] else "NO"),
+    )
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+    try:
+        if sys.argv != [sys.argv[0], "--owner-only-transport-status"]:
+            raise DexTransportBlocked("MULTIDEX_REPORT_ARGUMENT_INVALID")
+        runtime = os.environ.get("RUNNER_TEMP", "")
+        if not runtime or not Path(runtime).is_absolute():
+            raise DexTransportBlocked("MULTIDEX_REPORT_RUNNER_REQUIRED")
+        report_path = Path(runtime) / "private-output" / "classic-loft-dj-UNSIGNED.apk.preflight.json"
+        if not report_path.is_file() or report_path.is_symlink():
+            raise DexTransportBlocked("MULTIDEX_REPORT_FILE_INVALID")
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+        for line in private_multidex_status_lines(payload):
+            print(line)
+    except (DexTransportBlocked, OSError, ValueError, TypeError):
+        print("PRIVATE_CLASSIC_MULTIDEX_REPORT_BLOCKED", file=sys.stderr)
+        sys.exit(2)

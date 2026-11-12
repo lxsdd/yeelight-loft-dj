@@ -91,5 +91,46 @@ class SecondaryDexTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(Refused, "SIGNED_MULTIDEX_NOT_ZIP_STORED"):
             parity(self.candidate, self.signed)
 
+
+    def test_private_transport_status_is_allowlisted_and_never_leaks_input(self):
+        from secondary_dex_transport import private_multidex_status_lines
+        report = {"secondary_dex_transport": {
+            "status": "PRIVATE_MULTIDEX_ZIP_STORED_RUNTIME_UNVERIFIED",
+            "original_secondary_stored": True,
+            "candidate_secondary_stored_before": False,
+            "all_candidate_dex_stored_after": True,
+            "transport_changed": True,
+            "oem_dex_payload_changed": False,
+            "oem_private_class_name": "com.yeelight.secret.OEMClass",
+            "private_path": "/tmp/private/foo.apk",
+        }}
+        lines = private_multidex_status_lines(report)
+        self.assertEqual(lines, (
+            "PRIVATE_CLASSIC_ORIGINAL_SECONDARY_DEX_STORED=YES",
+            "PRIVATE_CLASSIC_CLONE_SECONDARY_DEX_PREVIOUSLY_STORED=NO",
+            "PRIVATE_CLASSIC_MULTIDEX_ZIP_REPACK_APPLIED=YES",
+        ))
+        self.assertNotIn("yeelight.secret", str(lines))
+        self.assertNotIn("/tmp/private", str(lines))
+
+    def test_private_transport_status_rejects_untyped_or_unverified_data(self):
+        from secondary_dex_transport import private_multidex_status_lines, DexTransportBlocked
+        base = {"status": "PRIVATE_MULTIDEX_ZIP_STORED_RUNTIME_UNVERIFIED",
+                "original_secondary_stored": False,
+                "candidate_secondary_stored_before": False,
+                "all_candidate_dex_stored_after": True,
+                "transport_changed": True,
+                "oem_dex_payload_changed": False}
+        for change in ({"original_secondary_stored": "True"},
+                       {"all_candidate_dex_stored_after": False},
+                       {"oem_dex_payload_changed": True},
+                       {"status": "FAKE_PASS"},
+                       {"transport_changed": None}):
+            with self.subTest(change=change):
+                val = {**base, **change}
+                with self.assertRaises(DexTransportBlocked):
+                    private_multidex_status_lines({"secondary_dex_transport": val})
+
+
 if __name__ == "__main__":
     unittest.main()
