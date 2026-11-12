@@ -108,10 +108,22 @@ adb -s emulator-5554 shell cmd package resolve-activity --components --user 0 \
 LAUNCHER="$(python3 classic_source/private_ci/clone_launcher_selection.py --installed \
   --badging "$BADGING" --query "$WORK/query.log" \
   --resolved "$WORK/resolved.log")" || fail
-python3 classic_source/private_ci/android17_start_smoke.py \
+# Preserve the original single-launch diagnostic. A failed launch must never
+# be turned into a PASS by the forensic helper. Inspect only the existing
+# crash buffer after failure; never retry, re-launch, or write any physical device.
+if python3 classic_source/private_ci/android17_start_smoke.py \
  --serial emulator-5554 \
  --launcher-component "io.lxsdd.yeelightdj/$LAUNCHER" \
  --expected-installed-apk-sha256 "$PIN" \
  --candidate-apk "$APK" \
- --explicit-owner-approved-private-emulator || fail
-printf 'PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS\n'
+ --explicit-owner-approved-private-emulator; then
+  printf 'PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS\n'
+else
+  # Private APK contents and class descriptors stay on this disposable runner.
+  # The one post-crash ART verify command occurs only inside its offline emulator.
+  python3 classic_source/private_ci/classloader_linkage_forensics.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --candidate "$APK" \
+    --serial emulator-5554 || fail
+  fail
+fi
