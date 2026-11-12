@@ -318,5 +318,56 @@ class Android17StartupTest(unittest.TestCase):
         self.assertFalse(result["target_crash"])
         self.assertEqual(result["exception_category"], "NONE")
 
+
+    def test_real_threadtime_prefixed_android_runtime_cause(self):
+        # adb logcat -b crash -d formats its lines; plain synthetic lines
+        # alone did not exercise the real owner-only emulator observation.
+        prefix = "11-12 08:11:15.123  2451  2451 E AndroidRuntime: "
+        padding = "".join(prefix + "    at android.app.ActivityThread.installProvider(Source:9)\\n"
+                          for _ in range(28))
+        log = (prefix + "FATAL EXCEPTION: main\\n" +
+               prefix + "Process: " + PACKAGE + ", PID: 2451\\n" +
+               prefix + "java.lang.RuntimeException: privateTop\\n" +
+               padding +
+               prefix + "Caused by: java.lang.NoSuchMethodError: secretMethod\\n")
+        result = classify_crash(log)
+        self.assertTrue(result["target_crash"])
+        self.assertEqual(result["failure_stage"], "PROVIDER_INIT")
+        self.assertEqual(result["exception_category"], "METHOD_LINKAGE")
+        self.assertEqual(result["nested_cause_count"], 1)
+        self.assertEqual(result["exception_depth"], "NESTED_CAUSE")
+        self.assertNotIn("secretMethod", str(result))
+
+    def test_brief_and_time_logcat_formats_are_equivalent(self):
+        prefixes = (
+            "E/AndroidRuntime( 2451): ",
+            "11-12 08:11:15.123 E/AndroidRuntime( 2451): ",
+        )
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                log = (prefix + "FATAL EXCEPTION: main\\n" +
+                       prefix + "Process: " + PACKAGE + ", PID: 2451\\n" +
+                       prefix + "java.lang.RuntimeException: hidden\\n" +
+                       prefix + "    at android.app.ActivityThread.installContentProviders(Source:9)\\n" +
+                       prefix + "Caused by: java.lang.NoClassDefFoundError: hiddenClass\\n")
+                result = classify_crash(log)
+                self.assertEqual(result["exception_category"], "MISSING_RUNTIME_DEFINITION")
+                self.assertEqual(result["failure_stage"], "PROVIDER_INIT")
+                self.assertEqual(result["exception_depth"], "NESTED_CAUSE")
+                self.assertNotIn("hiddenClass", str(result))
+
+    def test_unrelated_log_tag_cannot_inject_a_nested_cause(self):
+        prefix = "11-12 08:11:15.123  2451  2451 E AndroidRuntime: "
+        log = (prefix + "FATAL EXCEPTION: main\\n" +
+               prefix + "Process: " + PACKAGE + ", PID: 2451\\n" +
+               prefix + "java.lang.RuntimeException: wrapper\\n" +
+               prefix + "    at android.app.ActivityThread.installContentProviders(Source:9)\\n" +
+               "11-12 08:11:15.124  2451  2451 E AnotherTag: Caused by: java.lang.NoSuchMethodError: fake\\n")
+        result = classify_crash(log)
+        self.assertEqual(result["exception_category"], "OTHER_FATAL_RUNTIME")
+        self.assertEqual(result["nested_cause_count"], 0)
+        self.assertEqual(result["exception_depth"], "TOP_LEVEL")
+        self.assertTrue(result["target_crash"])
+
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,32 @@ def _classic_foreground(snapshot):
 ROOT_CAUSE = re.compile(
     r"^\s*(Caused by:\s*)?([A-Za-z_$][\w.$]*(?:Exception|Error))(?::|$)"
 )
+
+# adb logcat -b crash -d is normally formatted (threadtime), not raw.
+# Only strip an exact AndroidRuntime record prefix: a similarly worded
+# message from another tag is never allowed to inject an exception category.
+ANDROID_RUNTIME_THREADTIME = re.compile(
+    r"^\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3,9}\\s+"
+    r"\\d+\\s+\\d+\\s+[A-Z]\\s+AndroidRuntime\\s*:\\s*(.*)$"
+)
+ANDROID_RUNTIME_BRIEF = re.compile(
+    r"^[A-Z]/AndroidRuntime\\(\\s*\\d+\\s*\\):\\s*(.*)$"
+)
+ANDROID_RUNTIME_TIME = re.compile(
+    r"^\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3,9}\\s+"
+    r"[A-Z]/AndroidRuntime\\(\\s*\\d+\\s*\\):\\s*(.*)$"
+)
+
+
+def _android_runtime_message(row):
+    for grammar in (ANDROID_RUNTIME_THREADTIME, ANDROID_RUNTIME_BRIEF,
+                    ANDROID_RUNTIME_TIME):
+        matched = grammar.fullmatch(row)
+        if matched is not None:
+            return matched.group(1).lstrip()
+    return row
+
+
 MAX_FATAL_BLOCK_LINES = 256
 NESTED_EXCEPTION_TYPES = (
     ("NoSuchMethodError", "METHOD_LINKAGE"),
@@ -137,7 +163,7 @@ def _sanitized_exception_chain(rows):
     top = None
     nested = []
     for row in rows[:MAX_FATAL_BLOCK_LINES]:
-        match = ROOT_CAUSE.match(row)
+        match = ROOT_CAUSE.match(_android_runtime_message(row))
         if match is None:
             continue
         name = match.group(2).rsplit(".", 1)[-1]
