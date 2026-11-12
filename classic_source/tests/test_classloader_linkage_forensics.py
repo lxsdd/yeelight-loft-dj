@@ -27,10 +27,8 @@ JAVA = "Ljava/lang/Object;"
 
 class StaticLinkageTests(unittest.TestCase):
     def test_valid_dex_flat_and_obfuscated_class_names(self):
-        # DEX FullClassName permits an empty package prefix, digits and '-'.
-        # Reproduce the exact full-archive graph validation path without OEM
-        # bytes: each graph member AND its superclass descriptor is checked.
-        for name in ("La;", "L1;", "L-;", "L$;", "Lpkg/9;", "Lpkg/-$Lambda$3;"):
+        # FullClassName accepts no package plus DEX-only digits and '-'.
+        for name in ("La;", "L1;", "L-;", "L$;", "Lpkg/9;", "Lpkg/-$$Lambda$3;"):
             with self.subTest(name=name):
                 graph = {A: [name], name: [JAVA]}
                 origins = {A: "SECONDARY_OEM_DEX", name: "PRIMARY_OEM_DEX"}
