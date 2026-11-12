@@ -175,8 +175,15 @@ def target_crash_descriptor(logcat: str) -> tuple[str, str | None]:
 
 def load_dex_graphs(original: Path, candidate: Path) -> tuple[dict, dict, dict]:
     """Only read private archives, verify complete DEX member sets and hashes."""
-    from private_startup_audit import dex_index
+    # Python invokes this file as classic_source/private_ci/<script>.py from
+    # the repository root. The sibling classic_source modules are not on
+    # sys.path unless resolved explicitly. Do not rely on PYTHONPATH or tests
+    # that inject synthetic modules into sys.modules.
     try:
+        source_root = str(Path(__file__).resolve().parents[1])
+        if source_root not in sys.path:
+            sys.path.insert(0, source_root)
+        from private_startup_audit import dex_index
         with ZipFile(original) as stock, ZipFile(candidate) as clone:
             def names(z):
                 n = z.namelist()
@@ -199,9 +206,11 @@ def load_dex_graphs(original: Path, candidate: Path) -> tuple[dict, dict, dict]:
                                  "classes3.dex": "NATIVE_BRIDGE_DEX"}[member]
                         origins.update({name: label for name in classes})
             return original_graph, clone_graph, origins
-    except (OSError, BadZipFile, KeyError, RuntimeError, ValueError) as exc:
-        if isinstance(exc, ForensicsBlocked):
-            raise
+    except ForensicsBlocked:
+        raise
+    except ImportError:
+        raise ForensicsBlocked("PRIVATE_GRAPH_MODULE_UNAVAILABLE") from None
+    except (OSError, BadZipFile, KeyError, RuntimeError, ValueError):
         raise ForensicsBlocked("PRIVATE_GRAPH_UNREADABLE") from None
 
 
@@ -224,6 +233,27 @@ def verify_compiler(serial: str) -> str:
         return "ART_VERIFY_COMMAND_UNTRUSTED_OUTPUT"
     return ("ART_VERIFY_COMMAND_ACCEPTED" if completed.returncode == 0 and
             b"Success" in completed.stdout else "ART_VERIFY_COMMAND_REJECTED")
+
+
+# Catch unexpected private-input failures at their exact diagnostic phase.
+# Never serialize exception text, stack frames, proprietary class names, or
+# file paths. Existing explicit fail-closed ForensicsBlocked labels survive.
+SAFE_STAGE_ERRORS = frozenset({
+    "TARGET_CRASH_CLASSIFICATION_FAILED",
+    "PRIVATE_GRAPH_ANALYSIS_FAILED",
+    "CLASS_LINKAGE_ANALYSIS_FAILED",
+    "ART_VERIFY_EXECUTION_FAILED",
+})
+
+
+def stage_guard(code: str, operation):
+    require(code in SAFE_STAGE_ERRORS, "STAGE_CODE_INVALID")
+    try:
+        return operation()
+    except ForensicsBlocked:
+        raise
+    except Exception:
+        raise ForensicsBlocked(code) from None
 
 
 def safe_main(args) -> dict:
@@ -252,17 +282,26 @@ def safe_main(args) -> dict:
         logcat = result.stdout.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         raise ForensicsBlocked("CRASH_ENCODING_INVALID") from None
-    status, target = target_crash_descriptor(logcat)
+    status, target = stage_guard(
+        "TARGET_CRASH_CLASSIFICATION_FAILED",
+        lambda: target_crash_descriptor(logcat))
     if target is None:
         return {"status": "PRIVATE_CLASSLOADER_FORENSICS_NOT_APPLICABLE",
                 "target_evidence": status, "art_class_loading_verified": False}
-    original, candidate, origin = load_dex_graphs(args.original, args.candidate)
-    evidence = summarize_linkage(original, candidate, origin, target)
+    original, candidate, origin = stage_guard(
+        "PRIVATE_GRAPH_ANALYSIS_FAILED",
+        lambda: load_dex_graphs(args.original, args.candidate))
+    evidence = stage_guard(
+        "CLASS_LINKAGE_ANALYSIS_FAILED",
+        lambda: summarize_linkage(original, candidate, origin, target))
+    art = stage_guard(
+        "ART_VERIFY_EXECUTION_FAILED",
+        lambda: verify_compiler(args.serial))
     return {
         "status": "PRIVATE_CLASSLOADER_FORENSICS_DIAGNOSTIC_ONLY",
         "target_evidence": status,
         "linkage": evidence,
-        "post_crash_art_verify_command": verify_compiler(args.serial),
+        "post_crash_art_verify_command": art,
         "no_private_payload_published": True,
         "art_class_loading_verified": False,
     }

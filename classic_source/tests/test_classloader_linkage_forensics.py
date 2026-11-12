@@ -16,7 +16,7 @@ from zipfile import ZipFile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "private_ci"))
 from classloader_linkage_forensics import (
     ForensicsBlocked, bucket, summarize_linkage, target_crash_descriptor,
-    load_dex_graphs, verify_compiler, safe_main,
+    load_dex_graphs, verify_compiler, safe_main, stage_guard,
 )
 
 A = "Ltest/fixture/Target;"
@@ -151,6 +151,66 @@ class CrashSelectionTests(unittest.TestCase):
         for bad in (b"binary", "x" * 2_000_001):
             with self.assertRaisesRegex(ForensicsBlocked, "CRASH_LOG_INVALID"):
                 target_crash_descriptor(bad)
+
+
+class CliImportAndStageFailureTests(unittest.TestCase):
+    def test_real_script_import_layout_from_clean_python_process(self):
+        """Catch the original private_ci -> classic_source import bug pre-merge.
+
+        -I prevents PYTHONPATH/site/user imports from making a broken CI pass.
+        The private_ci directory is the *only* initial application path, exactly
+        as when GitHub Actions invokes the diagnostic file as a Python script.
+        No OEM input or filesystem modification is needed.
+        """
+        script_dir = Path(__file__).resolve().parents[1] / "private_ci"
+        program = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(script_dir)!r})\n"
+            "from pathlib import Path\n"
+            "from classloader_linkage_forensics import load_dex_graphs, ForensicsBlocked\n"
+            "try:\n"
+            "    load_dex_graphs(Path('unavailable-stock.apk'), "
+            "Path('unavailable-clone.apk'))\n"
+            "except ForensicsBlocked as exc:\n"
+            "    assert str(exc) == 'PRIVATE_GRAPH_UNREADABLE'\n"
+            "else:\n"
+            "    raise AssertionError('expected missing synthetic fixture')\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", program], cwd=str(script_dir),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
+            check=False,
+        )
+        # Do not forward possible exception tracebacks containing private paths.
+        self.assertEqual(completed.returncode, 0, "isolated CLI import regression")
+
+    def test_unexpected_exceptions_become_fixed_phase_codes(self):
+        secret = "PRIVATE_OEM_INTERNAL_SYMBOL_SHOULD_NOT_ESCAPE"
+        for code in (
+            "TARGET_CRASH_CLASSIFICATION_FAILED",
+            "PRIVATE_GRAPH_ANALYSIS_FAILED",
+            "CLASS_LINKAGE_ANALYSIS_FAILED",
+            "ART_VERIFY_EXECUTION_FAILED",
+        ):
+            with self.subTest(code=code):
+                def crash():
+                    raise RuntimeError(secret)
+                with self.assertRaises(ForensicsBlocked) as captured:
+                    stage_guard(code, crash)
+                self.assertEqual(str(captured.exception), code)
+                self.assertNotIn(secret, str(captured.exception))
+
+    def test_explicit_diagnostic_block_code_survives_phase_guard(self):
+        def rejected():
+            raise ForensicsBlocked("PRIVATE_GRAPH_UNREADABLE")
+        with self.assertRaisesRegex(ForensicsBlocked, "^PRIVATE_GRAPH_UNREADABLE$"):
+            stage_guard("PRIVATE_GRAPH_ANALYSIS_FAILED", rejected)
+
+    def test_arbitrary_phase_codes_cannot_leak_private_data(self):
+        operation = mock.Mock()
+        with self.assertRaisesRegex(ForensicsBlocked, "^STAGE_CODE_INVALID$"):
+            stage_guard("private/class/name/from-oem", operation)
+        operation.assert_not_called()
 
 
 class ArchiveAndRunnerTests(unittest.TestCase):
