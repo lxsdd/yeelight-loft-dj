@@ -16,7 +16,7 @@ import sys
 import tempfile
 import zipfile
 
-from classic_first import GateFailure, NEW_PACKAGE, digest_file, inspect_original, prepare
+from classic_first import GateFailure, OLD_PACKAGE, NEW_PACKAGE, digest_file, inspect_original, prepare
 from dex_authority_remap import (remap_dex, DexRemapError, assert_self_consistent_dex,
                                  _entries, _replacement)
 from smali_authority_reassembly import stage_reassembled_oem
@@ -56,7 +56,11 @@ def run(args, env=None, *, timeout=240):
 
 
 def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str,
-                    *, dex_mode="raw") -> dict:
+                    *, dex_mode="raw", identity_control=False) -> dict:
+    if type(identity_control) is not bool:
+        raise GateFailure("IDENTITY_ABLATION_BAD_MODE")
+    if identity_control and dex_mode != "raw":
+        raise GateFailure("IDENTITY_CONTROL_MUST_PRESERVE_OEM_DEX")
     if dex_mode not in ("raw", "smali"):
         raise GateFailure("DEX_MODE_INVALID")
     with zipfile.ZipFile(original) as orig, zipfile.ZipFile(candidate) as out:
@@ -68,9 +72,14 @@ def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str
         for name in original_dex:
             source = orig.read(name)
             if source.startswith(b"dex\n"):
-                expected, detail = remap_dex(source)
-                assert_self_consistent_dex(expected)
-                expected_remaps[name] = detail["changed_string_count"]
+                if identity_control:
+                    expected = source
+                    assert_self_consistent_dex(expected)
+                    expected_remaps[name] = 0
+                else:
+                    expected, detail = remap_dex(source)
+                    assert_self_consistent_dex(expected)
+                    expected_remaps[name] = detail["changed_string_count"]
             else:
                 # Test-only synthetic fixtures; original build() always SHA-pins real APK.
                 expected = source
@@ -110,7 +119,8 @@ def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str
     if badging.returncode != 0:
         raise GateFailure("AAPT_BADGING_FAILED")
     m = re.search(r"^package: name='([^']+)'", badging.stdout, re.M)
-    if not m or m.group(1) != NEW_PACKAGE:
+    expected_package = OLD_PACKAGE if identity_control else NEW_PACKAGE
+    if not m or m.group(1) != expected_package:
         raise GateFailure("NEW_PACKAGE_NOT_IN_FINAL_APK")
     return {
         "status": "UNSIGNED_PRIVATE_APK_STRUCTURAL_PREFLIGHT_PASS_NOT_INSTALLED",
@@ -120,7 +130,8 @@ def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str
         "original_oem_dex_intentionally_changed": any(expected_remaps.values()),
         "dex_reassembly_mode": dex_mode,
         "sidecar_dex": addon[0],
-        "package": NEW_PACKAGE,
+        "package": expected_package,
+        "identity_control_offline_only": identity_control,
         "signed": False, "installed": False, "device_hardware": "NOT_TESTED",
         "classic_ui": "NOT_TESTED", "cloud_login": "NOT_TESTED",
         "dj_checkpoint_adapter": "REQUIRES_PRIVATE_RUNTIME_CLASS",
@@ -199,7 +210,22 @@ def verify_final_component_classes(candidate: Path) -> dict:
             "provider_count": len(providers), "android_startup": "NOT_TESTED"}
 
 
-def build(original: Path, output: Path, sdk: Path):
+def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
+    if type(identity_control) is not bool:
+        raise GateFailure("IDENTITY_ABLATION_BAD_MODE")
+    if identity_control:
+        tmp = os.environ.get("RUNNER_TEMP", "")
+        from pathlib import Path as _Path
+        if (not tmp or output != _Path(tmp) / "private-output" /
+                "classic-loft-dj-IDENTITY-UNSIGNED.apk"
+                or os.environ.get("GITHUB_REPOSITORY") != "lxsdd/yeelight-loft-dj"
+                or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+                or os.environ.get("GITHUB_ACTOR") != "lxsdd"
+                or os.environ.get("GITHUB_REF") != "refs/heads/main"
+                or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
+                or os.environ.get("GH_TOKEN")
+                or os.environ.get("CLASSIC_VAULT_TOKEN")):
+            raise GateFailure("IDENTITY_ABLATION_OWNER_OFFLINE_SCOPE_REQUIRED")
     inspect_original(original)
     android_jar, d8, aapt = find_sdk_tools(sdk)
     # Explicitly reuse Loft DJ's Android SDK, Java and Gradle toolchain.
@@ -227,21 +253,30 @@ def build(original: Path, output: Path, sdk: Path):
         run([*apktool, 'd', '-s', '-f', '-o', decoded, original])  # -s keeps original dex bytes.
         dex = build_sidecar(sdk, bridge, original_apk=original)
         collision_report = no_oem_class_collisions(original, dex)
-        prepare(original, decoded, dex, staged)
+        prepare(original, decoded, dex, staged,
+                identity_control=identity_control)
         # JSON preparation note does not belong in APK; private report lives next to output.
         (staged/'classic_first_preparation.json').unlink()
         # In-place changing an authority value from com.* to io.* reseals
         # checksums but leaves DEX string_ids indexes out of ART's mandated
         # UTF-16 sort order. Reassemble OEM Smali with existing pinned Apktool
         # so its writer updates every string index and validates class graph.
-        codeonly = temp / 'source-code-only'
-        run([*apktool, 'd', '-r', '-f', '-o', codeonly, original],
-            timeout=600)
-        smali_report = stage_reassembled_oem(original, codeonly, staged)
+        if identity_control:
+            # Preserve the OEM DEX byte-for-byte in the identity A/B control.
+            # The stock package/authorities need no reassembly.
+            smali_report = {"status": "ORIGINAL_OEM_DEX_BYTES_PRESERVED",
+                            "private_payload_published": False}
+        else:
+            codeonly = temp / 'source-code-only'
+            run([*apktool, 'd', '-r', '-f', '-o', codeonly, original],
+                timeout=600)
+            smali_report = stage_reassembled_oem(original, codeonly, staged)
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         zip_layout = normalize_private_multidex(original, unsigned)
-        report = verify_unsigned(unsigned, original, dex, str(aapt),
-                                 dex_mode="smali")
+        report = verify_unsigned(
+            unsigned, original, dex, str(aapt),
+            dex_mode="raw" if identity_control else "smali",
+            identity_control=identity_control)
         report["oem_smali_reassembly"] = smali_report
         report['secondary_dex_transport'] = zip_layout
         report["firebase_early_init_boundary"] = verify_final_firebase_boundary(unsigned)
@@ -261,9 +296,12 @@ def main() -> int:
     p.add_argument('--original', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--android-sdk', type=Path, required=True)
+    p.add_argument('--identity-control', action='store_true',
+                   help="owner-only offline original-package ablation; no distribution")
     args = p.parse_args()
     try:
-        result = build(args.original, args.output, args.android_sdk)
+        result = build(args.original, args.output, args.android_sdk,
+                       identity_control=args.identity_control)
         print(json.dumps(result, indent=2))
         return 0
     except (GateFailure, DexRemapError, ToolError, DexTransportBlocked, subprocess.SubprocessError, OSError, zipfile.BadZipFile) as e:

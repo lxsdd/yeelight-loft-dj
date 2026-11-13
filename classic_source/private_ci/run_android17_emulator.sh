@@ -133,5 +133,29 @@ else
     --candidate "$APK" \
     --serial emulator-5554 \
     --explicit-owner-approved-private-emulator || fail
+  # After the real clone FAIL and the unmodified stock comparison, run one
+  # strictly private *identity-preserving* control with a real DJ bridge.
+  # This is a diagnostic A/B bundle, not an OEM source export or acceptance.
+  # Keep original package/authorities/OEM dex but the same disabled providers,
+  # UI bridge, min-SDK and ephemeral signing. No extra run if clone passed.
+  # The stock original is uninstalled by private_original_baseline above.
+  IDU="$RUNNER_TEMP/private-output/classic-loft-dj-IDENTITY-UNSIGNED.apk"
+  IDS="$RUNNER_TEMP/private-output/classic-loft-dj-IDENTITY-TEST-SIGNED.apk"
+  export CLASSIC_APKTOOL_JAR="$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar"
+  python3 classic_source/build_private_unsigned.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --android-sdk "$ANDROID_HOME" --output "$IDU" --identity-control \
+    >"$WORK/identity-build.log" 2>&1 || fail
+  python3 classic_source/private_test_sign.py \
+    --unsigned "$IDU" --preflight "$IDU.preflight.json" \
+    --output "$IDS" --android-sdk "$ANDROID_HOME" --identity-control \
+    >"$WORK/identity-sign.log" 2>&1 || fail
+  python3 classic_source/private_payload_parity.py \
+    --unsigned "$IDU" --signed "$IDS" || fail
+  python3 classic_source/private_ci/private_identity_control.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --candidate "$IDS" --serial emulator-5554 \
+    --explicit-owner-approved-private-emulator || fail
+  # Never turn any diagnostic outcome into product PASS.
   fail
 fi

@@ -44,8 +44,28 @@ def run(args, *, env=None):
     subprocess.run([str(x) for x in args],env=env,check=True,timeout=90,
                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
-def sign(source: Path, preflight: Path, output: Path, sdk: Path):
-    if source.name != INPUT_NAME or output.name != OUTPUT_NAME or output.exists():
+def sign(source: Path, preflight: Path, output: Path, sdk: Path,
+         *, identity_control=False):
+    if type(identity_control) is not bool:
+        raise Refused('IDENTITY_ABLATION_BAD_MODE')
+    if identity_control:
+        root = os.environ.get('RUNNER_TEMP', '')
+        allowed = (bool(root) and
+                   source == Path(root)/'private-output'/'classic-loft-dj-IDENTITY-UNSIGNED.apk' and
+                   output == Path(root)/'private-output'/'classic-loft-dj-IDENTITY-TEST-SIGNED.apk' and
+                   preflight == source.with_suffix(source.suffix+'.preflight.json') and
+                   os.environ.get('GITHUB_REPOSITORY') == 'lxsdd/yeelight-loft-dj' and
+                   os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch' and
+                   os.environ.get('GITHUB_ACTOR') == 'lxsdd' and
+                   os.environ.get('GITHUB_REF') == 'refs/heads/main' and
+                   os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted' and
+                   not os.environ.get('GH_TOKEN') and
+                   not os.environ.get('CLASSIC_VAULT_TOKEN'))
+        if not allowed:
+            raise Refused('IDENTITY_ABLATION_OWNER_OFFLINE_SCOPE_REQUIRED')
+    elif source.name != INPUT_NAME or output.name != OUTPUT_NAME:
+        raise Refused('ONLY_EXACT_PRIVATE_CLASSIC_TEST_APK_ALLOWED')
+    if output.exists():
         raise Refused('ONLY_EXACT_PRIVATE_CLASSIC_TEST_APK_ALLOWED')
     if not source.is_file() or not preflight.is_file() or not sdk.is_dir():
         raise Refused('PRIVATE_SOURCE_OR_SDK_MISSING')
@@ -53,8 +73,16 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path):
         raise Refused('BAD_PRIVATE_INPUT')
     try: d=json.loads(preflight.read_text(encoding='utf-8'))
     except (ValueError,OSError): raise Refused('BAD_PREFLIGHT_REPORT')
-    if d.get('status')!='UNSIGNED_PRIVATE_APK_STRUCTURAL_PREFLIGHT_PASS_NOT_INSTALLED' or d.get('signed') is not False or d.get('installed') is not False or d.get('package')!=PACKAGE:
+    package = 'com.yeelight.cherry' if identity_control else PACKAGE
+    if (d.get('status')!='UNSIGNED_PRIVATE_APK_STRUCTURAL_PREFLIGHT_PASS_NOT_INSTALLED'
+            or d.get('signed') is not False or d.get('installed') is not False
+            or d.get('package')!=package):
         raise Refused('NO_QUALIFIED_CLASSIC_UNSIGNED_APK')
+    if identity_control and (d.get('identity_control_offline_only') is not True or
+            d.get('dex_reassembly_mode') != 'raw' or
+            any(x != 0 for x in d.get('controlled_authority_string_remaps',{}).values()) or
+            d.get('original_oem_dex_intentionally_changed') is not False):
+        raise Refused('IDENTITY_CONTROL_OEM_BYTES_OR_SCOPE_NOT_PRESERVED')
     unsigned_sha=sha256(source)
     if d.get('apk_sha256')!=unsigned_sha: raise Refused('UNSIGNED_SHA256_MISMATCH')
     keytool=shutil.which('keytool')
@@ -90,7 +118,8 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path):
             env.pop('CLASSIC_EPHEMERAL_SIGN_PASS',None)
     report={
         'status':'PRIVATE_CLASSIC_TEST_APK_SIGNED_NOT_INSTALLED_NOT_HARDWARE_TESTED',
-        'package':PACKAGE,
+        'package':package,
+        'identity_control_offline_only':identity_control,
         'signed':True,
         'installed':False,
         'signature':'EPHEMERAL_UNIQUE_TEST_KEY_NOT_SUITABLE_FOR_APP_UPDATES',
@@ -109,9 +138,12 @@ def main():
     p.add_argument('--preflight',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--android-sdk',type=Path,required=True)
+    p.add_argument('--identity-control',action='store_true',
+                   help='isolated emulator-only original package probe')
     a=p.parse_args()
     try:
-        print(json.dumps(sign(a.unsigned,a.preflight,a.output,a.android_sdk)))
+        print(json.dumps(sign(a.unsigned,a.preflight,a.output,a.android_sdk,
+                              identity_control=a.identity_control)))
         return 0
     except (Refused,subprocess.SubprocessError,OSError) as e:
         print('PRIVATE_TEST_SIGN_BLOCKED_'+type(e).__name__,file=sys.stderr)
