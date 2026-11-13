@@ -29,11 +29,11 @@ def require(ok, code):
         raise PackageOnlyBlocked(code)
 
 def replace_package_only(data):
-    """Change only the root manifest package attribute's referenced pool string.
+    """Repoint only the root package attribute to a new AXML pool entry.
 
-    AXML pools are allowed to contain duplicate literals. Do not infer which
-    index backs the root attribute from a global search. Reject any shared
-    reference that would change another attribute, or ambiguous raw/typed refs.
+    Original pool strings can be shared with other manifest attributes and XML
+    nodes. No old pool bytes or other string references are changed. The new
+    string is appended and only the root package's raw/typed indices move.
     """
     require(type(data) is bytes and 8 <= len(data) <= 8 * 1024 * 1024,
             "PACKAGE_ONLY_AXML_SIZE_INVALID")
@@ -41,91 +41,122 @@ def replace_package_only(data):
     roots = [e for e in before["elements"] if e["tag"] == "manifest"]
     require(len(roots) == 1 and roots[0]["attributes"].get("package") == OLD_PACKAGE,
             "PACKAGE_ONLY_ORIGINAL_PACKAGE_INVALID")
-    require(len(OLD_PACKAGE) == len(NEW_PACKAGE) and
-            len(OLD_PACKAGE.encode("utf-16-le")) == len(NEW_PACKAGE.encode("utf-16-le")),
+    require(OLD_PACKAGE.isascii() and NEW_PACKAGE.isascii()
+            and len(OLD_PACKAGE) < 128 and len(NEW_PACKAGE) < 128,
             "PACKAGE_ONLY_LENGTH_MISMATCH")
-    pool = None
-    pool_location = None
-    selected = []
-    off = 8
+    off, pool_info, pool = 8, None, None
+    package_attribute = []
     while off < len(data):
         typ, hdr, size = u16(data, off), u16(data, off + 2), u32(data, off + 4)
         require(hdr >= 8 and size >= hdr and off + size <= len(data),
                 "PACKAGE_ONLY_XML_CHUNK_INVALID")
         if typ == 1:
-            require(pool is None and hdr >= 28, "PACKAGE_ONLY_POOL_INVALID")
-            count = u32(data, off + 8)
-            require(count <= 200000 and off + hdr + count * 4 <= off + size,
-                    "PACKAGE_ONLY_POOL_RANGE_INVALID")
+            require(pool_info is None and hdr >= 28, "PACKAGE_ONLY_POOL_INVALID")
+            count, styles = u32(data, off + 8), u32(data, off + 12)
+            flags, string_start, style_start = (
+                u32(data, off + 16), u32(data, off + 20), u32(data, off + 24))
+            require(count > 0 and count < 200000 and styles < 100000
+                    and hdr + (count + styles) * 4 <= string_start <= size
+                    and (styles == 0 or style_start >= string_start)
+                    and (styles != 0 or style_start == 0)
+                    and (style_start == 0 or style_start <= size)
+                    and string_start % 4 == 0
+                    and (style_start == 0 or style_start % 4 == 0),
+                    "PACKAGE_ONLY_STYLE_POOL_INVALID")
             pool = string_pool(data, off, off + size)
-            pool_location = (off, hdr, size, u32(data, off + 16))
+            pool_info = (off, hdr, size, count, styles, flags,
+                         string_start, style_start)
         elif typ == 0x0102:
             require(pool is not None and hdr >= 16, "PACKAGE_ONLY_XML_ELEMENT_INVALID")
             name_idx = u32(data, off + 20)
             require(name_idx < len(pool), "PACKAGE_ONLY_XML_ELEMENT_INVALID")
             if pool[name_idx] == "manifest":
-                attr_start = u16(data, off + 24)
-                attr_width = u16(data, off + 26)
-                n = u16(data, off + 28)
-                require(attr_width >= 20 and n <= 1000,
+                attr_start, attr_width, attr_count = (
+                    u16(data, off + 24), u16(data, off + 26), u16(data, off + 28))
+                require(attr_width >= 20 and attr_count <= 1000,
                         "PACKAGE_ONLY_XML_ATTR_INVALID")
                 attrs = off + 16 + attr_start
-                require(attrs + n * attr_width <= off + size,
+                require(attrs + attr_width * attr_count <= off + size,
                         "PACKAGE_ONLY_XML_ATTR_INVALID")
-                for i in range(n):
-                    pos = attrs + i * attr_width
-                    ns_idx, key_idx, raw_idx = (u32(data, pos),
-                                                u32(data, pos + 4),
-                                                u32(data, pos + 8))
-                    require(key_idx < len(pool), "PACKAGE_ONLY_XML_ATTR_INVALID")
-                    if ns_idx == 0xffffffff and pool[key_idx] == "package":
-                        typed_kind = data[pos + 15]
-                        typed_idx = u32(data, pos + 16)
-                        idx = raw_idx if raw_idx != 0xffffffff else (
-                            typed_idx if typed_kind == 3 else None)
-                        require(idx is not None and idx < len(pool) and
-                                pool[idx] == OLD_PACKAGE,
-                                "PACKAGE_ONLY_ROOT_ATTR_REFERENCE_INVALID")
-                        if raw_idx != 0xffffffff and typed_kind == 3:
-                            # Exact lexical and typed value must resolve to ONE
-                            # index; never change two strings by assumption.
-                            require(typed_idx == raw_idx,
+                for i in range(attr_count):
+                    pos = attrs + attr_width * i
+                    ns, name, raw = (u32(data, pos),
+                                     u32(data, pos + 4),
+                                     u32(data, pos + 8))
+                    require(name < len(pool), "PACKAGE_ONLY_XML_ATTR_INVALID")
+                    if ns == 0xffffffff and pool[name] == "package":
+                        kind, typed = data[pos + 15], u32(data, pos + 16)
+                        # The two Android representations may legitimately
+                        # use different indices for the same literal.
+                        if raw != 0xffffffff:
+                            require(raw < len(pool) and pool[raw] == OLD_PACKAGE,
+                                    "PACKAGE_ONLY_ROOT_ATTR_REFERENCE_INVALID")
+                        if kind == 3:
+                            require(typed < len(pool) and pool[typed] == OLD_PACKAGE,
                                     "PACKAGE_ONLY_DUAL_STRING_REFERENCE")
-                        selected.append(idx)
+                        require(raw != 0xffffffff or kind == 3,
+                                "PACKAGE_ONLY_ROOT_ATTR_REFERENCE_INVALID")
+                        package_attribute.append((pos, raw != 0xffffffff, kind == 3))
         off += size
-    require(off == len(data) and pool is not None and
-            len(selected) == 1 and pool_location is not None,
+    require(off == len(data) and pool_info is not None and
+            len(package_attribute) == 1,
             "PACKAGE_ONLY_ROOT_ATTR_NOT_UNIQUE")
-    pool_off, hdr, size, flags = pool_location
-    idx = selected[0]
-    pos = pool_off + u32(data, pool_off + 20) + u32(data, pool_off + hdr + 4 * idx)
-    require(pool_off <= pos < pool_off + size,
-            "PACKAGE_ONLY_STRING_RANGE_INVALID")
-    buf = bytearray(data)
+    pool_off, hdr, pool_size, count, styles, flags, string_start, style_start = pool_info
+    require(pool_off + pool_size <= package_attribute[0][0],
+            "PACKAGE_ONLY_XML_CHUNK_INVALID")
+
+    # Preserve every old string and its index. Inserting an offset table slot
+    # shifts the string bytes by 4, so only the pool header and AXML length
+    # fields are updated. Resource map and all old reference indices stay.
+    old = data[pool_off:pool_off + pool_size]
+    offset_table_end = hdr + (count + styles) * 4
+    old_string_area = old[string_start:style_start or pool_size]
+    old_style_area = old[style_start:] if style_start else b""
     if flags & 0x100:
-        _, pos = variable_utf8_length(data, pos)
-        length, pos = variable_utf8_length(data, pos)
-        require(pos + length + 1 <= pool_off + size and data[pos + length] == 0,
-                "PACKAGE_ONLY_UTF8_INVALID")
-        require(data[pos:pos + length] == OLD_PACKAGE.encode("utf-8") and
-                length == len(NEW_PACKAGE.encode("utf-8")),
-                "PACKAGE_ONLY_UTF8_LENGTH_CHANGED")
-        buf[pos:pos + length] = NEW_PACKAGE.encode("utf-8")
+        value = NEW_PACKAGE.encode("utf-8")
+        encoded = bytes((len(NEW_PACKAGE), len(value))) + value + b"\x00"
     else:
-        length, pos = variable_utf16_length(data, pos)
-        require(pos + length * 2 + 2 <= pool_off + size and
-                u16(data, pos + length * 2) == 0,
-                "PACKAGE_ONLY_UTF16_INVALID")
-        replacement = NEW_PACKAGE.encode("utf-16-le")
-        require(data[pos:pos + length * 2] == OLD_PACKAGE.encode("utf-16-le")
-                and len(replacement) == length * 2,
-                "PACKAGE_ONLY_UTF16_LENGTH_CHANGED")
-        buf[pos:pos + length * 2] = replacement
+        encoded = (struct.pack("<H", len(NEW_PACKAGE)) +
+                   NEW_PACKAGE.encode("utf-16-le") + b"\x00\x00")
+    pad = b"\x00" * (-(len(old_string_area) + len(encoded)) % 4)
+    header = bytearray(old[:hdr])
+    struct.pack_into("<I", header, 8, count + 1)
+    struct.pack_into("<I", header, 20, string_start + 4)
+    if style_start:
+        struct.pack_into("<I", header, 24, style_start + 4 + len(encoded) + len(pad))
+    # A sorted-string-pool flag must not be retained after appending a new
+    # literal whose lexical position is not established.
+    struct.pack_into("<I", header, 16, flags & ~1)
+    old_offsets = old[hdr:hdr + count * 4]
+    style_offsets = old[hdr + count * 4:offset_table_end]
+    gap = old[offset_table_end:string_start]
+    new_pool = (header + old_offsets + struct.pack("<I", len(old_string_area)) +
+                style_offsets + gap + old_string_area + encoded + pad +
+                old_style_area)
+    require(len(new_pool) % 4 == 0 and len(new_pool) > pool_size,
+            "PACKAGE_ONLY_STRING_POOL_REPACK_INVALID")
+    struct.pack_into("<I", new_pool, 4, len(new_pool))
+    delta = len(new_pool) - pool_size
+    buf = bytearray(data[:pool_off]) + new_pool + data[pool_off + pool_size:]
+    require(len(buf) == len(data) + delta and len(buf) <= 8 * 1024 * 1024,
+            "PACKAGE_ONLY_STRING_POOL_REPACK_INVALID")
+    struct.pack_into("<I", buf, 4, len(buf))
+    attr_pos, change_raw, change_typed = package_attribute[0]
+    attr_pos += delta
+    if change_raw:
+        struct.pack_into("<I", buf, attr_pos + 8, count)
+    if change_typed:
+        struct.pack_into("<I", buf, attr_pos + 16, count)
     after = parse_binary_xml(bytes(buf))
     expected = json.loads(json.dumps(before))
     root = next(e for e in expected["elements"] if e["tag"] == "manifest")
     root["attributes"]["package"] = NEW_PACKAGE
+    expected["string_count"] += 1
     require(after == expected, "PACKAGE_ONLY_MORE_THAN_PACKAGE_CHANGED")
+    # An existing reference to the old package remains in the original string
+    # pool; any other attr touching it is semantically unchanged.
+    require(pool[count - 1] == string_pool(data, pool_off, pool_off + pool_size)[-1],
+            "PACKAGE_ONLY_OLD_POOL_MUTATED")
     return bytes(buf)
 
 SRC = "classic-loft-dj-IDENTITY-UNSIGNED.apk"
@@ -249,6 +280,9 @@ def main():
             "PACKAGE_ONLY_UTF8_LENGTH_CHANGED",
             "PACKAGE_ONLY_UTF16_LENGTH_CHANGED",
             "PACKAGE_ONLY_MORE_THAN_PACKAGE_CHANGED",
+            "PACKAGE_ONLY_STYLE_POOL_INVALID",
+            "PACKAGE_ONLY_STRING_POOL_REPACK_INVALID",
+            "PACKAGE_ONLY_OLD_POOL_MUTATED",
             "PACKAGE_ONLY_OWNER_OFFLINE_SCOPE_REQUIRED",
             "PACKAGE_ONLY_PRIVATE_PATH_INVALID",
             "PACKAGE_ONLY_IDENTITY_RECEIPTS_MISSING",

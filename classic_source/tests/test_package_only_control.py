@@ -67,8 +67,8 @@ class PackageOnlyTests(unittest.TestCase):
                 rewritten = parse_binary_xml(result)
                 self.assertEqual(original["elements"][0]["attributes"]["package"], OLD_PACKAGE)
                 self.assertEqual(rewritten["elements"][0]["attributes"]["package"], NEW_PACKAGE)
-                self.assertEqual(len(source), len(result))
-                self.assertEqual(rewritten["string_count"], original["string_count"])
+                self.assertGreater(len(result), len(source))
+                self.assertEqual(rewritten["string_count"], original["string_count"] + 1)
                 # Unrelated full-length original authority is preserved as bytes.
                 self.assertIn(OLD_PACKAGE.encode("utf-8" if utf8 else "utf-16-le")
                               + ".device".encode("utf-8" if utf8 else "utf-16-le"), result)
@@ -82,16 +82,48 @@ class PackageOnlyTests(unittest.TestCase):
         self.assertIn(OLD_PACKAGE.encode("utf-8"), changed)
         self.assertNotEqual(payload, changed)
 
-    def test_shared_pool_reference_and_divergent_typed_index_fail_closed(self):
-        with self.assertRaisesRegex(pkg.PackageOnlyBlocked, "PACKAGE_ONLY_MORE_THAN_PACKAGE_CHANGED"):
-            pkg.replace_package_only(binary_manifest(shared=True))
+    def test_shared_pool_reference_changes_only_manifest_package(self):
+        for utf8 in (True, False):
+            with self.subTest(utf8=utf8):
+                payload = binary_manifest(shared=True, utf8=utf8)
+                before = parse_binary_xml(payload)
+                after_data = pkg.replace_package_only(payload)
+                after = parse_binary_xml(after_data)
+                self.assertEqual(after["elements"][0]["attributes"]["package"], NEW_PACKAGE)
+                self.assertEqual(after["elements"][0]["attributes"]["originalName"], OLD_PACKAGE)
+                self.assertEqual(before["elements"][0]["attributes"]["originalName"], OLD_PACKAGE)
+                self.assertEqual(after["string_count"], before["string_count"] + 1)
+                self.assertEqual(after_data.count(OLD_PACKAGE.encode(
+                    "utf-8" if utf8 else "utf-16-le")), payload.count(
+                    OLD_PACKAGE.encode("utf-8" if utf8 else "utf-16-le")))
+
+    def test_divergent_typed_index_fail_closed(self):
         payload = bytearray(binary_manifest())
-        # Manifest's synthetic first attribute has raw string index 2 and
-        # typed string index 2; altering one side must be rejected.
+        # Manifest's raw string index 2 and typed index 2 must not silently
+        # disagree about the old package identity.
         pos = len(payload) - (36 + 20) + 36
         struct.pack_into("<I", payload, pos + 16, 3)
         with self.assertRaisesRegex(pkg.PackageOnlyBlocked, "PACKAGE_ONLY_DUAL_STRING_REFERENCE"):
             pkg.replace_package_only(bytes(payload))
+
+    def test_append_string_does_not_shift_original_string_indices(self):
+        payload = binary_manifest(shared=True)
+        after = pkg.replace_package_only(payload)
+        before_xml = parse_binary_xml(payload)
+        after_xml = parse_binary_xml(after)
+        self.assertEqual(before_xml["namespaces"], after_xml["namespaces"])
+        self.assertEqual(before_xml["elements"][0]["tag"], after_xml["elements"][0]["tag"])
+        self.assertEqual(after_xml["elements"][0]["attributes"]["originalName"], OLD_PACKAGE)
+        self.assertEqual(struct.unpack_from("<I", after, 4)[0], len(after))
+
+    def test_no_package_string_pool_entry_is_mutated_when_alias_is_shared(self):
+        payload = binary_manifest(shared=True, duplicate=True)
+        changed = pkg.replace_package_only(payload)
+        original = parse_binary_xml(payload)
+        revised = parse_binary_xml(changed)
+        self.assertEqual(original["string_count"] + 1, revised["string_count"])
+        self.assertEqual(revised["elements"][0]["attributes"]["package"], NEW_PACKAGE)
+        self.assertEqual(revised["elements"][0]["attributes"]["originalName"], OLD_PACKAGE)
 
     def test_garbage_xml_and_wrong_package_refused(self):
         for value in (b"", b"<manifest package='com.yeelight.cherry'/>",
