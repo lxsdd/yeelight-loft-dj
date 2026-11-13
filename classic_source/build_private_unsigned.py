@@ -147,7 +147,8 @@ def verify_final_firebase_boundary(candidate: Path, *, identity_control=False) -
         raise GateFailure("FINAL_BINARY_MANIFEST_INVALID") from exc
     providers = [e["attributes"] for e in root["elements"] if e["tag"] == "provider"]
     if len(providers) != (6 if identity_control else 5):
-        raise GateFailure("FINAL_PROVIDER_COUNT_MISMATCH")
+        raise GateFailure("FINAL_PROVIDER_COUNT_NOT_SIX" if identity_control
+                          else "FINAL_PROVIDER_COUNT_NOT_FIVE")
     dj = [p for p in providers if p.get(
         "{http://schemas.android.com/apk/res/android}name") ==
         "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider"]

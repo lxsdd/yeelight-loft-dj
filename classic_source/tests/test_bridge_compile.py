@@ -93,6 +93,86 @@ STUBS = {
 }''',
 }
 
+
+# These stubs cover the new original-identity-only lifecycle adapter.
+# The production build still uses the real Android SDK and D8, not these fakes.
+STUBS.update({
+'android/R.java': '''package android; public final class R {
+ public static class drawable { public static final int ic_media_play=1, ic_media_pause=2; }
+ public static class id { public static final int content=16908290; }
+}''',
+'android/content/Context.java': '''package android.content; public class Context {
+ public void startActivity(Intent i) {} public void startService(Intent i){} public void startForegroundService(Intent i){}
+ public <T> T getSystemService(Class<T> serviceClass){return null;} public int checkSelfPermission(String p){return 0;}
+ public Context getApplicationContext(){return null;} public String getPackageName(){return "";}
+ public android.content.res.Resources getResources(){return new android.content.res.Resources();}
+}''',
+'android/content/res/Resources.java': '''package android.content.res; public class Resources {
+ public android.util.DisplayMetrics getDisplayMetrics(){return new android.util.DisplayMetrics();}
+}''',
+'android/util/DisplayMetrics.java': '''package android.util; public class DisplayMetrics { public float density=1.0f; }''',
+'android/app/Activity.java': '''package android.app; public class Activity extends android.content.Context {
+ protected void onCreate(android.os.Bundle b){} protected void onResume(){} protected void onPause(){}
+ public void setContentView(android.view.View v){} public boolean isFinishing(){return false;}
+ public boolean isDestroyed(){return false;} public android.view.View findViewById(int id){return null;}
+ public void requestPermissions(String[] p,int r){} public void onRequestPermissionsResult(int code,String[] p,int[] results){}
+}''',
+'android/app/Application.java': '''package android.app; public class Application extends android.content.Context {
+ public interface ActivityLifecycleCallbacks {
+  void onActivityCreated(Activity a,android.os.Bundle b);
+  void onActivityStarted(Activity a); void onActivityResumed(Activity a);
+  void onActivityPaused(Activity a); void onActivityStopped(Activity a);
+  void onActivitySaveInstanceState(Activity a,android.os.Bundle b);
+  void onActivityDestroyed(Activity a);
+ }
+ public void registerActivityLifecycleCallbacks(ActivityLifecycleCallbacks c){}
+}''',
+'android/content/ContentValues.java': '''package android.content; public class ContentValues {}''',
+'android/database/Cursor.java': '''package android.database; public interface Cursor {}''',
+'android/net/Uri.java': '''package android.net; public class Uri {}''',
+'android/content/ContentProvider.java': '''package android.content;
+public abstract class ContentProvider {
+ public android.content.Context getContext(){return null;}
+ public abstract boolean onCreate();
+ public abstract android.database.Cursor query(android.net.Uri uri,String[] projection,String selection,String[] args,String order);
+ public abstract String getType(android.net.Uri uri);
+ public abstract android.net.Uri insert(android.net.Uri uri,ContentValues values);
+ public abstract int delete(android.net.Uri uri,String selection,String[] args);
+ public abstract int update(android.net.Uri uri,ContentValues values,String selection,String[] args);
+}''',
+'android/graphics/Rect.java': '''package android.graphics; public class Rect {public int width(){return 1;} public int height(){return 1;}}''',
+'android/view/View.java': '''package android.view; public class View {
+ private final android.content.Context c; private Object tag;
+ public View(android.content.Context c){this.c=c;}
+ public void setContentDescription(CharSequence a){} public void setOnClickListener(OnClickListener x){}
+ public android.content.Context getContext(){return c;}
+ public void setTag(Object o){tag=o;} public Object getTag(){return tag;}
+ public boolean isShown(){return true;} public boolean isClickable(){return true;}
+ public boolean getGlobalVisibleRect(android.graphics.Rect r){return true;}
+ public interface OnClickListener {void onClick(View v);}
+}''',
+'android/view/ViewGroup.java': '''package android.view; public class ViewGroup extends View {
+ public ViewGroup(android.content.Context c){super(c);}
+ public int getChildCount(){return 0;} public View getChildAt(int i){return null;}
+ public static class LayoutParams {
+  public static final int WRAP_CONTENT=-2;
+  public LayoutParams(int width,int height){}
+ }
+}''',
+'android/view/Gravity.java': '''package android.view; public class Gravity {
+ public static final int TOP=48, BOTTOM=80, END=8388613;
+}''',
+'android/widget/FrameLayout.java': '''package android.widget;
+public class FrameLayout extends android.view.ViewGroup {
+ public FrameLayout(android.content.Context c){super(c);}
+ public void addView(android.view.View v,LayoutParams params){}
+ public static class LayoutParams extends android.view.ViewGroup.LayoutParams {
+  public LayoutParams(int w,int h,int gravity){super(w,h);}
+  public void setMargins(int left,int top,int right,int bottom){}
+ }
+}''',
+})
+
 class BridgeCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('javac'), 'javac not present')
     def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):

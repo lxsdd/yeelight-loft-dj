@@ -50,7 +50,7 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
 
     def test_identity_rejects_missing_invalid_or_exported_bootstrap(self):
         cases = (
-            (fake_elements(False), "FINAL_PROVIDER_COUNT_MISMATCH"),
+            (fake_elements(False), "FINAL_PROVIDER_COUNT_NOT_SIX"),
             (fake_elements(exported="true"), "FINAL_IDENTITY_ENTRY_PROVIDER_INVALID"),
             (fake_elements(name="unknown.Injector"), "FINAL_IDENTITY_ENTRY_PROVIDER_INVALID"),
         )
@@ -61,7 +61,7 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
 
     def test_clone_must_not_ship_identity_provider(self):
         with self.assertRaisesRegex(classic.GateFailure,
-                                    "FINAL_PROVIDER_COUNT_MISMATCH"):
+                                    "FINAL_PROVIDER_COUNT_NOT_FIVE"):
             self._verify(fake_elements(True), identity=False)
 
     def test_provider_lifecycle_safe_inline_entry_contract(self):
