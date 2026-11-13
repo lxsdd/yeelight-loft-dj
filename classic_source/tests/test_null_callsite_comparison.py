@@ -94,6 +94,53 @@ class NullCallsiteRegression(unittest.TestCase):
                     s.compare_private(original, clone, "", Path("/tmp/foreign"))
 
 
+    def test_null_receiver_instance_static_and_invocation_sources(self):
+        # Every source is synthetic; only fixed enums can leave private runner.
+        call = "    invoke-virtual {v0}, Lfoo/bar/Baz;->run()V\n"
+        prefix = ".method public d()V\n"
+        for statement, expected in (
+            ("iget-object v0, p0, La/b;->f:Lfoo/bar/Baz;", "INSTANCE_FIELD_LOAD"),
+            ("sget-object v0, La/b;->f:Lfoo/bar/Baz;", "STATIC_FIELD_LOAD"),
+            ("move-result-object v0", "METHOD_RETURN_VALUE"),
+            ("aget-object v0, v1, v2", "ARRAY_ELEMENT"),
+            ("const/4 v0, 0x0", "LITERAL_NULL"),
+            ("move-object v0, p1", "CALLER_PARAMETER_OR_THIS"),
+            ("new-instance v0, Lfoo/bar/Baz;", "NON_NULL_SOURCE_OR_STALE_STACK"),
+        ):
+            src = prefix + "    " + statement + "\n" + call + ".end method\n"
+            self.assertEqual(s.receiver_origin_from_smali(src, "d",
+                             ("foo.bar.Baz","run")),expected)
+        ambiguity = (prefix + "    iget-object v0, p0, La/b;->f:Lfoo/bar/Baz;\n"
+                     "    :cond_0\n" + call + ".end method\n")
+        self.assertEqual(s.receiver_origin_from_smali(
+            ambiguity, "d", ("foo.bar.Baz","run")),
+            "UNKNOWN_OR_BRANCH_AMBIGUOUS")
+        duplicated = prefix + "    move-object v0, p1\n" + call + call + ".end method\n"
+        self.assertEqual(s.receiver_origin_from_smali(
+            duplicated,"d",("foo.bar.Baz","run")),
+            "UNKNOWN_OR_BRANCH_AMBIGUOUS")
+        self.assertEqual(s.receiver_origin_from_smali(
+            prefix+call+".end method\n","d",None), "UNAVAILABLE")
+        for bad in (("Secret",), (1,2), ("a.b", "c"*400)):
+            with self.assertRaisesRegex(s.NullSiteBlocked,"NULL_RECEIVER_SIGNATURE_INVALID"):
+                s.receiver_origin_from_smali(prefix+call+".end method\n","d",bad)
+        self.assertTrue(all(v.isupper() for v in s.RECEIVER_ORIGINS))
+
+    def test_null_invocation_target_scoped_and_callee_never_serialized(self):
+        target = ("FATAL EXCEPTION: main\nProcess: "+PACKAGE+", PID: 12\n"
+                  "java.lang.NullPointerException: Attempt to invoke virtual method "
+                  "'void foo.bar.Baz.run()' on a null object reference\n"
+                  "    at a.b.c.d(Unknown Source:3)\n")
+        foreign = target.replace("Process: "+PACKAGE, "Process: unrelated.app")
+        self.assertEqual(s._target_null_invoked(target), ("foo.bar.Baz","run"))
+        self.assertIsNone(s._target_null_invoked(foreign))
+        self.assertIsNone(s._target_null_invoked(
+            target.replace("Attempt to invoke", "Attempt to read")))
+        self.assertNotIn("foo.bar.Baz",str(s.RECEIVER_ORIGINS))
+        with self.assertRaisesRegex(s.NullSiteBlocked,"NULL_RECEIVER_LOG_INVALID"):
+            s._target_null_invoked(b"non-text")
+
+
 
 if __name__ == "__main__":
     unittest.main()

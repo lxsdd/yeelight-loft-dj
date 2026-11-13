@@ -435,6 +435,27 @@ class OriginalBaselineRegression(unittest.TestCase):
         self.assertIn("original_unmodified_and_hash_verified", source)
         self.assertIn("clone_functionally_accepted\": False", source)
 
+    def test_npe_receiver_origin_report_never_overrides_cloned_failure(self):
+        c={"target_crash":True,"exception_category":"NULL_DEREFERENCE",
+           "failure_stage":"UNDETERMINED"}
+        o={"target_crash":False,"exception_category":"NONE",
+           "failure_stage":"UNDETERMINED"}
+        result=m.compare_results(c,None,o,None,True,"METHOD_TEXT_IDENTICAL",
+                                 "INSTANCE_FIELD_LOAD")
+        self.assertEqual(result["null_receiver_source"],"INSTANCE_FIELD_LOAD")
+        self.assertEqual(result["null_method_smali_relation"],"METHOD_TEXT_IDENTICAL")
+        self.assertEqual(result["runtime_relation"],
+                         "CLONE_ONLY_NULL_DEREFERENCE_IN_OBSERVED_WINDOW")
+        self.assertFalse(result["clone_functionally_accepted"])
+        self.assertFalse(result["original_functionally_accepted"])
+        with self.assertRaisesRegex(m.BaselineBlocked,"BASELINE_NULL_RECEIVER_INVALID"):
+            m.compare_results(c,None,o,None,True,"METHOD_TEXT_IDENTICAL","SECRET_NAME")
+        cl={"target_crash":True,"exception_category":"CLASS_LOADER_MISSING",
+            "failure_stage":"PROVIDER_INIT"}
+        self.assertEqual(m.compare_results(cl,None,o,None,False)
+                         ["null_receiver_source"], "NOT_APPLICABLE")
+
+
 
 if __name__ == "__main__":
     unittest.main()
