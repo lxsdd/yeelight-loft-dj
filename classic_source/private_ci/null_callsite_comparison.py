@@ -25,6 +25,9 @@ from classic_first import ORIGINAL_SHA256, digest_file
 from smali_authority_reassembly import rewrite_literals
 from static_field_writer_audit import (crashing_static_field, writer_methods,
     assess_writer_provenance, WRITER_ROUTES, WRITER_RELATIONS, WriterBlocked)
+from static_field_caller_audit import (
+    direct_writer_callers, assess_direct_writer_callers,
+    CALLER_ROUTES, CALLER_RELATIONS, CALLER_CONTEXTS)
 
 PINNED_APKTOOL = "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
 MAX_TEXT = 2_000_000
@@ -296,7 +299,8 @@ def compare_private(original: Path, candidate: Path, logcat: str, temp: Path,
     require(not report_writer or report_receiver,
             "WRITER_REPORT_REQUIRES_RECEIVER_SCOPE")
     def empty_relation(relation):
-        return ((relation,"UNAVAILABLE","UNAVAILABLE","UNAVAILABLE")
+        return ((relation,"UNAVAILABLE","UNAVAILABLE","UNAVAILABLE",
+                 "UNAVAILABLE","UNAVAILABLE","UNAVAILABLE")
                 if report_writer else
                 (relation,"UNAVAILABLE") if report_receiver else relation)
     site = target_null_site(logcat)
@@ -356,6 +360,8 @@ def compare_private(original: Path, candidate: Path, logcat: str, temp: Path,
         if not report_writer:
             return result, origin
         route, relation = "UNAVAILABLE", "UNAVAILABLE"
+        caller_route, caller_relation, caller_context = (
+            "UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE")
         if origin == "STATIC_FIELD_LOAD":
             field = crashing_static_field(
                 contents[1], method, invoked, method_blocks=method_blocks,
@@ -369,8 +375,19 @@ def compare_private(original: Path, candidate: Path, logcat: str, temp: Path,
                     clone = set(inspect_apk(candidate)["components"])
                     route, relation = assess_writer_provenance(
                         old,new,org,clone,rewrite_literals)
+                    if old and new and set(old) == set(new):
+                        old_calls = direct_writer_callers(old_dir, old)
+                        new_calls = direct_writer_callers(new_dir, new)
+                        caller_route, caller_relation, caller_context = (
+                            assess_direct_writer_callers(
+                                old_calls, new_calls, org, clone,
+                                rewrite_literals))
                 except (WriterBlocked,UnicodeError,OSError):
                     raise NullSiteBlocked("WRITER_DIFFERENTIAL_FAILED") from None
-        require(route in WRITER_ROUTES and relation in WRITER_RELATIONS,
+        require(route in WRITER_ROUTES and relation in WRITER_RELATIONS and
+                caller_route in CALLER_ROUTES and
+                caller_relation in CALLER_RELATIONS and
+                caller_context in CALLER_CONTEXTS,
                 "WRITER_DIFFERENTIAL_UNSAFE")
-        return result, origin, route, relation
+        return (result, origin, route, relation,
+                caller_route, caller_relation, caller_context)

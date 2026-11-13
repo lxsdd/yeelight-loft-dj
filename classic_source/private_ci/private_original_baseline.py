@@ -29,7 +29,9 @@ from android17_start_smoke import (
 from null_callsite_comparison import (compare_private as compare_null_callsite,
                                       RELATIONS as NULL_RELATIONS,
                                       RECEIVER_ORIGINS, WRITER_ROUTES,
-                                      WRITER_RELATIONS, NullSiteBlocked)
+                                      WRITER_RELATIONS, CALLER_ROUTES,
+                                      CALLER_RELATIONS, CALLER_CONTEXTS,
+                                      NullSiteBlocked)
 from clone_launcher_selection import (
     ORIGINAL, PACKAGE as CLONE, CloneLauncherBlocked, select_installed_launcher,
     REASONS as LAUNCHER_REASONS,
@@ -217,7 +219,10 @@ def compare_results(clone_crash, clone_missing, original_crash,
                     null_method_relation="UNAVAILABLE",
                     null_receiver_origin="UNAVAILABLE",
                     writer_route="UNAVAILABLE",
-                    writer_relation="UNAVAILABLE"):
+                    writer_relation="UNAVAILABLE",
+                    caller_route="UNAVAILABLE",
+                    caller_relation="UNAVAILABLE",
+                    caller_context="UNAVAILABLE"):
     """Closed vocabulary differential; never convert a crash into acceptance."""
     kind = (clone_crash.get("exception_category") if type(clone_crash) is dict else None)
     require(type(clone_crash) is dict and clone_crash.get("target_crash") is True
@@ -232,6 +237,10 @@ def compare_results(clone_crash, clone_missing, original_crash,
         require(writer_route in WRITER_ROUTES and
                 writer_relation in WRITER_RELATIONS,
                 "BASELINE_WRITER_RELATION_INVALID")
+        require(caller_route in CALLER_ROUTES and
+                caller_relation in CALLER_RELATIONS and
+                caller_context in CALLER_CONTEXTS,
+                "BASELINE_WRITER_CALLER_INVALID")
         relation = "NOT_APPLICABLE"
         if original_crash.get("target_crash"):
             result = ("BOTH_NULL_DEREFERENCES_CAUSE_NOT_ESTABLISHED" if
@@ -267,6 +276,15 @@ def compare_results(clone_crash, clone_missing, original_crash,
         "null_static_writer_code_relation": (writer_relation
                                              if kind == "NULL_DEREFERENCE"
                                              else "NOT_APPLICABLE"),
+        "null_static_writer_caller_route": (caller_route
+                                            if kind == "NULL_DEREFERENCE"
+                                            else "NOT_APPLICABLE"),
+        "null_static_writer_caller_code_relation": (caller_relation
+                                                    if kind == "NULL_DEREFERENCE"
+                                                    else "NOT_APPLICABLE"),
+        "null_static_writer_caller_context": (caller_context
+                                              if kind == "NULL_DEREFERENCE"
+                                              else "NOT_APPLICABLE"),
         "null_site_diagnostic_not_root_cause_proof": True,
         "clone_exception_category": kind,
         "clone_failure_stage": clone_crash["failure_stage"],
@@ -339,12 +357,14 @@ def compare_private_emulator(original, candidate, *, serial, approved,
                      else None)
     # Offline bytecode read-only comparison runs before uninstalling the clone.
     try:
-        null_relation, receiver_origin, writer_route, writer_relation = (
+        (null_relation, receiver_origin, writer_route, writer_relation,
+         caller_route, caller_relation, caller_context) = (
             compare_null_callsite(
                 original, candidate, clone_log, Path(os.environ["RUNNER_TEMP"]),
                 report_receiver=True, report_writer=True)
             if clone_crash["exception_category"] == "NULL_DEREFERENCE"
-            else ("UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE"))
+            else ("UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE",
+                  "UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE"))
     except NullSiteBlocked as exc:
         raise BaselineBlocked(str(exc)) from None
 
@@ -394,7 +414,8 @@ def compare_private_emulator(original, candidate, *, serial, approved,
                        not original_crash["unattributed_fatal"])
         return compare_results(clone_crash, clone_missing, original_crash,
                                original_missing, resumed, null_relation,
-                               receiver_origin, writer_route, writer_relation)
+                               receiver_origin, writer_route, writer_relation,
+                               caller_route, caller_relation, caller_context)
     finally:
         # Always remove the original and any emulator app data. Nothing may
         # survive outside this disposable emulator runner or its cleanup trap.

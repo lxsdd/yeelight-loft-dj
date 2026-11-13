@@ -483,5 +483,42 @@ class OriginalBaselineRegression(unittest.TestCase):
         self.assertIn("writer_route, writer_relation",source)
 
 
+    def test_private_static_writer_callers_only_safe_enums_and_no_acceptance(self):
+        clone={"target_crash":True,"exception_category":"NULL_DEREFERENCE",
+               "failure_stage":"UNDETERMINED"}
+        original={"target_crash":False,"exception_category":"NONE",
+                  "failure_stage":"UNDETERMINED"}
+        result=m.compare_results(clone,None,original,None,True,
+            "METHOD_TEXT_IDENTICAL","STATIC_FIELD_LOAD",
+            "OTHER_OEM_WRITER","WRITER_METHODS_IDENTICAL",
+            "RETAINED_ACTIVITY_CALLER","CALLER_METHODS_IDENTICAL",
+            "IDENTITY_REFERENCE_AND_BRANCH")
+        self.assertEqual(result["null_static_writer_caller_route"],
+                         "RETAINED_ACTIVITY_CALLER")
+        self.assertEqual(result["null_static_writer_caller_code_relation"],
+                         "CALLER_METHODS_IDENTICAL")
+        self.assertEqual(result["null_static_writer_caller_context"],
+                         "IDENTITY_REFERENCE_AND_BRANCH")
+        self.assertEqual(result["runtime_relation"],
+                         "CLONE_ONLY_NULL_DEREFERENCE_IN_OBSERVED_WINDOW")
+        self.assertFalse(result["clone_functionally_accepted"])
+        self.assertFalse(result["original_functionally_accepted"])
+        for forbidden in (None, 42, "private.class.secret"):
+            with self.assertRaisesRegex(m.BaselineBlocked,
+                                        "BASELINE_WRITER_CALLER_INVALID"):
+                m.compare_results(clone,None,original,None,True,
+                    "METHOD_TEXT_IDENTICAL","STATIC_FIELD_LOAD",
+                    "OTHER_OEM_WRITER","WRITER_METHODS_IDENTICAL",
+                    forbidden,"CALLER_METHODS_IDENTICAL","NO_LOCAL_BRANCH")
+        other={"target_crash":True,"exception_category":"CLASS_LOADER_MISSING",
+               "failure_stage":"PROVIDER_INIT"}
+        self.assertEqual(m.compare_results(other,None,original,None,False)
+                         ["null_static_writer_caller_route"],"NOT_APPLICABLE")
+        source=Path(m.__file__).read_text("utf-8")
+        self.assertIn("caller_route, caller_relation, caller_context",source)
+        self.assertIn("direct_writer_callers",Path(m.compare_null_callsite.__code__.co_filename)
+                      .read_text("utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
