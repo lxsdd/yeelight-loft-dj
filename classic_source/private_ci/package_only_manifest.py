@@ -16,7 +16,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apk_readonly_audit import (
-    AxmlError, parse_binary_xml, u16, u32,
+    AxmlError, parse_binary_xml, string_pool, u16, u32,
     variable_utf8_length, variable_utf16_length,
 )
 from classic_first import ORIGINAL_SHA256, OLD_PACKAGE, NEW_PACKAGE, digest_file
@@ -29,7 +29,12 @@ def require(ok, code):
         raise PackageOnlyBlocked(code)
 
 def replace_package_only(data):
-    """Rewrite one exact AXML string-pool item, with structural proof of one XML change."""
+    """Change only the root manifest package attribute's referenced pool string.
+
+    AXML pools are allowed to contain duplicate literals. Do not infer which
+    index backs the root attribute from a global search. Reject any shared
+    reference that would change another attribute, or ambiguous raw/typed refs.
+    """
     require(type(data) is bytes and 8 <= len(data) <= 8 * 1024 * 1024,
             "PACKAGE_ONLY_AXML_SIZE_INVALID")
     before = parse_binary_xml(data)
@@ -39,50 +44,83 @@ def replace_package_only(data):
     require(len(OLD_PACKAGE) == len(NEW_PACKAGE) and
             len(OLD_PACKAGE.encode("utf-16-le")) == len(NEW_PACKAGE.encode("utf-16-le")),
             "PACKAGE_ONLY_LENGTH_MISMATCH")
-    buf = bytearray(data)
+    pool = None
+    pool_location = None
+    selected = []
     off = 8
-    changed = 0
-    pools = 0
     while off < len(data):
         typ, hdr, size = u16(data, off), u16(data, off + 2), u32(data, off + 4)
         require(hdr >= 8 and size >= hdr and off + size <= len(data),
                 "PACKAGE_ONLY_XML_CHUNK_INVALID")
         if typ == 1:
-            pools += 1
-            require(pools == 1 and hdr >= 28, "PACKAGE_ONLY_POOL_INVALID")
-            count, flags = u32(data, off + 8), u32(data, off + 16)
+            require(pool is None and hdr >= 28, "PACKAGE_ONLY_POOL_INVALID")
+            count = u32(data, off + 8)
             require(count <= 200000 and off + hdr + count * 4 <= off + size,
                     "PACKAGE_ONLY_POOL_RANGE_INVALID")
-            base = off + u32(data, off + 20)
-            for index in range(count):
-                pos = base + u32(data, off + hdr + 4 * index)
-                require(off <= pos < off + size, "PACKAGE_ONLY_STRING_RANGE_INVALID")
-                if flags & 0x100:
-                    _, pos = variable_utf8_length(data, pos)
-                    length, pos = variable_utf8_length(data, pos)
-                    require(pos + length + 1 <= off + size and data[pos + length] == 0,
-                            "PACKAGE_ONLY_UTF8_INVALID")
-                    value = data[pos:pos + length].decode("utf-8")
-                    if value == OLD_PACKAGE:
-                        require(length == len(NEW_PACKAGE.encode("utf-8")),
-                                "PACKAGE_ONLY_UTF8_LENGTH_CHANGED")
-                        buf[pos:pos + length] = NEW_PACKAGE.encode("utf-8")
-                        changed += 1
-                else:
-                    length, pos = variable_utf16_length(data, pos)
-                    require(pos + length * 2 + 2 <= off + size and
-                            u16(data, pos + length * 2) == 0,
-                            "PACKAGE_ONLY_UTF16_INVALID")
-                    value = data[pos:pos + length * 2].decode("utf-16-le")
-                    if value == OLD_PACKAGE:
-                        replacement = NEW_PACKAGE.encode("utf-16-le")
-                        require(len(replacement) == length * 2,
-                                "PACKAGE_ONLY_UTF16_LENGTH_CHANGED")
-                        buf[pos:pos + length * 2] = replacement
-                        changed += 1
+            pool = string_pool(data, off, off + size)
+            pool_location = (off, hdr, size, u32(data, off + 16))
+        elif typ == 0x0102:
+            require(pool is not None and hdr >= 16, "PACKAGE_ONLY_XML_ELEMENT_INVALID")
+            name_idx = u32(data, off + 20)
+            require(name_idx < len(pool), "PACKAGE_ONLY_XML_ELEMENT_INVALID")
+            if pool[name_idx] == "manifest":
+                attr_start = u16(data, off + 24)
+                attr_width = u16(data, off + 26)
+                n = u16(data, off + 28)
+                require(attr_width >= 20 and n <= 1000,
+                        "PACKAGE_ONLY_XML_ATTR_INVALID")
+                attrs = off + 16 + attr_start
+                require(attrs + n * attr_width <= off + size,
+                        "PACKAGE_ONLY_XML_ATTR_INVALID")
+                for i in range(n):
+                    pos = attrs + i * attr_width
+                    ns_idx, key_idx, raw_idx = (u32(data, pos),
+                                                u32(data, pos + 4),
+                                                u32(data, pos + 8))
+                    require(key_idx < len(pool), "PACKAGE_ONLY_XML_ATTR_INVALID")
+                    if ns_idx == 0xffffffff and pool[key_idx] == "package":
+                        typed_kind = data[pos + 15]
+                        typed_idx = u32(data, pos + 16)
+                        idx = raw_idx if raw_idx != 0xffffffff else (
+                            typed_idx if typed_kind == 3 else None)
+                        require(idx is not None and idx < len(pool) and
+                                pool[idx] == OLD_PACKAGE,
+                                "PACKAGE_ONLY_ROOT_ATTR_REFERENCE_INVALID")
+                        if raw_idx != 0xffffffff and typed_kind == 3:
+                            # Exact lexical and typed value must resolve to ONE
+                            # index; never change two strings by assumption.
+                            require(typed_idx == raw_idx,
+                                    "PACKAGE_ONLY_DUAL_STRING_REFERENCE")
+                        selected.append(idx)
         off += size
-    require(off == len(data) and pools == 1 and changed == 1,
-            "PACKAGE_ONLY_STRING_POOL_NOT_UNIQUE")
+    require(off == len(data) and pool is not None and
+            len(selected) == 1 and pool_location is not None,
+            "PACKAGE_ONLY_ROOT_ATTR_NOT_UNIQUE")
+    pool_off, hdr, size, flags = pool_location
+    idx = selected[0]
+    pos = pool_off + u32(data, pool_off + 20) + u32(data, pool_off + hdr + 4 * idx)
+    require(pool_off <= pos < pool_off + size,
+            "PACKAGE_ONLY_STRING_RANGE_INVALID")
+    buf = bytearray(data)
+    if flags & 0x100:
+        _, pos = variable_utf8_length(data, pos)
+        length, pos = variable_utf8_length(data, pos)
+        require(pos + length + 1 <= pool_off + size and data[pos + length] == 0,
+                "PACKAGE_ONLY_UTF8_INVALID")
+        require(data[pos:pos + length] == OLD_PACKAGE.encode("utf-8") and
+                length == len(NEW_PACKAGE.encode("utf-8")),
+                "PACKAGE_ONLY_UTF8_LENGTH_CHANGED")
+        buf[pos:pos + length] = NEW_PACKAGE.encode("utf-8")
+    else:
+        length, pos = variable_utf16_length(data, pos)
+        require(pos + length * 2 + 2 <= pool_off + size and
+                u16(data, pos + length * 2) == 0,
+                "PACKAGE_ONLY_UTF16_INVALID")
+        replacement = NEW_PACKAGE.encode("utf-16-le")
+        require(data[pos:pos + length * 2] == OLD_PACKAGE.encode("utf-16-le")
+                and len(replacement) == length * 2,
+                "PACKAGE_ONLY_UTF16_LENGTH_CHANGED")
+        buf[pos:pos + length * 2] = replacement
     after = parse_binary_xml(bytes(buf))
     expected = json.loads(json.dumps(before))
     root = next(e for e in expected["elements"] if e["tag"] == "manifest")
@@ -190,9 +228,47 @@ def main():
     try:
         print(json.dumps(build(a.source, a.output), sort_keys=True))
         return 0
-    except (PackageOnlyBlocked, AxmlError, OSError, KeyError, ValueError,
-            UnicodeError, zipfile.BadZipFile):
-        print("PRIVATE_PACKAGE_ONLY_CONTROL_BLOCKED", file=sys.stderr)
+    except PackageOnlyBlocked as exc:
+        # Only hardcoded public source codes, never OEM values or exception
+        # messages from arbitrary dependencies.
+        reasons = frozenset({
+            "PACKAGE_ONLY_AXML_SIZE_INVALID",
+            "PACKAGE_ONLY_ORIGINAL_PACKAGE_INVALID",
+            "PACKAGE_ONLY_LENGTH_MISMATCH",
+            "PACKAGE_ONLY_XML_CHUNK_INVALID",
+            "PACKAGE_ONLY_POOL_INVALID",
+            "PACKAGE_ONLY_POOL_RANGE_INVALID",
+            "PACKAGE_ONLY_XML_ELEMENT_INVALID",
+            "PACKAGE_ONLY_XML_ATTR_INVALID",
+            "PACKAGE_ONLY_ROOT_ATTR_REFERENCE_INVALID",
+            "PACKAGE_ONLY_DUAL_STRING_REFERENCE",
+            "PACKAGE_ONLY_ROOT_ATTR_NOT_UNIQUE",
+            "PACKAGE_ONLY_STRING_RANGE_INVALID",
+            "PACKAGE_ONLY_UTF8_INVALID",
+            "PACKAGE_ONLY_UTF16_INVALID",
+            "PACKAGE_ONLY_UTF8_LENGTH_CHANGED",
+            "PACKAGE_ONLY_UTF16_LENGTH_CHANGED",
+            "PACKAGE_ONLY_MORE_THAN_PACKAGE_CHANGED",
+            "PACKAGE_ONLY_OWNER_OFFLINE_SCOPE_REQUIRED",
+            "PACKAGE_ONLY_PRIVATE_PATH_INVALID",
+            "PACKAGE_ONLY_IDENTITY_RECEIPTS_MISSING",
+            "PACKAGE_ONLY_IDENTITY_INPUT_NOT_QUALIFIED",
+            "PACKAGE_ONLY_TEMP_EXISTS",
+            "PACKAGE_ONLY_INPUT_ZIP_INVALID",
+            "PACKAGE_ONLY_ZIP_ENTRIES_CHANGED",
+            "PACKAGE_ONLY_MANIFEST_MISMATCH",
+            "PACKAGE_ONLY_NON_MANIFEST_BYTES_CHANGED",
+            "PACKAGE_ONLY_DEX_TRANSPORT_CHANGED",
+        })
+        code = str(exc)
+        print("PRIVATE_PACKAGE_ONLY_CONTROL_BLOCKED_" +
+              (code if code in reasons else "UNCLASSIFIED"),
+              file=sys.stderr)
+        return 2
+    except (AxmlError, OSError, KeyError, ValueError, UnicodeError,
+            zipfile.BadZipFile):
+        print("PRIVATE_PACKAGE_ONLY_CONTROL_BLOCKED_INPUT_OR_AXML_INVALID",
+              file=sys.stderr)
         return 2
 
 if __name__ == "__main__":

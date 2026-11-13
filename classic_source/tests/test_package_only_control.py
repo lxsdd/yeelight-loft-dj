@@ -4,6 +4,9 @@ No OEM APK, credentials, emulator, network access or test-signing.
 """
 import json
 import os
+import hashlib
+import contextlib
+import io
 from pathlib import Path
 import struct
 import sys
@@ -70,11 +73,25 @@ class PackageOnlyTests(unittest.TestCase):
                 self.assertIn(OLD_PACKAGE.encode("utf-8" if utf8 else "utf-16-le")
                               + ".device".encode("utf-8" if utf8 else "utf-16-le"), result)
 
-    def test_duplicate_old_pool_entry_and_shared_identity_fail_closed(self):
-        with self.assertRaisesRegex(pkg.PackageOnlyBlocked, "PACKAGE_ONLY_STRING_POOL_NOT_UNIQUE"):
-            pkg.replace_package_only(binary_manifest(duplicate=True))
+    def test_duplicate_pool_literal_not_referenced_by_root_is_safe(self):
+        # Apktool may duplicate a literal in the pool; only the referenced
+        # manifest package entry is ever modified, never every text match.
+        payload = binary_manifest(duplicate=True)
+        changed = pkg.replace_package_only(payload)
+        self.assertEqual(parse_binary_xml(changed)["elements"][0]["attributes"]["package"], NEW_PACKAGE)
+        self.assertIn(OLD_PACKAGE.encode("utf-8"), changed)
+        self.assertNotEqual(payload, changed)
+
+    def test_shared_pool_reference_and_divergent_typed_index_fail_closed(self):
         with self.assertRaisesRegex(pkg.PackageOnlyBlocked, "PACKAGE_ONLY_MORE_THAN_PACKAGE_CHANGED"):
             pkg.replace_package_only(binary_manifest(shared=True))
+        payload = bytearray(binary_manifest())
+        # Manifest's synthetic first attribute has raw string index 2 and
+        # typed string index 2; altering one side must be rejected.
+        pos = len(payload) - (36 + 20) + 36
+        struct.pack_into("<I", payload, pos + 16, 3)
+        with self.assertRaisesRegex(pkg.PackageOnlyBlocked, "PACKAGE_ONLY_DUAL_STRING_REFERENCE"):
+            pkg.replace_package_only(bytes(payload))
 
     def test_garbage_xml_and_wrong_package_refused(self):
         for value in (b"", b"<manifest package='com.yeelight.cherry'/>",
@@ -100,6 +117,70 @@ class PackageOnlyTests(unittest.TestCase):
         with self.assertRaisesRegex(signer.Refused, "IDENTITY_ABLATION_BAD_MODE"):
             signer.sign(Path("a"),Path("b"),Path("c"),Path("d"),
                         identity_control=True, package_only_control=True)
+
+    def test_exact_identity_unsigned_preflight_and_signature_receipt_schema(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            out = root / "private-output"
+            out.mkdir()
+            src = out / pkg.SRC
+            src.write_bytes(b"fake-private-binary-for-contract-test")
+            preflight = src.with_suffix(src.suffix + ".preflight.json")
+            first = {
+                "status": "UNSIGNED_PRIVATE_APK_STRUCTURAL_PREFLIGHT_PASS_NOT_INSTALLED",
+                "package": OLD_PACKAGE,
+                "identity_control_offline_only": True,
+                "dex_reassembly_mode": "raw",
+                "original_oem_dex_intentionally_changed": False,
+                "controlled_authority_string_remaps": {"classes.dex": 0, "classes2.dex": 0},
+                "apk_sha256": hashlib.sha256(src.read_bytes()).hexdigest(),
+            }
+            preflight.write_text(json.dumps(first), encoding="utf-8")
+            receipt = out / (pkg.IDENTITY_SIGNED + ".test-signing.json")
+            second = {
+                "identity_control_offline_only": True,
+                "package": OLD_PACKAGE,
+                "signed": True,
+                "unsigned_sha256": first["apk_sha256"],
+                "source_build_report_sha256": hashlib.sha256(preflight.read_bytes()).hexdigest(),
+            }
+            receipt.write_text(json.dumps(second), encoding="utf-8")
+            env = {
+                "RUNNER_TEMP": str(root),
+                "GITHUB_REPOSITORY": "lxsdd/yeelight-loft-dj",
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_ACTOR": "lxsdd",
+                "GITHUB_REF": "refs/heads/main",
+                "RUNNER_ENVIRONMENT": "github-hosted",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                self.assertEqual(pkg.scope(src, out / pkg.DST)["package"], OLD_PACKAGE)
+                first["controlled_authority_string_remaps"]["classes2.dex"] = 1
+                preflight.write_text(json.dumps(first), encoding="utf-8")
+                with self.assertRaisesRegex(pkg.PackageOnlyBlocked,
+                                            "PACKAGE_ONLY_IDENTITY_INPUT_NOT_QUALIFIED"):
+                    pkg.scope(src, out / pkg.DST)
+                with patch.dict(os.environ, {"GITHUB_REF":"refs/heads/untrusted"}):
+                    with self.assertRaisesRegex(pkg.PackageOnlyBlocked,
+                                                "PACKAGE_ONLY_OWNER_OFFLINE_SCOPE_REQUIRED"):
+                        pkg.scope(src, out / pkg.DST)
+
+    def test_cli_reports_allowlisted_cause_only_not_private_values(self):
+        with patch("sys.argv", ["tool","--source","dummy","--output","dummy2"]):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), patch.object(
+                    pkg, "build", side_effect=pkg.PackageOnlyBlocked(
+                        "PACKAGE_ONLY_ROOT_ATTR_NOT_UNIQUE")):
+                self.assertEqual(pkg.main(), 2)
+            self.assertEqual(stderr.getvalue().strip(),
+                             "PRIVATE_PACKAGE_ONLY_CONTROL_BLOCKED_PACKAGE_ONLY_ROOT_ATTR_NOT_UNIQUE")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), patch.object(
+                    pkg, "build", side_effect=pkg.PackageOnlyBlocked(
+                        "OEM-secret-private-component")):
+                self.assertEqual(pkg.main(), 2)
+            self.assertNotIn("OEM-secret-private-component", stderr.getvalue())
+            self.assertIn("PRIVATE_PACKAGE_ONLY_CONTROL_BLOCKED_UNCLASSIFIED", stderr.getvalue())
 
     def test_one_shot_result_never_qualifies_product(self):
         launch = ("Status: ok\nActivity: io.lxsdd.yeelightdj/"
