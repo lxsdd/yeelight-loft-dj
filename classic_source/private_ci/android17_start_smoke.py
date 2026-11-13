@@ -329,6 +329,86 @@ def _sanitized_exception_chain(rows):
     }
 
 
+# Isolate the FIRST stack frame of the selected target FATAL. Never output
+# proprietary method names or frame strings. Java stack dumps may contain
+# renamed/obfuscated OEM classes with no package prefix; the signed APK's
+# exact DEX-origin map, not a package-name heuristic, determines ownership.
+NULL_STACK_FRAME = re.compile(
+    r"^\s*at\s+([A-Za-z_$][A-Za-z0-9_.$]*)\.([A-Za-z_$][A-Za-z0-9_$<>]*)"
+    r"\([^()\n]{0,180}\)\s*$"
+)
+KNOWN_DEX_ORIGINS = frozenset({
+    "PRIMARY_OEM_DEX", "SECONDARY_OEM_DEX", "NATIVE_BRIDGE_DEX"
+})
+
+
+def _null_dereference_origin(rows, graph, fatal_line):
+    """Return fixed low-entropy null-crash hints, never private symbols.
+
+    This is *diagnostic*, not proof of a root cause, lifecycle completion,
+    or an OEM-vs-clone comparison. Ignore unrelated logcat tags and the next
+    process's FATAL block using the caller's exact target selection.
+    """
+    frame_classes = []
+    lifecycle = "UNDETERMINED"
+    operation = "UNSPECIFIED"
+    for row in rows[:MAX_FATAL_BLOCK_LINES]:
+        msg = _android_runtime_message(row)
+        cause = ROOT_CAUSE.match(msg)
+        if cause and cause.group(2).rsplit(".", 1)[-1] == "NullPointerException":
+            if "Attempt to invoke" in msg and "null object reference" in msg:
+                operation = "NULL_METHOD_INVOKE"
+            elif "Attempt to read from field" in msg:
+                operation = "NULL_FIELD_READ"
+            elif "Attempt to write to field" in msg:
+                operation = "NULL_FIELD_WRITE"
+            elif "Attempt to get length of null array" in msg:
+                operation = "NULL_ARRAY_LENGTH"
+            else:
+                operation = "NULL_OTHER"
+        frame = NULL_STACK_FRAME.fullmatch(msg)
+        if not frame:
+            continue
+        klass, method = frame.groups()
+        frame_classes.append(klass)
+        if lifecycle == "UNDETERMINED" and klass == "android.app.ActivityThread":
+            if method in ("performLaunchActivity", "handleLaunchActivity"):
+                lifecycle = "ACTIVITY_LAUNCH_STACK"
+            elif method in ("performResumeActivity", "handleResumeActivity"):
+                lifecycle = "ACTIVITY_RESUME_STACK"
+            elif method in ("performPauseActivity", "handlePauseActivity"):
+                lifecycle = "ACTIVITY_PAUSE_STACK"
+        if lifecycle == "UNDETERMINED" and klass == "android.app.Instrumentation":
+            if method == "callActivityOnCreate":
+                lifecycle = "ACTIVITY_CREATE_STACK"
+            elif method == "callActivityOnResume":
+                lifecycle = "ACTIVITY_RESUME_STACK"
+    def origin(klass):
+        descriptor = "L" + klass.replace(".", "/") + ";"
+        name = graph.get("dex_origin", {}).get(descriptor) if type(graph) is dict else None
+        if name in KNOWN_DEX_ORIGINS:
+            return name
+        if klass.startswith(("android.", "java.", "javax.", "dalvik.")):
+            return "PLATFORM_CLASS"
+        return "UNINDEXED_OR_UNKNOWN_CLASS"
+    first = origin(frame_classes[0]) if frame_classes else "NO_FRAME"
+    first_owned = next((origin(k) for k in frame_classes
+                        if origin(k) in KNOWN_DEX_ORIGINS), "NONE")
+    header = _android_runtime_message(fatal_line)
+    thread = ("MAIN_THREAD" if header == "FATAL EXCEPTION: main" else
+              "NON_MAIN_THREAD" if header.startswith("FATAL EXCEPTION: ") else
+              "UNDETERMINED")
+    return {
+        "null_operation_bucket": operation,
+        "null_top_frame_origin": first,
+        "null_first_owned_frame_origin": first_owned,
+        "null_activity_lifecycle_hint": lifecycle,
+        "null_crash_thread": thread,
+        "null_frame_evidence": "STACK_FRAMES_SEEN" if frame_classes else "NO_PARSED_FRAMES",
+        "null_origin_attribution_is_diagnostic_only": True,
+    }
+
+
 def classify_crash(logcat, package=PACKAGE, candidate_graph=None, installed_apk_path=None):
     """Classify actual AndroidRuntime target crash, not a guessed OEM failure.
 
@@ -360,7 +440,9 @@ def classify_crash(logcat, package=PACKAGE, candidate_graph=None, installed_apk_
             continue
         e = _sanitized_exception_chain(window)
         provenance = (_sanitized_classloader_provenance(window, candidate_graph, installed_apk_path)
-                      if e["exception_category"] == "CLASS_LOADER_MISSING" else {})
+                      if e["exception_category"] == "CLASS_LOADER_MISSING" else
+                      _null_dereference_origin(window, candidate_graph, line)
+                      if e["exception_category"] == "NULL_DEREFERENCE" else {})
         trace = "\n".join(window)
         if "installContentProviders" in trace or "installProvider(" in trace or "Provider.onCreate" in trace:
             stage = "PROVIDER_INIT"
