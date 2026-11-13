@@ -395,6 +395,46 @@ class OriginalBaselineRegression(unittest.TestCase):
                                         "BASELINE_NOT_ANDROID17"):
                 m.offline_guard()
 
+    def test_npe_original_differential_never_becomes_acceptance(self):
+        clone = {"target_crash": True, "exception_category": "NULL_DEREFERENCE",
+                 "failure_stage": "UNDETERMINED"}
+        ok = {"target_crash": False, "exception_category": "NONE",
+              "failure_stage": "UNDETERMINED"}
+        r = m.compare_results(clone, None, ok, None, True, "METHOD_TEXT_IDENTICAL")
+        self.assertEqual(r["runtime_relation"],
+                         "CLONE_ONLY_NULL_DEREFERENCE_IN_OBSERVED_WINDOW")
+        self.assertEqual(r["null_method_smali_relation"], "METHOD_TEXT_IDENTICAL")
+        self.assertEqual(r["missing_class_identity_relation"], "NOT_APPLICABLE")
+        self.assertFalse(r["clone_functionally_accepted"])
+        self.assertFalse(r["original_functionally_accepted"])
+        both = m.compare_results(
+            clone, None, {"target_crash": True, "exception_category": "NULL_DEREFERENCE",
+                          "failure_stage": "UNDETERMINED"}, None, False)
+        self.assertEqual(both["runtime_relation"],
+                         "BOTH_NULL_DEREFERENCES_CAUSE_NOT_ESTABLISHED")
+        other = m.compare_results(
+            clone, None, {"target_crash": True, "exception_category": "METHOD_LINKAGE",
+                          "failure_stage": "UNDETERMINED"}, None, False)
+        self.assertEqual(other["runtime_relation"],
+                         "ORIGINAL_DIFFERENT_OR_UNRESOLVED_CRASH")
+        self.assertEqual(m.compare_results(clone, None, ok, None, False)["runtime_relation"],
+                         "ORIGINAL_NOT_RESUMED_NO_TARGET_CRASH")
+        for bad in ("PrivateSecret", "", 42, None):
+            with self.subTest(bad=bad), self.assertRaisesRegex(
+                    m.BaselineBlocked, "^BASELINE_NULL_RELATION_INVALID$"):
+                m.compare_results(clone, None, ok, None, True, bad)
+
+    def test_private_npe_caller_mock_exercises_original_after_crash(self):
+        # This is a production-route guard: an NPE must reach the same
+        # owner-only original comparison rather than a NOT_APPLICABLE shortcut.
+        source = (Path(__file__).resolve().parents[1] /
+                  "private_ci/private_original_baseline.py").read_text("utf-8")
+        self.assertIn('"NULL_DEREFERENCE"', source)
+        self.assertIn("compare_null_callsite(original, candidate, clone_log", source)
+        self.assertIn("uninstall\", CLONE", source)
+        self.assertIn("original_unmodified_and_hash_verified", source)
+        self.assertIn("clone_functionally_accepted\": False", source)
+
 
 if __name__ == "__main__":
     unittest.main()

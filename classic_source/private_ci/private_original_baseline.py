@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """One owner-gated OFFLINE API37 original-vs-clone startup comparison.
 
-Only if the fully checked installed clone has already crashed on a missing
-class: inspect that crash, uninstall the clone, then install and launch the
-PINNED, unmodified original once on the SAME disposable Android17 emulator.
+Only after a verified clone class-loader or null-reference FATAL: inspect the
+existing crash, compare the null callsite privately when relevant, uninstall
+clone, then launch the pinned original once on the SAME isolated emulator.
 No OEM class names, raw logs, paths, APKs or digests leave the runner.
 No re-launch of the clone, retries, hardware, network or release actions.
 """
@@ -26,6 +26,8 @@ from android17_start_smoke import (
     MISSING_DIRECT, MAX_FATAL_BLOCK_LINES, _android_runtime_message,
     classify_crash,
 )
+from null_callsite_comparison import (compare_private as compare_null_callsite,
+                                      RELATIONS as NULL_RELATIONS, NullSiteBlocked)
 from clone_launcher_selection import (
     ORIGINAL, PACKAGE as CLONE, CloneLauncherBlocked, select_installed_launcher,
     REASONS as LAUNCHER_REASONS,
@@ -209,29 +211,47 @@ def original_foreground(snapshot):
 
 
 def compare_results(clone_crash, clone_missing, original_crash,
-                    original_missing, original_resumed):
-    """Pure safe comparison; NEVER return private extracted class names."""
+                    original_missing, original_resumed,
+                    null_method_relation="UNAVAILABLE"):
+    """Closed vocabulary differential; never convert a crash into acceptance."""
+    kind = (clone_crash.get("exception_category") if type(clone_crash) is dict else None)
     require(type(clone_crash) is dict and clone_crash.get("target_crash") is True
-            and clone_crash.get("exception_category") == "CLASS_LOADER_MISSING"
+            and kind in ("CLASS_LOADER_MISSING", "NULL_DEREFERENCE")
             and type(original_crash) is dict and type(original_resumed) is bool,
             "BASELINE_COMPARISON_INPUT_INVALID")
-    relation = ("SAME" if clone_missing and original_missing and
-                clone_missing == original_missing else
-                "DIFFERENT" if clone_missing and original_missing else
-                "UNAVAILABLE")
-    if original_crash.get("target_crash"):
-        result = ("BOTH_TARGET_CLASS_NOT_FOUND" if
-                  original_crash.get("exception_category") == "CLASS_LOADER_MISSING" and
-                  relation == "SAME" else "ORIGINAL_DIFFERENT_OR_UNRESOLVED_CRASH")
-    elif original_resumed:
-        result = "CLONE_ONLY_CLASS_LOADER_CRASH_IN_OBSERVED_WINDOW"
+    if kind == "NULL_DEREFERENCE":
+        require(null_method_relation in NULL_RELATIONS,
+                "BASELINE_NULL_RELATION_INVALID")
+        relation = "NOT_APPLICABLE"
+        if original_crash.get("target_crash"):
+            result = ("BOTH_NULL_DEREFERENCES_CAUSE_NOT_ESTABLISHED" if
+                      original_crash.get("exception_category") == "NULL_DEREFERENCE"
+                      else "ORIGINAL_DIFFERENT_OR_UNRESOLVED_CRASH")
+        elif original_resumed:
+            result = "CLONE_ONLY_NULL_DEREFERENCE_IN_OBSERVED_WINDOW"
+        else:
+            result = "ORIGINAL_NOT_RESUMED_NO_TARGET_CRASH"
     else:
-        result = "ORIGINAL_NOT_RESUMED_NO_TARGET_CRASH"
+        relation = ("SAME" if clone_missing and original_missing and
+                    clone_missing == original_missing else
+                    "DIFFERENT" if clone_missing and original_missing else
+                    "UNAVAILABLE")
+        if original_crash.get("target_crash"):
+            result = ("BOTH_TARGET_CLASS_NOT_FOUND" if
+                      original_crash.get("exception_category") == "CLASS_LOADER_MISSING" and
+                      relation == "SAME" else "ORIGINAL_DIFFERENT_OR_UNRESOLVED_CRASH")
+        elif original_resumed:
+            result = "CLONE_ONLY_CLASS_LOADER_CRASH_IN_OBSERVED_WINDOW"
+        else:
+            result = "ORIGINAL_NOT_RESUMED_NO_TARGET_CRASH"
     return {
         "status": "PRIVATE_ORIGINAL_COMPARISON_DIAGNOSTIC_ONLY",
         "runtime_relation": result,
         "missing_class_identity_relation": relation,
-        "clone_exception_category": clone_crash["exception_category"],
+        "null_method_smali_relation": (null_method_relation if kind == "NULL_DEREFERENCE"
+                                       else "NOT_APPLICABLE"),
+        "null_site_diagnostic_not_root_cause_proof": True,
+        "clone_exception_category": kind,
         "clone_failure_stage": clone_crash["failure_stage"],
         "original_exception_category": original_crash.get("exception_category", "NONE"),
         "original_failure_stage": original_crash.get("failure_stage", "UNDETERMINED"),
@@ -243,6 +263,7 @@ def compare_results(clone_crash, clone_missing, original_crash,
         "clone_functionally_accepted": False,
         "raw_private_payload_published": False,
     }
+
 
 
 def report_original_install_refusal(clone_crash):
@@ -288,14 +309,25 @@ def compare_private_emulator(original, candidate, *, serial, approved,
     clone_log = adb(["logcat", "-b", "crash", "-d"])
     clone_crash = classify_crash(clone_log, package=CLONE)
     if not (clone_crash["target_crash"] and
-            clone_crash["exception_category"] == "CLASS_LOADER_MISSING"):
+            clone_crash["exception_category"] in ("CLASS_LOADER_MISSING",
+                                                   "NULL_DEREFERENCE")):
         return {
             "status": "PRIVATE_ORIGINAL_BASELINE_NOT_APPLICABLE",
-            "reason": "CLONE_CLASS_LOADER_FATAL_NOT_CONFIRMED",
+            "reason": "CLONE_SUPPORTED_FATAL_NOT_CONFIRMED",
             "original_app_started": False,
             "raw_private_payload_published": False,
         }
-    clone_missing = target_missing_class(clone_log, CLONE)
+    clone_missing = (target_missing_class(clone_log, CLONE)
+                     if clone_crash["exception_category"] == "CLASS_LOADER_MISSING"
+                     else None)
+    # Offline bytecode read-only comparison runs before uninstalling the clone.
+    try:
+        null_relation = (compare_null_callsite(original, candidate, clone_log,
+                         Path(os.environ["RUNNER_TEMP"]))
+                         if clone_crash["exception_category"] == "NULL_DEREFERENCE"
+                         else "UNAVAILABLE")
+    except NullSiteBlocked as exc:
+        raise BaselineBlocked(str(exc)) from None
 
     # This is an isolated emulator only. Uninstall the test clone BEFORE the
     # original install; no overlapping providers, data, app IDs or signatures.
@@ -330,7 +362,9 @@ def compare_private_emulator(original, candidate, *, serial, approved,
         snapshot = adb(["shell", "dumpsys", "activity", "activities"])
         logcat = adb(["logcat", "-b", "crash", "-d"])
         original_crash = classify_crash(logcat, package=ORIGINAL)
-        original_missing = target_missing_class(logcat, ORIGINAL)
+        original_missing = (target_missing_class(logcat, ORIGINAL)
+                            if clone_crash["exception_category"] == "CLASS_LOADER_MISSING"
+                            else None)
         activity_reported = re.search(r"^Activity:\s*(.+?)\s*$", launch, re.M)
         valid_am = (code == 0 and bool(re.search(r"^Status:\s*ok\s*$", launch, re.M))
                     and bool(re.search(r"^Complete\s*$", launch, re.M))
@@ -340,7 +374,7 @@ def compare_private_emulator(original, candidate, *, serial, approved,
                        not original_crash["target_crash"] and
                        not original_crash["unattributed_fatal"])
         return compare_results(clone_crash, clone_missing, original_crash,
-                               original_missing, resumed)
+                               original_missing, resumed, null_relation)
     finally:
         # Always remove the original and any emulator app data. Nothing may
         # survive outside this disposable emulator runner or its cleanup trap.
