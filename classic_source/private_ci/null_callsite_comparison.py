@@ -23,6 +23,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from classic_first import ORIGINAL_SHA256, digest_file
 from smali_authority_reassembly import rewrite_literals
+from static_field_writer_audit import (crashing_static_field, writer_methods,
+    assess_writer_provenance, WRITER_ROUTES, WRITER_RELATIONS, WriterBlocked)
 
 PINNED_APKTOOL = "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
 MAX_TEXT = 2_000_000
@@ -278,7 +280,7 @@ def receiver_origin_from_smali(source, frame_method, invoked):
 
 
 def compare_private(original: Path, candidate: Path, logcat: str, temp: Path,
-                    *, report_receiver=False):
+                    *, report_receiver=False, report_writer=False):
     """Run only from verified protected original-baseline procedure.
 
     No output except an allowlisted relation. An NPE is still a test failure.
@@ -291,20 +293,25 @@ def compare_private(original: Path, candidate: Path, logcat: str, temp: Path,
             "NULL_SITE_PRIVATE_SCOPE_REQUIRED")
     require(digest_file(original) == ORIGINAL_SHA256,
             "NULL_SITE_ORIGINAL_HASH_MISMATCH")
+    require(not report_writer or report_receiver,
+            "WRITER_REPORT_REQUIRES_RECEIVER_SCOPE")
+    def empty_relation(relation):
+        return ((relation,"UNAVAILABLE","UNAVAILABLE","UNAVAILABLE")
+                if report_writer else
+                (relation,"UNAVAILABLE") if report_receiver else relation)
     site = target_null_site(logcat)
     if site is None:
-        return ("UNAVAILABLE", "UNAVAILABLE") if report_receiver else "UNAVAILABLE"
+        return empty_relation("UNAVAILABLE")
     klass, method = site
     if not CLASS.fullmatch(klass):
-        return ("UNAVAILABLE", "UNAVAILABLE") if report_receiver else "UNAVAILABLE"
+        return empty_relation("UNAVAILABLE")
     descriptor = "L" + klass.replace(".", "/") + ";"
     try:
         from private_startup_audit import dex_index
         with ZipFile(original) as stock, ZipFile(candidate) as clone:
             if (descriptor not in dex_index(stock.read("classes2.dex")) or
                     descriptor not in dex_index(clone.read("classes2.dex"))):
-                return (("FIRST_FRAME_NOT_IN_BOTH_OEM_DEX", "UNAVAILABLE")
-                        if report_receiver else "FIRST_FRAME_NOT_IN_BOTH_OEM_DEX")
+                return empty_relation("FIRST_FRAME_NOT_IN_BOTH_OEM_DEX")
     except Exception:
         raise NullSiteBlocked("NULL_SITE_DEX_INDEX_FAILED") from None
     jar = temp / "classic-tools" / "apktool_3.0.3.jar"
@@ -343,7 +350,27 @@ def compare_private(original: Path, candidate: Path, logcat: str, temp: Path,
         require(result in RELATIONS, "NULL_SITE_RELATION_UNSAFE")
         if not report_receiver:
             return result
-        origin = receiver_origin_from_smali(contents[1], method,
-                                            _target_null_invoked(logcat))
+        invoked = _target_null_invoked(logcat)
+        origin = receiver_origin_from_smali(contents[1], method, invoked)
         require(origin in RECEIVER_ORIGINS, "NULL_RECEIVER_ORIGIN_UNSAFE")
-        return result, origin
+        if not report_writer:
+            return result, origin
+        route, relation = "UNAVAILABLE", "UNAVAILABLE"
+        if origin == "STATIC_FIELD_LOAD":
+            field = crashing_static_field(
+                contents[1], method, invoked, method_blocks=method_blocks,
+                invoke_re=SMALI_INVOKE)
+            if field is not None:
+                try:
+                    from private_startup_audit import inspect_apk
+                    old = writer_methods(old_dir,field)
+                    new = writer_methods(new_dir,field)
+                    org = set(inspect_apk(original)["components"])
+                    clone = set(inspect_apk(candidate)["components"])
+                    route, relation = assess_writer_provenance(
+                        old,new,org,clone,rewrite_literals)
+                except (WriterBlocked,UnicodeError,OSError):
+                    raise NullSiteBlocked("WRITER_DIFFERENTIAL_FAILED") from None
+        require(route in WRITER_ROUTES and relation in WRITER_RELATIONS,
+                "WRITER_DIFFERENTIAL_UNSAFE")
+        return result, origin, route, relation

@@ -141,6 +141,68 @@ class NullCallsiteRegression(unittest.TestCase):
             s._target_null_invoked(b"non-text")
 
 
+    def test_synthetic_static_field_writer_files_and_scope(self):
+        import tempfile
+        from unittest import mock
+        import static_field_writer_audit as w
+        from smali_authority_reassembly import rewrite_literals
+        field="La/b/Globals;->current:Lfoo/bar/Baz;"
+        caller=(".method public d()V\n"
+                "    sget-object v0, "+field+"\n"
+                "    invoke-virtual {v0}, Lfoo/bar/Baz;->run()V\n"
+                "    return-void\n.end method\n")
+        self.assertEqual(w.crashing_static_field(
+            caller,"d",("foo.bar.Baz","run"),
+            method_blocks=s.method_blocks,invoke_re=s.SMALI_INVOKE),field)
+        self.assertIsNone(w.crashing_static_field(
+            caller,"d",("foo.bar.Baz","other"),
+            method_blocks=s.method_blocks,invoke_re=s.SMALI_INVOKE))
+        duplicated=caller.replace("    return-void", 
+                                 "    invoke-virtual {v0}, Lfoo/bar/Baz;->run()V\n    return-void")
+        self.assertIsNone(w.crashing_static_field(
+            duplicated,"d",("foo.bar.Baz","run"),
+            method_blocks=s.method_blocks,invoke_re=s.SMALI_INVOKE))
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for dex in ("smali","smali_classes2"):
+                (root/dex).mkdir()
+            source=(".class public La/b/Globals;\n"
+                    ".method public onCreate()V\n"
+                    "    sput-object v0, "+field+"\n"
+                    "    return-void\n.end method\n")
+            owner=root/"smali_classes2/a/b/Globals.smali"
+            owner.parent.mkdir(parents=True)
+            owner.write_text(source,encoding="utf-8")
+            old=w.writer_methods(root,field)
+            expected={("La/b/Globals;","onCreate()V")}
+            self.assertEqual(set(old),expected)
+            removed={("provider","a.b.Globals")}
+            route,relation=w.assess_writer_provenance(
+                old,old,removed,set(),rewrite_literals)
+            self.assertEqual((route,relation),
+                             ("REMOVED_PROVIDER_WRITER","WRITER_METHODS_IDENTICAL"))
+            route,relation=w.assess_writer_provenance(
+                old,old,removed,removed,rewrite_literals)
+            self.assertEqual(route,"RETAINED_PROVIDER_WRITER")
+            modified={k:v.replace("return-void","nop\n    return-void")
+                      for k,v in old.items()}
+            self.assertEqual(w.assess_writer_provenance(
+                old,modified,set(),set(),rewrite_literals)[1],
+                "WRITER_METHODS_DIFFER")
+            self.assertEqual(w.assess_writer_provenance(
+                old,{},set(),set(),rewrite_literals)[1],
+                "WRITER_SET_DIFFERS")
+            self.assertEqual(w.assess_writer_provenance(
+                {},{},set(),set(),rewrite_literals),
+                ("NO_OEM_WRITER","NO_OEM_WRITER"))
+            owner.unlink()
+            owner.symlink_to(root/"smali/missing.smali")
+            with self.assertRaisesRegex(w.WriterBlocked,
+                                        "WRITER_SCAN_UNSAFE_FILE"):
+                w.writer_methods(root,field)
+        self.assertTrue(all(v.upper()==v for v in w.WRITER_ROUTES))
+        self.assertTrue(all(v.upper()==v for v in w.WRITER_RELATIONS))
+
 
 if __name__ == "__main__":
     unittest.main()

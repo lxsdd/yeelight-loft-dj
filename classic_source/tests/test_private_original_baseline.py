@@ -458,6 +458,30 @@ class OriginalBaselineRegression(unittest.TestCase):
                          ["null_receiver_source"], "NOT_APPLICABLE")
 
 
+    def test_writer_provenance_is_fixed_category_and_diagnostic_only(self):
+        clone={"target_crash":True,"exception_category":"NULL_DEREFERENCE",
+               "failure_stage":"UNDETERMINED"}
+        original={"target_crash":False,"exception_category":"NONE",
+                  "failure_stage":"UNDETERMINED"}
+        report=m.compare_results(clone,None,original,None,True,
+            "METHOD_TEXT_IDENTICAL","STATIC_FIELD_LOAD",
+            "REMOVED_PROVIDER_WRITER","WRITER_METHODS_IDENTICAL")
+        self.assertEqual(report["null_static_writer_route"],
+                         "REMOVED_PROVIDER_WRITER")
+        self.assertEqual(report["null_static_writer_code_relation"],
+                         "WRITER_METHODS_IDENTICAL")
+        self.assertFalse(report["clone_functionally_accepted"])
+        self.assertFalse(report["original_functionally_accepted"])
+        for secret in ("Lsecret/path;",42,None):
+            with self.assertRaisesRegex(m.BaselineBlocked,
+                                        "BASELINE_WRITER_RELATION_INVALID"):
+                m.compare_results(clone,None,original,None,True,
+                    "METHOD_TEXT_IDENTICAL","STATIC_FIELD_LOAD",
+                    secret,"WRITER_METHODS_IDENTICAL")
+        source=Path(m.__file__).read_text("utf-8")
+        self.assertIn("report_receiver=True, report_writer=True",source)
+        self.assertIn("writer_route, writer_relation",source)
+
 
 if __name__ == "__main__":
     unittest.main()

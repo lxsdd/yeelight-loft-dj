@@ -28,7 +28,8 @@ from android17_start_smoke import (
 )
 from null_callsite_comparison import (compare_private as compare_null_callsite,
                                       RELATIONS as NULL_RELATIONS,
-                                      RECEIVER_ORIGINS, NullSiteBlocked)
+                                      RECEIVER_ORIGINS, WRITER_ROUTES,
+                                      WRITER_RELATIONS, NullSiteBlocked)
 from clone_launcher_selection import (
     ORIGINAL, PACKAGE as CLONE, CloneLauncherBlocked, select_installed_launcher,
     REASONS as LAUNCHER_REASONS,
@@ -214,7 +215,9 @@ def original_foreground(snapshot):
 def compare_results(clone_crash, clone_missing, original_crash,
                     original_missing, original_resumed,
                     null_method_relation="UNAVAILABLE",
-                    null_receiver_origin="UNAVAILABLE"):
+                    null_receiver_origin="UNAVAILABLE",
+                    writer_route="UNAVAILABLE",
+                    writer_relation="UNAVAILABLE"):
     """Closed vocabulary differential; never convert a crash into acceptance."""
     kind = (clone_crash.get("exception_category") if type(clone_crash) is dict else None)
     require(type(clone_crash) is dict and clone_crash.get("target_crash") is True
@@ -226,6 +229,9 @@ def compare_results(clone_crash, clone_missing, original_crash,
                 "BASELINE_NULL_RELATION_INVALID")
         require(null_receiver_origin in RECEIVER_ORIGINS,
                 "BASELINE_NULL_RECEIVER_INVALID")
+        require(writer_route in WRITER_ROUTES and
+                writer_relation in WRITER_RELATIONS,
+                "BASELINE_WRITER_RELATION_INVALID")
         relation = "NOT_APPLICABLE"
         if original_crash.get("target_crash"):
             result = ("BOTH_NULL_DEREFERENCES_CAUSE_NOT_ESTABLISHED" if
@@ -256,6 +262,11 @@ def compare_results(clone_crash, clone_missing, original_crash,
                                        else "NOT_APPLICABLE"),
         "null_receiver_source": (null_receiver_origin if kind == "NULL_DEREFERENCE"
                                  else "NOT_APPLICABLE"),
+        "null_static_writer_route": (writer_route if kind == "NULL_DEREFERENCE"
+                                     else "NOT_APPLICABLE"),
+        "null_static_writer_code_relation": (writer_relation
+                                             if kind == "NULL_DEREFERENCE"
+                                             else "NOT_APPLICABLE"),
         "null_site_diagnostic_not_root_cause_proof": True,
         "clone_exception_category": kind,
         "clone_failure_stage": clone_crash["failure_stage"],
@@ -328,11 +339,12 @@ def compare_private_emulator(original, candidate, *, serial, approved,
                      else None)
     # Offline bytecode read-only comparison runs before uninstalling the clone.
     try:
-        null_relation, receiver_origin = (compare_null_callsite(
-            original, candidate, clone_log, Path(os.environ["RUNNER_TEMP"]),
-            report_receiver=True)
+        null_relation, receiver_origin, writer_route, writer_relation = (
+            compare_null_callsite(
+                original, candidate, clone_log, Path(os.environ["RUNNER_TEMP"]),
+                report_receiver=True, report_writer=True)
             if clone_crash["exception_category"] == "NULL_DEREFERENCE"
-            else ("UNAVAILABLE", "UNAVAILABLE"))
+            else ("UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE"))
     except NullSiteBlocked as exc:
         raise BaselineBlocked(str(exc)) from None
 
@@ -382,7 +394,7 @@ def compare_private_emulator(original, candidate, *, serial, approved,
                        not original_crash["unattributed_fatal"])
         return compare_results(clone_crash, clone_missing, original_crash,
                                original_missing, resumed, null_relation,
-                               receiver_origin)
+                               receiver_origin, writer_route, writer_relation)
     finally:
         # Always remove the original and any emulator app data. Nothing may
         # survive outside this disposable emulator runner or its cleanup trap.
