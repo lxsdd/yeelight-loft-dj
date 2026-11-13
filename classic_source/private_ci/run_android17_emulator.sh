@@ -156,6 +156,24 @@ else
     --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
     --candidate "$IDS" --serial emulator-5554 \
     --explicit-owner-approved-private-emulator || fail
-  # Never turn any diagnostic outcome into product PASS.
+  # Package-only control: derive from the audited original-identity unsigned
+  # APK by changing only the binary Manifest package string. OEM DEX,
+  # authorities, signature permissions, layouts and bridge stay byte-identical.
+  # Installed only AFTER the original-identity control was uninstalled.
+  PKU="$RUNNER_TEMP/private-output/classic-loft-dj-PACKAGE-UNSIGNED.apk"
+  PKS="$RUNNER_TEMP/private-output/classic-loft-dj-PACKAGE-TEST-SIGNED.apk"
+  python3 classic_source/private_ci/package_only_manifest.py \
+    --source "$IDU" --output "$PKU" || fail
+  python3 classic_source/private_test_sign.py \
+    --unsigned "$PKU" --preflight "$PKU.preflight.json" \
+    --output "$PKS" --android-sdk "$ANDROID_HOME" --package-only-control \
+    >"$WORK/package-only-sign.log" 2>&1 || fail
+  python3 classic_source/private_payload_parity.py \
+    --unsigned "$PKU" --signed "$PKS" || fail
+  python3 classic_source/private_ci/private_package_only_control.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --candidate "$PKS" --serial emulator-5554 \
+    --explicit-owner-approved-private-emulator || fail
+  # Never turn a crashing clone or any nonfatal control into product PASS.
   fail
 fi

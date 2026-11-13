@@ -45,10 +45,25 @@ def run(args, *, env=None):
                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
 def sign(source: Path, preflight: Path, output: Path, sdk: Path,
-         *, identity_control=False):
-    if type(identity_control) is not bool:
+         *, identity_control=False, package_only_control=False):
+    if type(identity_control) is not bool or type(package_only_control) is not bool or (identity_control and package_only_control):
         raise Refused('IDENTITY_ABLATION_BAD_MODE')
-    if identity_control:
+    if package_only_control:
+        root = os.environ.get('RUNNER_TEMP', '')
+        allowed = (bool(root) and
+                   source == Path(root)/'private-output'/'classic-loft-dj-PACKAGE-UNSIGNED.apk' and
+                   output == Path(root)/'private-output'/'classic-loft-dj-PACKAGE-TEST-SIGNED.apk' and
+                   preflight == source.with_suffix(source.suffix+'.preflight.json') and
+                   os.environ.get('GITHUB_REPOSITORY') == 'lxsdd/yeelight-loft-dj' and
+                   os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch' and
+                   os.environ.get('GITHUB_ACTOR') == 'lxsdd' and
+                   os.environ.get('GITHUB_REF') == 'refs/heads/main' and
+                   os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted' and
+                   not os.environ.get('GH_TOKEN') and
+                   not os.environ.get('CLASSIC_VAULT_TOKEN'))
+        if not allowed:
+            raise Refused('PACKAGE_ONLY_OWNER_OFFLINE_SCOPE_REQUIRED')
+    elif identity_control:
         root = os.environ.get('RUNNER_TEMP', '')
         allowed = (bool(root) and
                    source == Path(root)/'private-output'/'classic-loft-dj-IDENTITY-UNSIGNED.apk' and
@@ -83,6 +98,13 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path,
             any(x != 0 for x in d.get('controlled_authority_string_remaps',{}).values()) or
             d.get('original_oem_dex_intentionally_changed') is not False):
         raise Refused('IDENTITY_CONTROL_OEM_BYTES_OR_SCOPE_NOT_PRESERVED')
+    if package_only_control and (d.get('identity_control_offline_only') is not False or
+            d.get('package_only_control_offline_only') is not True or
+            d.get('only_binary_manifest_package_changed') is not True or
+            d.get('dex_reassembly_mode') != 'raw' or
+            any(x != 0 for x in d.get('controlled_authority_string_remaps',{}).values()) or
+            d.get('original_oem_dex_intentionally_changed') is not False):
+        raise Refused('PACKAGE_ONLY_CONTROL_OEM_BYTES_OR_SCOPE_NOT_PRESERVED')
     unsigned_sha=sha256(source)
     if d.get('apk_sha256')!=unsigned_sha: raise Refused('UNSIGNED_SHA256_MISMATCH')
     keytool=shutil.which('keytool')
@@ -120,6 +142,7 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path,
         'status':'PRIVATE_CLASSIC_TEST_APK_SIGNED_NOT_INSTALLED_NOT_HARDWARE_TESTED',
         'package':package,
         'identity_control_offline_only':identity_control,
+        'package_only_control_offline_only':package_only_control,
         'signed':True,
         'installed':False,
         'signature':'EPHEMERAL_UNIQUE_TEST_KEY_NOT_SUITABLE_FOR_APP_UPDATES',
@@ -140,10 +163,13 @@ def main():
     p.add_argument('--android-sdk',type=Path,required=True)
     p.add_argument('--identity-control',action='store_true',
                    help='isolated emulator-only original package probe')
+    p.add_argument('--package-only-control',action='store_true',
+                   help='isolated emulator-only manifest-package-only probe')
     a=p.parse_args()
     try:
         print(json.dumps(sign(a.unsigned,a.preflight,a.output,a.android_sdk,
-                              identity_control=a.identity_control)))
+                              identity_control=a.identity_control,
+                              package_only_control=a.package_only_control)))
         return 0
     except (Refused,subprocess.SubprocessError,OSError) as e:
         print('PRIVATE_TEST_SIGN_BLOCKED_'+type(e).__name__,file=sys.stderr)
