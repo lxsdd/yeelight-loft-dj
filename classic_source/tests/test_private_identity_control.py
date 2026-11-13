@@ -63,8 +63,11 @@ class IdentityAblationTests(unittest.TestCase):
                 "com.yeelight.yeelib.data.DeviceInteractionProvider"
                 for a in app.findall("provider")))
             self.assertEqual(root.find("uses-sdk").get(c.A("minSdkVersion")),"23")
+            # A second preparation is rejected because the two original
+            # unsafe early-init providers are already removed, even when the
+            # package stays original (do not assert package-name mismatch).
             with self.assertRaisesRegex(c.GateFailure,
-                                        "DECODED_PACKAGE_NOT_ORIGINAL"):
+                                        "FIREBASE_INIT_PROVIDER_NOT_UNIQUE"):
                 c.patch_manifest(f,identity_control=True)
 
     def test_default_manifest_remains_isolated_clone(self):
