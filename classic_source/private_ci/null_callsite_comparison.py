@@ -136,9 +136,10 @@ RECEIVER_ORIGINS = frozenset({
     "NON_NULL_SOURCE_OR_STALE_STACK",
 })
 NULL_INVOKED = re.compile(
-    r"Attempt to invoke (?:virtual|interface|direct|super) method "
-    r"'[^'\n]{0,280}\b([A-Za-z_$][A-Za-z0-9_.$]*)\.([A-Za-z_$<>][A-Za-z0-9_$<>]*)"
-    r"\([^'\n]{0,160}\)' on a null object reference"
+    r"Attempt to invoke (?:virtual|interface|direct|super) method '"
+    r"(?:[A-Za-z0-9_.$<>\[\]]+\s+)?"
+    r"([A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+)\."
+    r"([A-Za-z_$<>][A-Za-z0-9_$<>]*)\([^'\n]{0,160}\)' on a null object reference"
 )
 SMALI_INVOKE = re.compile(
     r"^\s*invoke-(?:virtual|interface|direct|super)(?:/range)?"
