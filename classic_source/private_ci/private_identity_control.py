@@ -25,7 +25,10 @@ from private_original_baseline import (
     installed_path, verify_installed_hash, offline_guard,
     resolve_original_launcher, original_foreground,
 )
-from android17_start_smoke import classify_crash
+from android17_start_smoke import (
+    classify_crash, classify_visible_ui, entry_button_coordinates,
+    SmokeBlocked, DJ_ACTIVITY, GLOBAL_TOP, TOP_COMPONENT,
+)
 
 SIGNED = "classic-loft-dj-IDENTITY-TEST-SIGNED.apk"
 UNSIGNED = "classic-loft-dj-IDENTITY-UNSIGNED.apk"
@@ -114,8 +117,57 @@ def evaluate_launch(launch_code: int, launch: str, snapshot: str, crash: dict):
             "raw_private_payload_published": False}
 
 
+def identity_dj_resumed(snapshot: str) -> bool:
+    """Only a unique global top-resumed native DJ activity inside OEM app."""
+    if type(snapshot) is not str or len(snapshot) > 2_000_000:
+        return False
+    tops = []
+    for row in snapshot.splitlines():
+        match = GLOBAL_TOP.fullmatch(row)
+        if not match:
+            continue
+        value = match.group(1)
+        if not value.startswith("ActivityRecord{") or not value.endswith("}"):
+            return False
+        found = TOP_COMPONENT.findall(value)
+        if len(found) != 1:
+            return False
+        package, component = found[0]
+        if component.startswith("."):
+            component = package + component
+        tops.append((package, component))
+    return len(tops) > 0 and set(tops) == {(ORIGINAL, DJ_ACTIVITY)}
+
+
+def evaluate_identity_navigation(snapshot: str, crash: dict, ui_dump: str) -> dict:
+    """Closed-vocabulary, non-accepting in-app DJ UI check; no OEM output."""
+    state = ("NULL_DEREFERENCE" if crash["target_crash"] and
+             crash["exception_category"] == "NULL_DEREFERENCE" else
+             "OTHER_FATAL" if crash["target_crash"] or crash["unattributed_fatal"] else
+             "DJ_NOT_RESUMED" if not identity_dj_resumed(snapshot) else
+             "DJ_UI_NOT_VISIBLE")
+    visible = False
+    if state == "DJ_UI_NOT_VISIBLE":
+        try:
+            visible = classify_visible_ui(ui_dump, stage="native_dj")[
+                "expected_native_ui_observed"]
+        except SmokeBlocked:
+            visible = False
+        if visible:
+            state = "DJ_NATIVE_CONTROLS_VISIBLE"
+    return {"native_entry_navigation_tested": True,
+            "native_dj_navigation_observed": bool(visible),
+            "native_dj_observed_state": state,
+            "native_loft_dj_functionally_accepted": False,
+            "classic_functionally_accepted": False,
+            "physical_device_tested": False,
+            "raw_private_payload_published": False}
+
+
 def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
-          pause=time.sleep):
+          pause=time.sleep, probe_native_ui=False):
+    if type(probe_native_ui) is not bool:
+        raise BaselineBlocked("IDENTITY_CONTROL_BAD_UI_MODE")
     digest = scope(original, candidate, serial=serial, approved=approved)
     offline_guard()
     require(installed_path(ORIGINAL) is None and
@@ -149,8 +201,41 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
         pause(3)
         snapshot=adb(["shell","dumpsys","activity","activities"])
         logcat=adb(["logcat","-b","crash","-d"])
-        return evaluate_launch(code,launch,snapshot,
-                               classify_crash(logcat,package=ORIGINAL))
+        report = evaluate_launch(code, launch, snapshot,
+                                 classify_crash(logcat, package=ORIGINAL))
+        report["native_entry_navigation_tested"] = False
+        report["native_dj_navigation_observed"] = False
+        report["native_dj_observed_state"] = "NOT_TESTED"
+        if not probe_native_ui or report["observed_start_state"] != "RESUMED_NO_TARGET_FATAL":
+            return report
+        # Only the known in-Classic visible button may open the nonexported
+        # DJ Activity. Never use am start against the embedded component.
+        offline_guard()
+        ui_xml = adb(["shell", "uiautomator", "dump", "/dev/tty"])
+        try:
+            entry_visible = classify_visible_ui(ui_xml, stage="classic_entry")[
+                "expected_native_ui_observed"]
+        except SmokeBlocked:
+            entry_visible = False
+        if not entry_visible:
+            report["native_dj_observed_state"] = "CLASSIC_DJ_ENTRY_NOT_VISIBLE"
+            return report
+        display = adb(["shell", "wm", "size"])
+        try:
+            x, y = entry_button_coordinates(ui_xml, display)
+        except SmokeBlocked:
+            report["native_dj_observed_state"] = "CLASSIC_DJ_ENTRY_COORDS_INVALID"
+            return report
+        offline_guard()
+        adb(["logcat", "-b", "crash", "-c"])
+        adb(["shell", "input", "tap", str(x), str(y)])
+        pause(3)
+        dj_snapshot = adb(["shell", "dumpsys", "activity", "activities"])
+        dj_crashes = adb(["logcat", "-b", "crash", "-d"])
+        dj_ui = adb(["shell", "uiautomator", "dump", "/dev/tty"])
+        report.update(evaluate_identity_navigation(
+            dj_snapshot, classify_crash(dj_crashes, package=ORIGINAL), dj_ui))
+        return report
     finally:
         if installed_path(ORIGINAL) is not None:
             adb(["shell","am","force-stop",ORIGINAL])
@@ -166,10 +251,13 @@ def main(argv=None):
     parser.add_argument("--serial",required=True)
     parser.add_argument("--explicit-owner-approved-private-emulator",
                         action="store_true")
+    parser.add_argument("--probe-native-ui", action="store_true",
+                        help="owner-gated in-Classic nonexported DJ UI tap; no lamp control")
     args=parser.parse_args(argv)
     try:
         report=probe(args.original,args.candidate,serial=args.serial,
-                     approved=args.explicit_owner_approved_private_emulator)
+                     approved=args.explicit_owner_approved_private_emulator,
+                     probe_native_ui=args.probe_native_ui)
     except (BaselineBlocked,OSError,ValueError,TypeError):
         print(json.dumps({"status":"PRIVATE_CLASSIC_IDENTITY_CONTROL_BLOCKED",
                           "code":"IDENTITY_CONTROL_GUARD_OR_RUNTIME_FAILED"}))

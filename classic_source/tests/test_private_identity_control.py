@@ -155,12 +155,63 @@ class IdentityAblationTests(unittest.TestCase):
             self.assertFalse(result["native_loft_dj_functionally_accepted"])
             self.assertFalse(result["raw_private_payload_published"])
 
+    def test_identity_dj_foreground_requires_exact_oem_package_and_nonexported_activity(self):
+        good=("topResumedActivity=ActivityRecord{ab u0 com.yeelight.cherry/"
+              "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity t7}")
+        self.assertTrue(ident.identity_dj_resumed(good))
+        self.assertTrue(ident.identity_dj_resumed("  "+good+"\nResumedActivity="+good.split("=",1)[1]))
+        self.assertFalse(ident.identity_dj_resumed(good.replace(
+            "com.yeelight.cherry/", "io.lxsdd.yeelightdj/")))
+        self.assertFalse(ident.identity_dj_resumed(good.replace(
+            "ClassicDjActivity", "OtherActivity")))
+        self.assertFalse(ident.identity_dj_resumed(good+"\nResumedActivity=ActivityRecord{ab u0 "
+            "com.yeelight.cherry/com.yeelight.cherry.Other t7}"))
+        self.assertFalse(ident.identity_dj_resumed("mResumedActivity="+good.split("=",1)[1]))
+
+    def test_identity_navigation_requires_visible_native_controls_and_no_fatal(self):
+        top=("topResumedActivity=ActivityRecord{ab u0 com.yeelight.cherry/"
+             "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity t7}")
+        xml=('<?xml version="1.0" encoding="UTF-8"?>'
+             '<hierarchy rotation="0">'
+             '<node text="Loft DJ · Yeelight Classic" clickable="false"/>'
+             '<node text="Mikrofon starten" clickable="true"/>'
+             '<node text="DJ stoppen" clickable="true"/>'
+             '</hierarchy>')
+        clean={"target_crash":False,"unattributed_fatal":False,"exception_category":"NONE"}
+        null={"target_crash":True,"unattributed_fatal":False,
+              "exception_category":"NULL_DEREFERENCE"}
+        good=ident.evaluate_identity_navigation(top,clean,xml)
+        self.assertEqual(good["native_dj_observed_state"],"DJ_NATIVE_CONTROLS_VISIBLE")
+        self.assertTrue(good["native_dj_navigation_observed"])
+        self.assertTrue(good["native_entry_navigation_tested"])
+        self.assertFalse(good["native_loft_dj_functionally_accepted"])
+        self.assertFalse(good["classic_functionally_accepted"])
+        self.assertFalse(good["raw_private_payload_published"])
+        cases=[
+            (top,null,xml,"NULL_DEREFERENCE"),
+            (top,clean,xml.replace("Mikrofon starten","Wrong"),"DJ_UI_NOT_VISIBLE"),
+            (top,clean,"<malformed","DJ_UI_NOT_VISIBLE"),
+            (top.replace("ClassicDjActivity","Other"),clean,xml,"DJ_NOT_RESUMED"),
+        ]
+        for snapshot,crash,ui,expected in cases:
+            with self.subTest(expected=expected,ui=ui):
+                result=ident.evaluate_identity_navigation(snapshot,crash,ui)
+                self.assertEqual(result["native_dj_observed_state"],expected)
+                self.assertFalse(result["native_dj_navigation_observed"])
+                self.assertFalse(result["native_loft_dj_functionally_accepted"])
+
+    def test_identity_dj_ui_option_is_boolean_only(self):
+        with self.assertRaisesRegex(ident.BaselineBlocked,"IDENTITY_CONTROL_BAD_UI_MODE"):
+            ident.probe(Path("/untrusted"),Path("/untrusted-signed"),
+                        serial="emulator-5554",approved=True,probe_native_ui="true")
+
     def test_protected_script_orders_control_after_original_and_never_passes(self):
         shell=(ROOT/"private_ci/run_android17_emulator.sh").read_text("utf-8")
         self.assertLess(shell.index("android17_start_smoke.py"),
                         shell.index("private_original_baseline.py"))
         self.assertLess(shell.index("private_original_baseline.py"),
                         shell.index("private_identity_control.py"))
+        self.assertIn("--probe-native-ui",shell)
         self.assertIn("--identity-control",shell)
         self.assertIn('CLASSIC_APKTOOL_JAR="$RUNNER_TEMP/classic-tools/',shell)
         self.assertIn('  fail\nfi\n',shell)

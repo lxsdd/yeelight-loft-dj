@@ -152,10 +152,12 @@ else
     >"$WORK/identity-sign.log" 2>&1 || fail
   python3 classic_source/private_payload_parity.py \
     --unsigned "$IDU" --signed "$IDS" || fail
+  # Observe real in-Classic button navigation in the working package identity
+  # before deriving the separate single-field package-name crash control.
   python3 classic_source/private_ci/private_identity_control.py \
     --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
     --candidate "$IDS" --serial emulator-5554 \
-    --explicit-owner-approved-private-emulator || fail
+    --explicit-owner-approved-private-emulator --probe-native-ui || fail
   # Package-only control: derive from the audited original-identity unsigned
   # APK by changing only the binary Manifest package string. OEM DEX,
   # authorities, signature permissions, layouts and bridge stay byte-identical.
