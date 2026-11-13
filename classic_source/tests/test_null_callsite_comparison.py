@@ -68,6 +68,32 @@ class NullCallsiteRegression(unittest.TestCase):
         self.assertTrue(all(isinstance(x, str) and "secret" not in x.lower()
                             for x in s.RELATIONS))
 
+    def test_real_path_subclass_is_accepted_before_private_dex_read(self):
+        # Path() is PosixPath/WindowsPath, never exactly the abstract Path type.
+        # This positive gate prevents the protected runtime from rejecting its
+        # own valid RUNNER_TEMP path before checking a genuine target callsite.
+        import tempfile
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            original = root / "private-original/com.yeelight.cherry_3.5.4.apk"
+            clone = root / "private-output/classic-loft-dj-TEST-SIGNED.apk"
+            original.parent.mkdir()
+            clone.parent.mkdir()
+            original.write_bytes(b"synthetic original, not OEM bytes")
+            clone.write_bytes(b"synthetic clone, not OEM bytes")
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": temp}), \
+                 mock.patch.object(s, "digest_file", return_value=s.ORIGINAL_SHA256), \
+                 mock.patch.object(s, "target_null_site", return_value=None):
+                self.assertEqual(s.compare_private(original, clone, "", root),
+                                 "UNAVAILABLE")
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": temp}):
+                with self.assertRaisesRegex(s.NullSiteBlocked,
+                                            "NULL_SITE_PRIVATE_SCOPE_REQUIRED"):
+                    s.compare_private(original, clone, "", Path("/tmp/foreign"))
+
+
 
 if __name__ == "__main__":
     unittest.main()

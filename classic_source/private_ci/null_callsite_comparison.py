@@ -128,7 +128,7 @@ def compare_private(original: Path, candidate: Path, logcat: str, temp: Path):
 
     No output except an allowlisted relation. An NPE is still a test failure.
     """
-    require(type(temp) is Path and
+    require(isinstance(temp, Path) and
             original == temp / "private-original/com.yeelight.cherry_3.5.4.apk" and
             candidate == temp / "private-output/classic-loft-dj-TEST-SIGNED.apk" and
             all(p.is_file() and not p.is_symlink() for p in (original, candidate)) and
