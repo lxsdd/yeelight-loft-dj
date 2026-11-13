@@ -17,12 +17,31 @@ import tempfile
 import zipfile
 
 from classic_first import GateFailure, NEW_PACKAGE, digest_file, inspect_original, prepare
-from dex_authority_remap import remap_dex, DexRemapError, assert_self_consistent_dex
+from dex_authority_remap import (remap_dex, DexRemapError, assert_self_consistent_dex,
+                                 _entries, _replacement)
+from smali_authority_reassembly import stage_reassembled_oem
 from bridge.build_bridge import build as build_sidecar, ToolError, find_sdk_tools, no_oem_class_collisions, dex_descriptors
 from apk_readonly_audit import parse_binary_xml, AxmlError
 from secondary_dex_transport import normalize_private_multidex, DexTransportBlocked
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _art_string_ids_sorted(dex: bytes) -> bool:
+    """Check DEX string_id ordering. ART rejects out-of-order identifiers.
+
+    For the remapped values, all prefixes are ASCII and direct ordinal
+    comparisons are identical to ART's UTF-16 ordering. For arbitrary MUTF-8
+    entries, comparing encoded bytes can differ from UTF-16 ordering; the
+    trusted apktool assembler owns final sorting, and this function only
+    returns False on a definite reversed ASCII pair.
+    """
+    prev = None
+    for _a, _b, text in _entries(dex):
+        if prev is not None and prev.isascii() and text.isascii() and prev >= text:
+            return False
+        prev = text
+    return True
 
 
 def must_be_tool(name):
@@ -32,11 +51,14 @@ def must_be_tool(name):
     return path
 
 
-def run(args, env=None):
-    subprocess.run([str(x) for x in args], check=True, timeout=240, env=env)
+def run(args, env=None, *, timeout=240):
+    subprocess.run([str(x) for x in args], check=True, timeout=timeout, env=env)
 
 
-def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str) -> dict:
+def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str,
+                    *, dex_mode="raw") -> dict:
+    if dex_mode not in ("raw", "smali"):
+        raise GateFailure("DEX_MODE_INVALID")
     with zipfile.ZipFile(original) as orig, zipfile.ZipFile(candidate) as out:
         initial = {info.filename for info in orig.infolist()}
         generated = {info.filename for info in out.infolist()}
@@ -53,8 +75,29 @@ def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str
                 # Test-only synthetic fixtures; original build() always SHA-pins real APK.
                 expected = source
                 expected_remaps[name] = 0
-            if name not in generated or hashlib.sha256(expected).digest() != hashlib.sha256(out.read(name)).digest():
+            if name not in generated:
                 raise GateFailure(f"OEM_DEX_TRANSFORM_MISMATCH_{name}")
+            rebuilt = out.read(name)
+            if dex_mode == "raw" or not source.startswith(b"dex\n"):
+                if hashlib.sha256(expected).digest() != hashlib.sha256(rebuilt).digest():
+                    raise GateFailure(f"OEM_DEX_TRANSFORM_MISMATCH_{name}")
+            else:
+                # Smali reassembly must repair sorted string IDs AND preserve
+                # the exact OEM class/parent/interface graph. No code or names
+                # leave this private job.
+                from private_startup_audit import dex_index
+                if dex_index(source) != dex_index(rebuilt):
+                    raise GateFailure("OEM_DEX_CLASS_GRAPH_CHANGED")
+                original_pool = [raw for _a, _b, raw in _entries(source)]
+                rebuilt_pool = {raw for _a, _b, raw in _entries(rebuilt)}
+                replacements = [_replacement(raw) for raw in original_pool]
+                desired = {rep for rep in replacements if rep is not None}
+                forbidden = {raw for raw, rep in zip(original_pool, replacements)
+                             if rep is not None}
+                if not desired.issubset(rebuilt_pool) or forbidden & rebuilt_pool:
+                    raise GateFailure("OEM_DEX_AUTHORITY_STRING_PARITY_FAILED")
+                if not _art_string_ids_sorted(rebuilt):
+                    raise GateFailure("OEM_DEX_STRING_IDS_NOT_SORTED")
         addon = list(set(output_dex) - set(original_dex))
         if len(addon) != 1 or hashlib.sha256(out.read(addon[0])).hexdigest() != digest_file(bridge_dex):
             raise GateFailure("SIDECAR_DEX_MISMATCH")
@@ -75,6 +118,7 @@ def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str
         "oem_dex_verified": original_dex,
         "controlled_authority_string_remaps": expected_remaps,
         "original_oem_dex_intentionally_changed": any(expected_remaps.values()),
+        "dex_reassembly_mode": dex_mode,
         "sidecar_dex": addon[0],
         "package": NEW_PACKAGE,
         "signed": False, "installed": False, "device_hardware": "NOT_TESTED",
@@ -186,9 +230,19 @@ def build(original: Path, output: Path, sdk: Path):
         prepare(original, decoded, dex, staged)
         # JSON preparation note does not belong in APK; private report lives next to output.
         (staged/'classic_first_preparation.json').unlink()
-        run([*apktool, 'b', '-o', unsigned, staged])
+        # In-place changing an authority value from com.* to io.* reseals
+        # checksums but leaves DEX string_ids indexes out of ART's mandated
+        # UTF-16 sort order. Reassemble OEM Smali with existing pinned Apktool
+        # so its writer updates every string index and validates class graph.
+        codeonly = temp / 'source-code-only'
+        run([*apktool, 'd', '-r', '-f', '-o', codeonly, original],
+            timeout=600)
+        smali_report = stage_reassembled_oem(original, codeonly, staged)
+        run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         zip_layout = normalize_private_multidex(original, unsigned)
-        report = verify_unsigned(unsigned, original, dex, str(aapt))
+        report = verify_unsigned(unsigned, original, dex, str(aapt),
+                                 dex_mode="smali")
+        report["oem_smali_reassembly"] = smali_report
         report['secondary_dex_transport'] = zip_layout
         report["firebase_early_init_boundary"] = verify_final_firebase_boundary(unsigned)
         report["component_resolution_gate"] = verify_final_component_classes(unsigned)
