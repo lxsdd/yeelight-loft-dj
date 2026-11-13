@@ -100,7 +100,8 @@ def no_oem_class_collisions(original_apk, sidecar_dex):
     expected = {'Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;',
-                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;'}
+                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;',
+                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;'}
     if not expected <= added: raise ToolError('SIDECAR_REQUIRED_COMPONENTS_MISSING')
     return {'oem_classes': len(originals), 'added_classes': len(added), 'collisions': 0}
 

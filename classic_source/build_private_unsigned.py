@@ -138,7 +138,7 @@ def verify_unsigned(candidate: Path, original: Path, bridge_dex: Path, aapt: str
     }
 
 
-def verify_final_firebase_boundary(candidate: Path) -> dict:
+def verify_final_firebase_boundary(candidate: Path, *, identity_control=False) -> dict:
     """The rebuilt private APK must not accidentally re-enable OEM Firebase auto-init."""
     try:
         with zipfile.ZipFile(candidate) as z:
@@ -146,8 +146,19 @@ def verify_final_firebase_boundary(candidate: Path) -> dict:
     except (AxmlError, KeyError, zipfile.BadZipFile) as exc:
         raise GateFailure("FINAL_BINARY_MANIFEST_INVALID") from exc
     providers = [e["attributes"] for e in root["elements"] if e["tag"] == "provider"]
-    if len(providers) != 5:
-        raise GateFailure("FINAL_PROVIDER_COUNT_NOT_FIVE")
+    if len(providers) != (6 if identity_control else 5):
+        raise GateFailure("FINAL_PROVIDER_COUNT_MISMATCH")
+    dj = [p for p in providers if p.get(
+        "{http://schemas.android.com/apk/res/android}name") ==
+        "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider"]
+    if identity_control:
+        if len(dj) != 1 or dj[0].get(
+                "{http://schemas.android.com/apk/res/android}authorities") != (
+                "com.yeelight.cherry.loftdj.entry") or dj[0].get(
+                "{http://schemas.android.com/apk/res/android}exported") != "false":
+            raise GateFailure("FINAL_IDENTITY_ENTRY_PROVIDER_INVALID")
+    elif dj:
+        raise GateFailure("FINAL_CLONE_HAS_IDENTITY_ENTRY_PROVIDER")
     for p in providers:
         if p.get("{http://schemas.android.com/apk/res/android}name") == \
                 "com.google.firebase.provider.FirebaseInitProvider":
@@ -157,11 +168,11 @@ def verify_final_firebase_boundary(candidate: Path) -> dict:
         if p.get("{http://schemas.android.com/apk/res/android}name") == \
                 "com.yeelight.yeelib.data.DeviceInteractionProvider":
             raise GateFailure("FINAL_MISSING_DEVICE_PROVIDER_REINTRODUCED")
-    return {"status": "PRIVATE_EARLY_STARTUP_PROVIDERS_RECONCILED", "remaining_oem_providers": 5,
+    return {"status": "PRIVATE_EARLY_STARTUP_PROVIDERS_RECONCILED", "remaining_oem_providers": 5, "identity_dj_entry_provider": bool(identity_control),
             "android_startup": "NOT_TESTED", "cloud_login": "NOT_TESTED"}
 
 
-def verify_final_component_classes(candidate: Path) -> dict:
+def verify_final_component_classes(candidate: Path, *, identity_control=False) -> dict:
     """Static preflight: every retained ContentProvider AND Application must resolve.
 
     Android installs ContentProviders before Activities. Checking only their
@@ -188,7 +199,7 @@ def verify_final_component_classes(candidate: Path) -> dict:
     declarations = [e for e in manifest["elements"] if e["tag"] in ("application", "provider")]
     apps = [e for e in declarations if e["tag"] == "application"]
     providers = [e for e in declarations if e["tag"] == "provider"]
-    if len(apps) != 1 or len(providers) != 5:
+    if len(apps) != 1 or len(providers) != (6 if identity_control else 5):
         raise GateFailure("FINAL_COMPONENT_DECLARATIONS_CHANGED")
     verified = 0
     for e in declarations:
@@ -279,8 +290,10 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             identity_control=identity_control)
         report["oem_smali_reassembly"] = smali_report
         report['secondary_dex_transport'] = zip_layout
-        report["firebase_early_init_boundary"] = verify_final_firebase_boundary(unsigned)
-        report["component_resolution_gate"] = verify_final_component_classes(unsigned)
+        report["firebase_early_init_boundary"] = verify_final_firebase_boundary(
+            unsigned, identity_control=identity_control)
+        report["component_resolution_gate"] = verify_final_component_classes(
+            unsigned, identity_control=identity_control)
         report['class_collision_check'] = collision_report
         report['runtime_resolution'] = json.loads((bridge / 'runtime_resolution.json').read_text(encoding='utf-8'))
         report['sdk_platform'] = str(android_jar.relative_to(sdk))

@@ -186,11 +186,26 @@ def patch_manifest(path: Path, *, identity_control=False) -> dict:
         A("exported"): "false",
         A("foregroundServiceType"): "microphone",
     })
-    # This component is declared, but only the existing checkpoint runtime may implement it.
+    # Original-identity-only, nonexported in-Classic entry. It registers a
+    # lifecycle callback to add a small DJ button to the actual visible OEM
+    # Activity, including initial screens that do not inflate activity_main_new.
+    # No OEM DEX, component, root layout, or provider authority is rewritten.
+    if identity_control:
+        entry_authority = OLD_PACKAGE + ".loftdj.entry"
+        require(not any(entry_authority in p.get(A("authorities"), "").split(";")
+                        for p in app.findall("provider")),
+                "CLASSIC_DJ_ENTRY_AUTHORITY_COLLISION")
+        ET.SubElement(app, "provider", {
+            A("name"): BRIDGE_NAMESPACE + ".ui.ClassicDjEntryProvider",
+            A("authorities"): entry_authority,
+            A("exported"): "false",
+            A("enabled"): "true",
+        })
     # No exported services, cloud API, or remote actor permissions are added.
     tree.write(path, encoding="utf-8", xml_declaration=True)
     return {"new_package": OLD_PACKAGE if identity_control else NEW_PACKAGE,
             "identity_control_offline_only": identity_control,
+            "identity_native_entry_provider": identity_control,
             "canonicalized_component_refs": count, "providers": providers, "permissions_renamed": permissions, "min_sdk": 23, "activity_exported": False,
             "firebase_auto_init": "DISABLED_FOR_PRIVATE_CLONE",
             "cloud_login": "NOT_TESTED",
