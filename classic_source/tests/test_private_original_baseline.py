@@ -430,7 +430,9 @@ class OriginalBaselineRegression(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] /
                   "private_ci/private_original_baseline.py").read_text("utf-8")
         self.assertIn('"NULL_DEREFERENCE"', source)
-        self.assertIn("compare_null_callsite(original, candidate, clone_log", source)
+        self.assertIn("compare_null_callsite(", source)
+        self.assertIn("original, candidate, clone_log", source)
+        self.assertIn("report_receiver=True", source)
         self.assertIn("uninstall\", CLONE", source)
         self.assertIn("original_unmodified_and_hash_verified", source)
         self.assertIn("clone_functionally_accepted\": False", source)
