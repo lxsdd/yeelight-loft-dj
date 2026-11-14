@@ -155,6 +155,74 @@ def classify_private_ui_surface(raw: str) -> dict:
     }
 
 
+
+
+def legacy_target_warning_ok_point(xml: str, focused_windows: str,
+                                   display: str):
+    """Locate only the AOSP deprecated-target-SDK warning's actual OK button.
+
+    Never guess coordinates, dismiss arbitrary system dialogs, grant
+    permissions, or globally disable warnings. One permitted acknowledgment
+    applies only to this disposable owner-gated offline emulator.
+    AOSP's DeprecatedTargetSdkVersionDialog sets an immutable window title;
+    its positive button is android:id/button1, not any generic dialog button.
+    """
+    if (type(xml) is not str or len(xml) > 2_000_000
+            or type(focused_windows) is not str or len(focused_windows) > 2_000_000
+            or type(display) is not str or len(display) > 10000):
+        return None
+    if "<!DOCTYPE" in xml.upper() or "<!ENTITY" in xml.upper():
+        return None
+    if not re.search(
+            r"mCurrentFocus=Window\{[^\n]{0,300}\bDeprecatedTargetSdkVersionDialog\}",
+            focused_windows):
+        return None
+    start = xml.find("<?xml")
+    end = xml.find("</hierarchy>", start if start >= 0 else 0)
+    if start < 0 or end < start:
+        return None
+    try:
+        root = ET.fromstring(xml[start:end + len("</hierarchy>")])
+    except (ET.ParseError, ValueError):
+        return None
+    if root.tag != "hierarchy":
+        return None
+    nodes = list(root.iter("node"))
+    # No original/third-party nodes may share the warning's foreground tree.
+    if not 1 <= len(nodes) <= 100 or any(
+            n.get("package") != "android" for n in nodes):
+        return None
+    warnings = [
+        n for n in nodes if
+        n.get("text", "").startswith(
+            "This app was built for an older version of Android")
+        and "security" in n.get("text", "")
+        and "privacy" in n.get("text", "")
+    ]
+    positives = [
+        n for n in nodes if n.get("package") == "android"
+        and n.get("resource-id") == "android:id/button1"
+        and n.get("text") == "OK"
+        and n.get("clickable") == "true"
+        and n.get("enabled") == "true"
+    ]
+    if len(warnings) != 1 or len(positives) != 1:
+        return None
+    bounds = re.fullmatch(
+        r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+        positives[0].get("bounds", ""))
+    sizes = re.findall(r"(?:Physical|Override) size:\s*(\d+)x(\d+)",
+                       display)
+    if not bounds or not sizes:
+        return None
+    width, height = map(int, sizes[-1])
+    if not (200 <= width <= 6000 and 200 <= height <= 12000):
+        return None
+    x1, y1, x2, y2 = map(int, bounds.groups())
+    if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
+        return None
+    return ((x1 + x2) // 2, (y1 + y2) // 2)
+
 def scope(original: Path, candidate: Path, *, serial: str, approved: bool,
           env=None):
     e = os.environ if env is None else env
@@ -370,8 +438,68 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
             report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
             return report
         if not entry_visible:
-            report["native_dj_observed_state"] = "CLASSIC_DJ_ENTRY_NOT_VISIBLE"
-            return report
+            # An Android-only hierarchy is not proof the app's own Button is
+            # hidden. AOSP's first-launch deprecated-target SDK warning can
+            # cover an otherwise attached/resumed legacy Classic Activity.
+            # Acknowledge ONLY the exact documented warning once, using its
+            # verified visible positive button on the offline test emulator.
+            # Unknown windows, runtime permission requests, Play Protect, and
+            # unrelated dialogs stay untouched and cannot be passed.
+            report["legacy_android_warning"] = {
+                "status": "NOT_MATCHED_NO_ACTION",
+                "acknowledged": False,
+                "permission_granted": False,
+                "product_ui_accepted": False,
+            }
+            surface = report["native_entry_ui_surface"]
+            android_only = (
+                surface["original_package_node_count"] == 0
+                and surface["android_package_node_count"] == surface["node_count"])
+            if android_only:
+                # Never serialize the OEM/window text. Verification operates
+                # only in this process and returns either coordinates or None.
+                try:
+                    window_state = adb(["shell", "dumpsys", "window", "windows"])
+                    display = adb(["shell", "wm", "size"])
+                    warning_point = legacy_target_warning_ok_point(
+                        ui_xml, window_state, display)
+                except (BaselineBlocked, OSError, ValueError, TypeError):
+                    warning_point = None
+                if warning_point is not None:
+                    offline_guard()
+                    adb(["shell", "input", "tap",
+                         str(warning_point[0]), str(warning_point[1])])
+                    report["legacy_android_warning"] = {
+                        "status": "EXACT_AOSP_DEPRECATED_TARGET_WARNING_ACKNOWLEDGED",
+                        "acknowledged": True,
+                        "permission_granted": False,
+                        "product_ui_accepted": False,
+                    }
+                    pause(1)
+                    ui_xml, capture_code = capture_private_hierarchy()
+                    report["native_entry_hierarchy_after_warning"] = {
+                        "status": capture_code,
+                        "raw_hierarchy_published": False,
+                        "product_ui_accepted": False,
+                    }
+                    if ui_xml is None:
+                        report["native_dj_observed_state"] = (
+                            "CLASSIC_UI_HIERARCHY_UNAVAILABLE")
+                        return report
+                    try:
+                        report["native_entry_ui_surface_after_warning"] = (
+                            classify_private_ui_surface(ui_xml))
+                        entry_visible = classify_visible_ui(
+                            ui_xml, stage="classic_entry")[
+                                "expected_native_ui_observed"]
+                    except (BaselineBlocked, SmokeBlocked):
+                        report["native_dj_observed_state"] = (
+                            "CLASSIC_UI_HIERARCHY_UNAVAILABLE")
+                        return report
+            if not entry_visible:
+                report["native_dj_observed_state"] = (
+                    "CLASSIC_DJ_ENTRY_NOT_VISIBLE")
+                return report
         display = adb(["shell", "wm", "size"])
         try:
             x, y = entry_button_coordinates(ui_xml, display)

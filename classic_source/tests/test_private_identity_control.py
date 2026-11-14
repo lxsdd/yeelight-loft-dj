@@ -284,6 +284,60 @@ class IdentityAblationTests(unittest.TestCase):
                 '<?xml version="1.0"?><hierarchy>' +
                 '<node package="android"/>' * 6001 + '</hierarchy>')
 
+
+    def test_exact_aosp_deprecated_target_dialog_matches_one_visible_ok(self):
+        xml = ('<?xml version="1.0"?><hierarchy>'
+               '<node package="android" text="Classic warning">'
+               '<node package="android" text="This app was built for an older '
+               "version of Android. It might not work properly and doesn't "
+               'include the latest security and privacy protections."/>'
+               '<node package="android" resource-id="android:id/button1" '
+               'text="OK" clickable="true" enabled="true" '
+               'bounds="[150,1750][400,1850]"/>'
+               '</node></hierarchy>')
+        focused = ("mCurrentFocus=Window{6a u0 "
+                   "DeprecatedTargetSdkVersionDialog}")
+        screen = "Physical size: 1080x2400"
+        coords = ident.legacy_target_warning_ok_point(xml, focused, screen)
+        self.assertEqual(coords, (275, 1800))
+        # Expected AOSP UI dialog fingerprint only, not general OK taps.
+        for invalid_xml in (
+            xml.replace("security and privacy", "user interface"),
+            xml.replace("android:id/button1", "android:id/button2"),
+            xml.replace('text="OK"', 'text="Allow"'),
+            xml.replace('enabled="true"', 'enabled="false"'),
+            xml.replace('package="android"', 'package="com.yeelight.cherry"', 1),
+            xml.replace('bounds="[150,1750][400,1850]"',
+                        'bounds="[0,0][9999,9999]"'),
+            xml.replace("</hierarchy>", '<!DOCTYPE evil></hierarchy>'),
+        ):
+            with self.subTest(invalid_xml=invalid_xml[-60:]):
+                self.assertIsNone(ident.legacy_target_warning_ok_point(
+                    invalid_xml, focused, screen))
+        self.assertIsNone(ident.legacy_target_warning_ok_point(
+            xml, "mCurrentFocus=Window{6a u0 PermissionDialog}", screen))
+        self.assertIsNone(ident.legacy_target_warning_ok_point(
+            xml, "mCurrentFocus=null", screen))
+        self.assertIsNone(ident.legacy_target_warning_ok_point(
+            xml, focused, "Physical size: 0x0"))
+        self.assertIsNone(ident.legacy_target_warning_ok_point(
+            None, focused, screen))
+
+    def test_legacy_warning_scope_is_owner_only_and_single_tap_not_global(self):
+        source = (ROOT / "private_ci/private_identity_control.py").read_text(
+            "utf-8")
+        self.assertIn('if android_only:', source)
+        self.assertIn('warning_point = legacy_target_warning_ok_point(', source)
+        self.assertIn('if warning_point is not None:', source)
+        self.assertIn('offline_guard()\\n                    adb(["shell", "input", "tap"', source)
+        self.assertIn('pause(1)', source)
+        self.assertIn('permission_granted": False', source)
+        self.assertNotIn('settings put global hide_error_dialogs', source)
+        self.assertNotIn('debug.wm.disable_deprecated_target_sdk_dialog', source)
+        self.assertNotIn('pm grant ', source)
+        self.assertNotIn('input keyevent 66', source)
+        self.assertNotIn('input keyevent 4', source)
+
     def test_private_identity_file_capture_is_read_only_and_cleaned(self):
         actions = []
         raw = '<?xml version="1.0"?><hierarchy><node text="private"/></hierarchy>'
