@@ -226,6 +226,12 @@ class IdentityAblationTests(unittest.TestCase):
             "11-14 18:00:00 I ClassicDjProbe: ENTRY_VIEW_LAID_OUT")
         self.assertTrue(with_laid_out["entry_view_laid_out"])
         self.assertFalse(with_laid_out["ui_visibility_proven"])
+        focus = ident.classify_private_entry_markers(
+            "11-14 18:00:00 I ClassicDjProbe: ENTRY_HOST_FOCUSED\n"
+            "11-14 18:00:00 I ClassicDjProbe: ENTRY_HOST_UNFOCUSED")
+        self.assertTrue(focus["entry_host_focused"])
+        self.assertTrue(focus["entry_host_unfocused"])
+        self.assertFalse(focus["ui_visibility_proven"])
         self.assertNotIn("secret-private-class", str(observation))
         self.assertEqual(
             ident.classify_private_entry_markers("no provider markers")["status"],
@@ -233,6 +239,49 @@ class IdentityAblationTests(unittest.TestCase):
         with self.assertRaisesRegex(ident.BaselineBlocked, "IDENTITY_ENTRY_LOG_INVALID"):
             ident.classify_private_entry_markers(None)
 
+
+
+    def test_original_identity_ui_surface_discriminates_system_cover_and_app(self):
+        owner = "com.yeelight.cherry"
+        normal = ('<?xml version="1.0"?><hierarchy>'
+                  '<node package="' + owner + '" text="private device" '
+                  'resource-id="private.account.value">'
+                  '<node package="' + owner + '" text="Loft DJ" '
+                  'content-desc="Loft DJ öffnen" clickable="true" '
+                  'enabled="true"/></node></hierarchy>')
+        data = ident.classify_private_ui_surface(normal)
+        self.assertEqual(data["node_count"], 2)
+        self.assertEqual(data["original_package_node_count"], 2)
+        self.assertEqual(data["top_level_original_node_count"], 1)
+        self.assertEqual(data["dj_text_node_count"], 1)
+        self.assertEqual(data["dj_content_description_node_count"], 1)
+        self.assertEqual(data["dj_candidate_clickable_count"], 1)
+        self.assertEqual(data["dj_candidate_enabled_count"], 1)
+        self.assertFalse(data["ui_navigation_proven"])
+        self.assertFalse(data["raw_private_xml_or_names_published"])
+        self.assertNotIn("private", str(data).replace("PRIVATE", ""))
+        system = ('<?xml version="1.0"?><hierarchy>'
+                  '<node package="android" text="private popup"/>'
+                  '</hierarchy>')
+        status = ident.classify_private_ui_surface(system)
+        self.assertEqual(status["original_package_node_count"], 0)
+        self.assertEqual(status["android_package_node_count"], 1)
+        self.assertEqual(status["dj_candidate_clickable_count"], 0)
+        hidden = ('<?xml version="1.0"?><hierarchy><node package="' + owner +
+                  '" text="Private login"/></hierarchy>')
+        hidden_status = ident.classify_private_ui_surface(hidden)
+        self.assertEqual(hidden_status["original_package_node_count"], 1)
+        self.assertEqual(hidden_status["dj_text_node_count"], 0)
+
+    def test_original_identity_surface_parser_is_bounded_and_fail_closed(self):
+        for bad in (None, "", "<no-ui/>", '<!DOCTYPE root><hierarchy/>',
+                    '<?xml version="1.0"?><hierarchy><node/>'):
+            with self.subTest(bad=bad), self.assertRaises(ident.BaselineBlocked):
+                ident.classify_private_ui_surface(bad)
+        with self.assertRaisesRegex(ident.BaselineBlocked, "IDENTITY_SURFACE_NODE_COUNT_INVALID"):
+            ident.classify_private_ui_surface(
+                '<?xml version="1.0"?><hierarchy>' +
+                '<node package="android"/>' * 6001 + '</hierarchy>')
 
     def test_private_identity_file_capture_is_read_only_and_cleaned(self):
         actions = []

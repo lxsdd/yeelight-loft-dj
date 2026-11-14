@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import xml.etree.ElementTree as ET
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -41,7 +42,8 @@ ENTRY_LOG_RE = re.compile(
     r"(ENTRY_PROVIDER_REGISTERED|ENTRY_ACTIVITY_RESUMED|"
     r"ENTRY_ROOT_UNAVAILABLE|ENTRY_ALREADY_PRESENT|"
     r"ENTRY_ADDED_TO_ACTIVITY|ENTRY_VIEW_LAID_OUT|"
-    r"ENTRY_VIEW_NOT_LAID_OUT)\s*$"
+    r"ENTRY_VIEW_NOT_LAID_OUT|ENTRY_HOST_FOCUSED|"
+    r"ENTRY_HOST_UNFOCUSED)\s*$"
 )
 
 
@@ -64,6 +66,8 @@ def classify_private_entry_markers(logcat: str) -> dict:
         "entry_already_present": "ENTRY_ALREADY_PRESENT" in observed,
         "entry_view_laid_out": "ENTRY_VIEW_LAID_OUT" in observed,
         "entry_view_not_laid_out": "ENTRY_VIEW_NOT_LAID_OUT" in observed,
+        "entry_host_focused": "ENTRY_HOST_FOCUSED" in observed,
+        "entry_host_unfocused": "ENTRY_HOST_UNFOCUSED" in observed,
         "ui_visibility_proven": False,
         "raw_logcat_published": False,
     }
@@ -98,6 +102,57 @@ def capture_private_hierarchy(run=run_adb):
         code, _ = run(["shell", "rm", "-f", PRIVATE_UI_FILE],
                       timeout=15, allow_failure=True)
         require(code == 0, "IDENTITY_UI_TEMP_CLEANUP_FAILED")
+
+
+
+def classify_private_ui_surface(raw: str) -> dict:
+    """Closed structural UIAutomator proof, never export OEM text or IDs.
+
+    Whether this hierarchy includes OEM nodes distinguishes an overlying
+    system screen from a hidden native DJ entry. Its only text comparisons
+    are our exact two constant bridge labels. No XML leaves the runner.
+    """
+    require(type(raw) is str and 0 < len(raw) <= 2_000_000,
+            "IDENTITY_SURFACE_INPUT_INVALID")
+    upper = raw.upper()
+    require("<!DOCTYPE" not in upper and "<!ENTITY" not in upper,
+            "IDENTITY_SURFACE_XML_UNSAFE")
+    begin = raw.find("<?xml")
+    close = raw.find("</hierarchy>", begin if begin >= 0 else 0)
+    require(begin >= 0 and close >= begin,
+            "IDENTITY_SURFACE_XML_MISSING")
+    try:
+        root = ET.fromstring(raw[begin:close + len("</hierarchy>")])
+    except (ET.ParseError, ValueError):
+        raise BaselineBlocked("IDENTITY_SURFACE_XML_INVALID") from None
+    require(root.tag == "hierarchy", "IDENTITY_SURFACE_ROOT_INVALID")
+    nodes = list(root.iter("node"))
+    require(1 <= len(nodes) <= 6000, "IDENTITY_SURFACE_NODE_COUNT_INVALID")
+    oem = sum(n.get("package") == ORIGINAL for n in nodes)
+    android = sum(n.get("package") == "android" for n in nodes)
+    top = root.findall("node")
+    target_text = [n for n in nodes if n.get("text") == "Loft DJ"]
+    target_desc = [n for n in nodes if n.get("content-desc") == "Loft DJ öffnen"]
+    target = [n for n in nodes if n in target_text or n in target_desc]
+    return {
+        "status": "PRIVATE_UI_SURFACE_STRUCTURE_ONLY_NOT_ACCEPTED",
+        "node_count": len(nodes),
+        "original_package_node_count": oem,
+        "android_package_node_count": android,
+        "other_or_unset_package_node_count": len(nodes) - oem - android,
+        "top_level_original_node_count": sum(
+            n.get("package") == ORIGINAL for n in top),
+        "top_level_nonoriginal_node_count": sum(
+            n.get("package") != ORIGINAL for n in top),
+        "dj_text_node_count": len(target_text),
+        "dj_content_description_node_count": len(target_desc),
+        "dj_candidate_clickable_count": sum(
+            n.get("clickable") == "true" for n in target),
+        "dj_candidate_enabled_count": sum(
+            n.get("enabled") == "true" for n in target),
+        "ui_navigation_proven": False,
+        "raw_private_xml_or_names_published": False,
+    }
 
 
 def scope(original: Path, candidate: Path, *, serial: str, approved: bool,
@@ -296,6 +351,16 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
                 "raw_logcat_published": False,
             }
         if ui_xml is None:
+            report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
+            return report
+        try:
+            report["native_entry_ui_surface"] = classify_private_ui_surface(ui_xml)
+        except BaselineBlocked:
+            report["native_entry_ui_surface"] = {
+                "status": "PRIVATE_UI_SURFACE_INVALID_NOT_ACCEPTED",
+                "ui_navigation_proven": False,
+                "raw_private_xml_or_names_published": False,
+            }
             report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
             return report
         try:

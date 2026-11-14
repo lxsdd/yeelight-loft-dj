@@ -77,6 +77,10 @@ public final class ClassicDjEntryProvider extends ContentProvider
                     // Attaching to this Activity's own content is safe before
                     // it has focus; Android performs the layout afterwards.
                     if (activity.isFinishing() || activity.isDestroyed()) return;
+                    // A missing Activity window focus is only diagnostic.
+                    // Never suppress the app-local attach on this basis.
+                    probe(activity.hasWindowFocus() ?
+                          "ENTRY_HOST_FOCUSED" : "ENTRY_HOST_UNFOCUSED");
                     // The tagged entry is idempotent. If OEM content was
                     // replaced, the later pass sees the new content root.
                     attachOptionalButton(activity);

@@ -76,7 +76,8 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("onActivityDestroyed(Activity a) { cancelPending(a); }", source)
         # OEM onResume can be unfocused/unmeasured; neither should suppress
         # the bounded per-Activity attach before Android performs its layout.
-        self.assertNotIn("activity.hasWindowFocus()", source)
+        self.assertIn('probe(activity.hasWindowFocus() ?', source)
+        self.assertNotIn("|| !activity.hasWindowFocus()", source)
         self.assertNotIn("content.getWidth() <= 0", source)
         self.assertNotIn("content.getHeight() <= 0", source)
         self.assertIn('probe("ENTRY_ADDED_TO_ACTIVITY")', source)
@@ -116,6 +117,9 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn('probe("ENTRY_ACTIVITY_RESUMED")', source)
         self.assertIn("ENTRY_VIEW_LAID_OUT", source)
         self.assertIn("ENTRY_VIEW_NOT_LAID_OUT", source)
+        self.assertIn("ENTRY_HOST_FOCUSED", source)
+        self.assertIn("ENTRY_HOST_UNFOCUSED", source)
+        self.assertIn("setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES)", entry)
         self.assertIn("view.getGlobalVisibleRect(visible)", source)
         self.assertIn('if (DIAG_EVENTS.getAndIncrement() >= 40) return;', source)
         self.assertNotIn("Log.d(", source)
