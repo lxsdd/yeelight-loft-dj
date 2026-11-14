@@ -141,7 +141,8 @@ STUBS.update({
 'android/app/Activity.java': '''package android.app; public class Activity extends android.content.Context {
  protected void onCreate(android.os.Bundle b){} protected void onResume(){} protected void onPause(){}
  public void setContentView(android.view.View v){} public boolean isFinishing(){return false;}
- public boolean isDestroyed(){return false;} public android.view.View findViewById(int id){return null;}
+ public boolean isDestroyed(){return false;} public boolean hasWindowFocus(){return true;}
+ public android.view.View findViewById(int id){return null;}
  public void requestPermissions(String[] p,int r){} public void onRequestPermissionsResult(int code,String[] p,int[] results){}
 }''',
 'android/app/Application.java': '''package android.app; public class Application extends android.content.Context {
@@ -175,6 +176,8 @@ public abstract class ContentProvider {
  public android.content.Context getContext(){return c;}
  public void setTag(Object o){tag=o;} public Object getTag(){return tag;}
  public boolean isShown(){return true;} public boolean isClickable(){return true;}
+ public int getWidth(){return 1;} public int getHeight(){return 1;}
+ public void setElevation(float v){} public void bringToFront(){}
  public boolean getGlobalVisibleRect(android.graphics.Rect r){return true;}
  public interface OnClickListener {void onClick(View v);}
 }''',
