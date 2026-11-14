@@ -211,6 +211,24 @@ class IdentityAblationTests(unittest.TestCase):
                 self.assertFalse(result["native_dj_navigation_observed"])
                 self.assertFalse(result["native_loft_dj_functionally_accepted"])
 
+    def test_identity_provider_markers_allowlisted_never_replace_ui_acceptance(self):
+        source = ("11-14 18:00:00.000 I ClassicDjProbe: ENTRY_PROVIDER_REGISTERED\n"
+                  "11-14 18:00:00.010 I ClassicDjProbe: ENTRY_ACTIVITY_RESUMED\n"
+                  "11-14 18:00:00.020 I ClassicDjProbe: ENTRY_ADDED_TO_ACTIVITY\n"
+                  "11-14 18:00:00.030 I ClassicDjProbe: secret-private-class\n")
+        observation = ident.classify_private_entry_markers(source)
+        self.assertTrue(observation["provider_registered"])
+        self.assertTrue(observation["activity_resumed"])
+        self.assertTrue(observation["entry_added_to_activity"])
+        self.assertFalse(observation["ui_visibility_proven"])
+        self.assertFalse(observation["raw_logcat_published"])
+        self.assertNotIn("secret-private-class", str(observation))
+        self.assertEqual(
+            ident.classify_private_entry_markers("no provider markers")["status"],
+            "PRIVATE_ENTRY_MARKERS_ABSENT_NOT_ACCEPTED")
+        with self.assertRaisesRegex(ident.BaselineBlocked, "IDENTITY_ENTRY_LOG_INVALID"):
+            ident.classify_private_entry_markers(None)
+
     def test_identity_dj_ui_option_is_boolean_only(self):
         with self.assertRaisesRegex(ident.BaselineBlocked,"IDENTITY_CONTROL_BAD_UI_MODE"):
             ident.probe(Path("/untrusted"),Path("/untrusted-signed"),

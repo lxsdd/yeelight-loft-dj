@@ -11,6 +11,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
+import java.util.concurrent.atomic.AtomicInteger;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,6 +31,15 @@ public final class ClassicDjEntryProvider extends ContentProvider
         implements Application.ActivityLifecycleCallbacks {
     private static final String ORIGINAL_PACKAGE = "com.yeelight.cherry";
     private static final String ENTRY_TAG = "io.github.lxsdd.yeelightclassicdj.entry.overlay";
+    private static final String DIAG_TAG = "ClassicDjProbe";
+    private static final AtomicInteger DIAG_EVENTS = new AtomicInteger();
+    private static void probe(String fixedMarker) {
+        // Private original-identity QA only: callers use literal fixed strings,
+        // never OEM symbols, activity names, user/device data or UI text.
+        if (DIAG_EVENTS.getAndIncrement() >= 40) return;
+        try { Log.i(DIAG_TAG, fixedMarker); }
+        catch (RuntimeException ignored) { /* never affect OEM startup */ }
+    }
     private final Handler handler = new Handler(Looper.getMainLooper());
     // Some OEM screens replace their content view after onResume. Perform only
     // bounded, cancelable in-Activity rechecks; no global overlay or OEM patch.
@@ -44,6 +55,7 @@ public final class ClassicDjEntryProvider extends ContentProvider
         if (!(app instanceof Application)) return false;
         try {
             ((Application) app).registerActivityLifecycleCallbacks(this);
+            probe("ENTRY_PROVIDER_REGISTERED");
             return true;
         } catch (RuntimeException ignored) {
             // Never bring down OEM initialization for an optional UI entry.
@@ -54,14 +66,17 @@ public final class ClassicDjEntryProvider extends ContentProvider
     @Override public void onActivityResumed(final Activity activity) {
         if (activity == null || !ORIGINAL_PACKAGE.equals(activity.getPackageName())
                 || activity instanceof ClassicDjActivity) return;
+        probe("ENTRY_ACTIVITY_RESUMED");
         cancelPending(activity);
         java.util.List<Runnable> tasks = new java.util.ArrayList<>();
         pending.put(activity, tasks);
         for (long delayMs : LAYOUT_RECHECK_MS) {
             Runnable attempt = new Runnable() {
                 @Override public void run() {
-                    if (activity.isFinishing() || activity.isDestroyed()
-                            || !activity.hasWindowFocus()) return;
+                    // onResume may precede the first focused/layout frame.
+                    // Attaching to this Activity's own content is safe before
+                    // it has focus; Android performs the layout afterwards.
+                    if (activity.isFinishing() || activity.isDestroyed()) return;
                     // The tagged entry is idempotent. If OEM content was
                     // replaced, the later pass sees the new content root.
                     attachOptionalButton(activity);
@@ -88,10 +103,15 @@ public final class ClassicDjEntryProvider extends ContentProvider
         }
         try {
             View content = activity.findViewById(android.R.id.content);
-            if (!(content instanceof FrameLayout) || content.getWidth() <= 0 ||
-                    content.getHeight() <= 0) return;
+            if (!(content instanceof FrameLayout)) {
+                probe("ENTRY_ROOT_UNAVAILABLE");
+                return;
+            }
             FrameLayout root = (FrameLayout) content;
-            if (hasExistingEntry(root, 0)) return;
+            if (hasExistingEntry(root, 0)) {
+                probe("ENTRY_ALREADY_PRESENT");
+                return;
+            }
 
             ClassicDjEntryView button = new ClassicDjEntryView(activity);
             button.setTag(ENTRY_TAG);
@@ -106,6 +126,7 @@ public final class ClassicDjEntryProvider extends ContentProvider
             button.setElevation(8f * density);
             root.addView(button, params);
             button.bringToFront();
+            probe("ENTRY_ADDED_TO_ACTIVITY");
         } catch (RuntimeException ignored) {
             // Fail without disturbing any OEM Activity, layout or login state.
         }

@@ -104,6 +104,30 @@ class OriginalUiReuseAuditTests(unittest.TestCase):
         r = analyze(self.resources, self.code)
         self.assertEqual(r["roles"]["music"]["unique_original_class_definitions"], 0)
 
+    def test_many_nested_original_classes_do_not_fake_duplicate_canonicals(self):
+        self.write_layout("activity_music")
+        self.write_music()
+        folder = self.code / "smali/com/yeelight/cherry/ui/activity"
+        for index in range(12):
+            (folder / f"MusicActivity$Inner{index}.smali").write_text(
+                ".class public Lcom/yeelight/cherry/ui/activity/"
+                f"MusicActivity$Inner{index};\n"
+                ".super Ljava/lang/Object;\n", encoding="utf8")
+        result = analyze(self.resources, self.code)
+        self.assertEqual(result["roles"]["music"]["unique_original_class_definitions"], 1)
+        self.assertEqual(result["roles"]["music"]["binding_state"],
+                         "STATIC_LAYOUT_AND_CLASS_CANDIDATES")
+
+    def test_canonical_duplicates_still_deny_after_four_sources(self):
+        self.write_music()
+        for index in range(2, 6):
+            folder = self.code / f"smali_classes{index}/com/yeelight/cherry/ui/activity"
+            folder.mkdir(parents=True)
+            (folder / "MusicActivity.smali").write_text(SMALI, encoding="utf8")
+        with self.assertRaisesRegex(UiAuditBlocked,
+                                    "UI_SMALI_DUPLICATE_ORIGINAL_CLASS"):
+            analyze(self.resources, self.code)
+
     def test_untrusted_xml_namespace_and_entities_refused(self):
         manifest = self.resources / "AndroidManifest.xml"
         original = manifest.read_text("utf8")

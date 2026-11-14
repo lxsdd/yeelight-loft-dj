@@ -82,7 +82,12 @@ def _classes(root: Path) -> tuple[dict[str, list[Path]], int]:
         if stem in found:
             need(safe_regular(path, MAX_SMALI), "UI_SMALI_FILE_INVALID")
             found[stem].append(path)
-            need(len(found[stem]) <= 4, "UI_SMALI_DUPLICATE_ORIGINAL_CLASS")
+            # Anonymous/nested classes must not consume the distinct
+            # *canonical* source allowance. Both caps remain fail-closed.
+            need(len(found[stem]) <= MAX_ROLE_SOURCES,
+                 "UI_SMALI_ROLE_LIMIT")
+            need(sum(p.stem == stem for p in found[stem]) <= 4,
+                 "UI_SMALI_DUPLICATE_ORIGINAL_CLASS")
         elif "$" in stem and stem.split("$", 1)[0] in found:
             need(safe_regular(path, MAX_SMALI), "UI_SMALI_FILE_INVALID")
             found[stem.split("$", 1)[0]].append(path)

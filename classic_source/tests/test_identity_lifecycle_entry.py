@@ -74,8 +74,13 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("cancelPending(activity);", source)
         self.assertIn("onActivityPaused(Activity a) { cancelPending(a); }", source)
         self.assertIn("onActivityDestroyed(Activity a) { cancelPending(a); }", source)
-        self.assertIn("activity.hasWindowFocus()", source)
-        self.assertIn("content.getWidth() <= 0", source)
+        # OEM onResume can be unfocused/unmeasured; neither should suppress
+        # the bounded per-Activity attach before Android performs its layout.
+        self.assertNotIn("activity.hasWindowFocus()", source)
+        self.assertNotIn("content.getWidth() <= 0", source)
+        self.assertNotIn("content.getHeight() <= 0", source)
+        self.assertIn('probe("ENTRY_ADDED_TO_ACTIVITY")', source)
+        self.assertIn('probe("ENTRY_ROOT_UNAVAILABLE")', source)
         self.assertIn("button.bringToFront();", source)
         self.assertIn("view.bringToFront();", source)
         for prohibited in ("WindowManager", "setContentView(", "set_music", "startActivity(intent)"):
@@ -107,6 +112,10 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertNotIn("Socket(", source)
         self.assertNotIn("getSystemService(Context.WINDOW_SERVICE)", source)
         self.assertIn("return null;", source)
+        self.assertIn('probe("ENTRY_PROVIDER_REGISTERED")', source)
+        self.assertIn('probe("ENTRY_ACTIVITY_RESUMED")', source)
+        self.assertIn('if (DIAG_EVENTS.getAndIncrement() >= 40) return;', source)
+        self.assertNotIn("Log.d(", source)
 
 if __name__ == "__main__":
     unittest.main()

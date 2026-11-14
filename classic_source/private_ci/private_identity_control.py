@@ -35,6 +35,37 @@ UNSIGNED = "classic-loft-dj-IDENTITY-UNSIGNED.apk"
 MAX_REPORT = 50000
 
 
+
+ENTRY_LOG_RE = re.compile(
+    r"(?:^|\s)(?:I/)?ClassicDjProbe(?:\s*\(\d+\))?\s*:\s*"
+    r"(ENTRY_PROVIDER_REGISTERED|ENTRY_ACTIVITY_RESUMED|"
+    r"ENTRY_ROOT_UNAVAILABLE|ENTRY_ALREADY_PRESENT|"
+    r"ENTRY_ADDED_TO_ACTIVITY)\s*$"
+)
+
+
+def classify_private_entry_markers(logcat: str) -> dict:
+    """Closed-vocabulary bridge-only telemetry, never publish raw logcat."""
+    require(type(logcat) is str and len(logcat) <= 2_000_000,
+            "IDENTITY_ENTRY_LOG_INVALID")
+    observed = set()
+    for row in logcat.splitlines()[:10000]:
+        match = ENTRY_LOG_RE.search(row)
+        if match is not None:
+            observed.add(match.group(1))
+    return {
+        "status": ("PRIVATE_ENTRY_MARKERS_OBSERVED_NOT_UI_ACCEPTED" if observed
+                   else "PRIVATE_ENTRY_MARKERS_ABSENT_NOT_ACCEPTED"),
+        "provider_registered": "ENTRY_PROVIDER_REGISTERED" in observed,
+        "activity_resumed": "ENTRY_ACTIVITY_RESUMED" in observed,
+        "root_unavailable": "ENTRY_ROOT_UNAVAILABLE" in observed,
+        "entry_added_to_activity": "ENTRY_ADDED_TO_ACTIVITY" in observed,
+        "entry_already_present": "ENTRY_ALREADY_PRESENT" in observed,
+        "ui_visibility_proven": False,
+        "raw_logcat_published": False,
+    }
+
+
 def scope(original: Path, candidate: Path, *, serial: str, approved: bool,
           env=None):
     e = os.environ if env is None else env
@@ -212,6 +243,20 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
         # DJ Activity. Never use am start against the embedded component.
         offline_guard()
         ui_xml = adb(["shell", "uiautomator", "dump", "/dev/tty"])
+        # The provider exists only in this private identity-control build.
+        # Its bounded, literal markers distinguish lifecycle/attach failure
+        # from an Android accessibility hierarchy observation failure.
+        # Optional telemetry never substitutes for a real UI tap or PASS.
+        try:
+            entry_logs = adb(["logcat", "-d", "-s", "ClassicDjProbe:I", "*:S"])
+            report["native_entry_provider_observation"] = (
+                classify_private_entry_markers(entry_logs))
+        except (BaselineBlocked, OSError, ValueError, TypeError):
+            report["native_entry_provider_observation"] = {
+                "status": "PRIVATE_ENTRY_MARKERS_UNAVAILABLE_NOT_ACCEPTED",
+                "ui_visibility_proven": False,
+                "raw_logcat_published": False,
+            }
         try:
             entry_visible = classify_visible_ui(ui_xml, stage="classic_entry")[
                 "expected_native_ui_observed"]
