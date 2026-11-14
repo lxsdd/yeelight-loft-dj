@@ -329,7 +329,7 @@ class IdentityAblationTests(unittest.TestCase):
         self.assertIn('if android_only:', source)
         self.assertIn('warning_point = legacy_target_warning_ok_point(', source)
         self.assertIn('if warning_point is not None:', source)
-        self.assertIn('offline_guard()\\n                    adb(["shell", "input", "tap"', source)
+        self.assertIn('offline_guard()\n                    adb(["shell", "input", "tap"', source)
         self.assertIn('pause(1)', source)
         self.assertIn('permission_granted": False', source)
         self.assertNotIn('settings put global hide_error_dialogs', source)
