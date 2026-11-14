@@ -57,6 +57,40 @@ oder veränderter privater Receipt verhindert die Ausgabe, statt Ersatzwerte
 zu erfinden. Ein solches Ergebnis ist weiterhin ausschließlich ein
 statischer Kandidatenhinweis und niemals ein Bedien-Funktions-PASS.
 
+### Geschützter Rücklauf vom 14.11.2026, #43604199565
+
+Die Quellenqualifikation auf `105f08a550...` wurde im privaten
+Besitzer-Workflow gegen den richtigen Kandidaten und die gepinnte
+Original-APK verifiziert. **Der eigentliche modifizierte APK-Build
+brach noch vor Test-Signierung und Emulatorstart ab.** Das bisherige
+Shell-Skript gab nur den festen Fehler
+`PRIVATE_CLASSIC_PROBE_BUILD_FAILED_LOG_RETAINED_ONLY_ON_RUNNER` aus.
+Die Original-UI-Analyse hat deshalb **keine echten neuen OEM-Befunde
+geliefert**. Die genaue private Ausnahme war nicht im öffentlichen
+Runnerprotokoll erhalten, weshalb eine behauptete konkrete Ursache
+unzulässig wäre.
+
+Die Reparatur trennt deshalb eine optionale, ausschließlich lesende
+Original-UI-Inventur von den **weiterhin obligatorischen** Original-APK-
+SHA-/DEX-/Manifest-/Signaturparitätsprüfungen. Scheitert die
+Inventur, wird sie ausdrücklich als
+`ORIGINAL_UI_REUSE_AUDIT_UNAVAILABLE_NOT_ACCEPTED` markiert; weder
+UI-Klassen noch künstliche Messwerte werden erfunden. Das bewahrt
+die eigentliche geschützte Classic-Start- und OEM-UI-Abnahme vor einem
+Fehler der optionalen Analyse und **schwächt keinen Quell-, Bytecode-,
+Ownership-, Offline-, SDK- oder Signaturcheck**.
+
+Für den nächsten Besitzerlauf hinterlegt
+`private_ci/private_build_diagnostics.py` bei einer Build-Ausnahme
+lediglich eine feste Build-Phase und eine allowlistbasierte
+Fehlerkategorie in der GitHub-Jobzusammenfassung, selbst wenn der
+gesamte private Build-Log beim Abbruch wieder entfernt wird. Es werden
+keine Original-Smali, Klassen, Ressourcennamen, Gerätenamen,
+UI-/Kontoinhalte, Stacktraces, Pfade oder nicht freigegebene
+Originaldateien veröffentlicht. Der Prozess führt weiterhin niemals
+automatisch einen Workflow oder eine Installation auf einem realen
+Gerät aus.
+
 Nur **abgeschlossene, auf derselben APK ausgeführte** Smali-Handler-Nachweise
 dürfen später zu einem konkreten Patch-Hook führen. Ein bloßer Aufrufzähler
 oder Dateiname erlaubt keinen Produktions-Hook.

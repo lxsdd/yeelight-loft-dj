@@ -20,7 +20,8 @@ from classic_first import GateFailure, OLD_PACKAGE, NEW_PACKAGE, digest_file, in
 from dex_authority_remap import (remap_dex, DexRemapError, assert_self_consistent_dex,
                                  _entries, _replacement)
 from smali_authority_reassembly import stage_reassembled_oem
-from private_ci.oem_ui_reuse_audit import analyze as original_ui_reuse_audit
+from private_ci.oem_ui_reuse_audit import analyze as original_ui_reuse_audit, UiAuditBlocked
+from private_ci import private_build_diagnostics as build_diagnostics
 from bridge.build_bridge import build as build_sidecar, ToolError, find_sdk_tools, no_oem_class_collisions, dex_descriptors
 from apk_readonly_audit import parse_binary_xml, AxmlError
 from secondary_dex_transport import normalize_private_multidex, DexTransportBlocked
@@ -239,7 +240,9 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
                 or os.environ.get("GH_TOKEN")
                 or os.environ.get("CLASSIC_VAULT_TOKEN")):
             raise GateFailure("IDENTITY_ABLATION_OWNER_OFFLINE_SCOPE_REQUIRED")
+    build_diagnostics.phase('ORIGINAL_PIN')
     inspect_original(original)
+    build_diagnostics.phase('TOOLCHAIN_PIN')
     android_jar, d8, aapt = find_sdk_tools(sdk)
     # Explicitly reuse Loft DJ's Android SDK, Java and Gradle toolchain.
     # Apktool is the ONLY additional decoder required, pinned to known upstream bytes.
@@ -263,9 +266,13 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
         bridge = temp/'bridge-build'
         staged = temp/'staged-patch'
         unsigned = temp/'unsigned.apk'
+        build_diagnostics.phase('RESOURCE_DECODE')
         run([*apktool, 'd', '-s', '-f', '-o', decoded, original])  # -s keeps original dex bytes.
+        build_diagnostics.phase('ANDROID_BRIDGE')
         dex = build_sidecar(sdk, bridge, original_apk=original)
+        build_diagnostics.phase('BRIDGE_COLLISION')
         collision_report = no_oem_class_collisions(original, dex)
+        build_diagnostics.phase('STAGE_ORIGINAL')
         prepare(original, decoded, dex, staged,
                 identity_control=identity_control)
         # JSON preparation note does not belong in APK; private report lives next to output.
@@ -284,16 +291,40 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
                         "runtime_ui_navigation_verified": False}
         else:
             codeonly = temp / 'source-code-only'
+            build_diagnostics.phase('ORIGINAL_SMALI_DECODE')
             run([*apktool, 'd', '-r', '-f', '-o', codeonly, original],
                 timeout=600)
             # The original resources (-s) and original Smali (-r) are already
             # decoded for the mandatory OEM DEX reassembly. Reuse those
             # immutable PRIVATE inputs to record safe UI-role evidence.
             # Never analyze patched decoded trees or publish original symbols.
-            ui_reuse = original_ui_reuse_audit(decoded, codeonly)
+            build_diagnostics.phase('OPTIONAL_UI_AUDIT')
+            try:
+                ui_reuse = original_ui_reuse_audit(decoded, codeonly)
+            except (UiAuditBlocked, OSError, UnicodeError, ValueError, TypeError) as ui_error:
+                # Optional read-only instrumentation is not a core APK gate.
+                # No missing UI guess may prevent the protected APK parity
+                # checks or emulator from running; never fabricate evidence.
+                safe_reason = build_diagnostics.safe_ui_reason(
+                    str(ui_error) if isinstance(ui_error, UiAuditBlocked) else None
+                )
+                build_diagnostics.record_optional_ui_unavailable(safe_reason)
+                ui_reuse = {
+                    "status": "ORIGINAL_UI_REUSE_AUDIT_UNAVAILABLE_NOT_ACCEPTED",
+                    "safe_reason": safe_reason,
+                    "original_apk_or_smali_published": False,
+                    "private_symbols_emitted": False,
+                    "runtime_ui_navigation_verified": False,
+                    "original_behavior_compatibility_verified": False,
+                    "production_hook_approved": False,
+                }
+            build_diagnostics.phase('OEM_SMALI_REASSEMBLY')
             smali_report = stage_reassembled_oem(original, codeonly, staged)
+        build_diagnostics.phase('APKTOOL_REBUILD')
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
+        build_diagnostics.phase('MULTIDEX_LAYOUT')
         zip_layout = normalize_private_multidex(original, unsigned)
+        build_diagnostics.phase('UNSIGNED_PARITY')
         report = verify_unsigned(
             unsigned, original, dex, str(aapt),
             dex_mode="raw" if identity_control else "smali",
@@ -301,6 +332,7 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
         report["oem_smali_reassembly"] = smali_report
         report["original_ui_reuse_inventory"] = ui_reuse
         report['secondary_dex_transport'] = zip_layout
+        build_diagnostics.phase("FINAL_COMPONENT_GATES")
         report["firebase_early_init_boundary"] = verify_final_firebase_boundary(
             unsigned, identity_control=identity_control)
         report["component_resolution_gate"] = verify_final_component_classes(
@@ -309,9 +341,11 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
         report['runtime_resolution'] = json.loads((bridge / 'runtime_resolution.json').read_text(encoding='utf-8'))
         report['sdk_platform'] = str(android_jar.relative_to(sdk))
         report['sdk_d8'] = str(d8.relative_to(sdk))
+        build_diagnostics.phase('PRIVATE_OUTPUT_COPY')
         shutil.copyfile(unsigned, output)
         report_path = output.with_suffix(output.suffix + '.preflight.json')
         report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False)+'\n', encoding='utf-8')
+        build_diagnostics.phase('RECEIPT_WRITTEN')
     return report
 
 
@@ -329,8 +363,14 @@ def main() -> int:
         print(json.dumps(result, indent=2))
         return 0
     except (GateFailure, DexRemapError, ToolError, DexTransportBlocked, subprocess.SubprocessError, OSError, zipfile.BadZipFile) as e:
+        build_diagnostics.record_failure(e)
         print(json.dumps({'status':'BLOCKED', 'reason':str(e), 'signed':False, 'installed':False}), file=sys.stderr)
         return 2
+    except Exception as error:
+        # Full exception remains in ephemeral local log. Owner job summary
+        # receives only fixed phase/category tokens, never original paths.
+        build_diagnostics.record_failure(error)
+        raise
 
 if __name__ == '__main__':
     sys.exit(main())

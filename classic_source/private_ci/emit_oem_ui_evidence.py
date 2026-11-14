@@ -32,6 +32,11 @@ def bounded(value):
            "UI_EVIDENCE_COUNT_INVALID")
     return value
 
+def safe_reason_code(value):
+    # Accept only original UI audit's fixed source-defined reasons.
+    from private_ci.private_build_diagnostics import safe_ui_reason
+    return safe_ui_reason(value)
+
 def sanitized(receipt):
     """Allowlist copy, never stringify private dictionary or exception."""
     ensure(isinstance(receipt, dict) and
@@ -43,6 +48,28 @@ def sanitized(receipt):
            receipt.get("package") == "io.lxsdd.yeelightdj",
            "UI_EVIDENCE_UNQUALIFIED_PREBUILD")
     raw = receipt.get("original_ui_reuse_inventory")
+    # A genuinely failed optional original UI analysis must remain
+    # unqualified. Do not block OEM APK/runtime forensic checks for a
+    # static UI inventory failure, and never synthesize role counters.
+    if isinstance(raw, dict) and raw.get("status") == (
+            "ORIGINAL_UI_REUSE_AUDIT_UNAVAILABLE_NOT_ACCEPTED"):
+        from private_ci.private_build_diagnostics import safe_ui_reason
+        ensure(
+            raw.get("original_apk_or_smali_published") is False and
+            raw.get("private_symbols_emitted") is False and
+            raw.get("runtime_ui_navigation_verified") is False and
+            raw.get("original_behavior_compatibility_verified") is False and
+            raw.get("production_hook_approved") is False and
+            raw.get("safe_reason") == safe_ui_reason(raw.get("safe_reason")) and
+            "roles" not in raw,
+            "UI_EVIDENCE_UNAVAILABLE_STATE_INVALID")
+        return {
+            "status": "OEM_UI_REUSE_ANALYSIS_UNAVAILABLE_NOT_ACCEPTED",
+            "reason": safe_reason_code(raw["safe_reason"]),
+            "actual_original_ui_runtime_proven": False,
+            "oem_names_text_secrets_emitted": False,
+            "roles": {},
+        }
     ensure(isinstance(raw, dict) and raw.get("status") ==
            "ORIGINAL_UI_REUSE_CANDIDATES_STATIC_ONLY_NOT_RUNTIME_VERIFIED" and
            raw.get("source") == "PINNED_ORIGINAL_DECODED_BY_EXISTING_PRIVATE_BUILD" and
