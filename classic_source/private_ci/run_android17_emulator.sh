@@ -16,6 +16,11 @@ APK="$(realpath -e -- "$1")"
 [[ -s "$APK" ]] || fail
 # Print only allowlisted booleans; no private OEM classes, paths, or APK bytes.
 python3 classic_source/secondary_dex_transport.py --owner-only-transport-status || fail
+# Publish ONLY independently allowlisted original UI structure/reference counts.
+# The raw original DEX, activity symbols, resources and receipt stay private;
+# this runs before emulator actions and cannot change any UI or lamp.
+python3 classic_source/private_ci/emit_oem_ui_evidence.py \
+  "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk.preflight.json" || fail
 command -v sdkmanager >/dev/null || fail
 command -v avdmanager >/dev/null || fail
 command -v adb >/dev/null || fail

@@ -45,6 +45,18 @@ DEX-Reassemblierung. `private_ci/oem_ui_reuse_audit.py` untersucht diese
 - reine Referenzzählung von Lifecycle, Click, Inflation, Navigation und Dispatch;
 - Negativstatus für nur vorhandene Layouts, mehrdeutige Klassen und fehlenden Code.
 
+Der bisherige private Build-Receipt wird am Ende des Runnerlaufs gelöscht.
+Damit dennoch ein für den Entwickler überprüfbarer Befund erhalten bleibt,
+publiziert der bereits geschützte Offline-Emulator-Shellweg **nur** das von
+`private_ci/emit_oem_ui_evidence.py` neu konstruierte geschlossene Schema:
+sieben feste UI-Rollen, deren Status, begrenzte Layout-/Klassen- und
+Methodenreferenz-Zähler. Die Datei selbst bleibt privat, und es werden
+**keine** Originalnamen, Smali-Methodentexte, IDs, Layouttexte, Pfade,
+Account-/Gerätedaten oder vollständigen Receipts ausgegeben. Ein fehlender
+oder veränderter privater Receipt verhindert die Ausgabe, statt Ersatzwerte
+zu erfinden. Ein solches Ergebnis ist weiterhin ausschließlich ein
+statischer Kandidatenhinweis und niemals ein Bedien-Funktions-PASS.
+
 Nur **abgeschlossene, auf derselben APK ausgeführte** Smali-Handler-Nachweise
 dürfen später zu einem konkreten Patch-Hook führen. Ein bloßer Aufrufzähler
 oder Dateiname erlaubt keinen Produktions-Hook.
