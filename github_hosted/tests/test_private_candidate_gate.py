@@ -378,5 +378,122 @@ class StrictPreflightTests(unittest.TestCase):
         self.assertFalse(any("vault" in path.lower() for path in seen))
 
 
+
+class ImmutableGit422ProofTests(unittest.TestCase):
+    """Synthetic end-to-end 21-commit recovery without HTTP or OEM input."""
+
+    def setUp(self):
+        self.main, self.pull, _, self.runs, self.jobs, self.artifacts = fixture()
+        self.common = "c" * 40
+        self.pull["base"]["sha"] = self.common
+        for run in self.runs["workflow_runs"]:
+            run["pull_requests"][0]["base"]["sha"] = self.common
+        self.rows = {}
+        parent = self.common
+        for i in range(1, 22):
+            value = HEAD if i == 21 else f"{i:040x}"
+            self.rows[f"/repos/{gate.REPO}/commits/{value}"] = {
+                "sha": value, "parents": [{"sha": parent}],
+                "author": {"login": "lxsdd"}, "committer": {"login": "lxsdd"},
+                "commit": {"tree": {"sha": "e" * 40 if i == 21 else "f" * 40}}}
+            parent = value
+        self.rows[f"/repos/{gate.REPO}/commits/{BASE}"] = {
+            "sha": BASE, "parents": [{"sha": self.common}],
+            "commit": {"tree": {"sha": "d" * 40}}}
+        self.rows[f"/repos/{gate.REPO}/commits/{self.common}"] = {
+            "sha": self.common, "parents": [],
+            "commit": {"tree": {"sha": "d" * 40}}}
+        self.tpath = f"/repos/{gate.REPO}/git/trees/{'e'*40}?recursive=1"
+        self.rows[f"/repos/{gate.REPO}/git/trees/{'d'*40}?recursive=1"] = {
+            "sha": "d" * 40, "truncated": False,
+            "tree": [{"path": "classic_source/foo.py", "type": "blob",
+                      "mode": "100644", "sha": "1" * 40}]}
+        self.rows[self.tpath] = {
+            "sha": "e" * 40, "truncated": False,
+            "tree": [{"path": "classic_source/foo.py", "type": "blob",
+                      "mode": "100644", "sha": "2" * 40},
+                     {"path": "classic_source/bar.py", "type": "blob",
+                      "mode": "100644", "sha": "3" * 40}]}
+        self.rows[f"/repos/{gate.REPO}/branches/main"] = self.main
+        self.rows[f"/repos/{gate.REPO}/pulls/104"] = self.pull
+        self.rows[f"/repos/{gate.REPO}/actions/runs?head_sha={HEAD}&event=pull_request&per_page=100"] = self.runs
+        for rid in RUNS:
+            self.rows[f"/repos/{gate.REPO}/actions/runs/{rid}/jobs?per_page=100"] = self.jobs[rid]
+            self.rows[f"/repos/{gate.REPO}/actions/runs/{rid}/artifacts?per_page=100"] = self.artifacts[rid]
+
+    def run_gate(self):
+        paths = []
+        def api(path, token):
+            paths.append(path)
+            if path == f"/repos/{gate.REPO}/compare/{BASE}...{HEAD}":
+                raise gate.CompareDiffTimeout("GITHUB_COMPARE_DIFF_TIMEOUT")
+            return copy.deepcopy(self.rows[path])
+        env = {"CLASSIC_CANDIDATE_PR": "104",
+               "CLASSIC_CANDIDATE_SHA": HEAD,
+               "GH_PUBLIC_READ_TOKEN": "synthetic_only_not_secret"}
+        with mock.patch.object(gate, "verify_owner_environment", return_value=BASE):
+            return gate.execute_gate(env, api=api), paths
+
+    def test_complete_21_commit_exact_ancestor_and_tree_diff_qualifies(self):
+        result, paths = self.run_gate()
+        self.assertEqual(result["source_sha"], HEAD)
+        self.assertIn(self.tpath, paths)
+        self.assertFalse(any("vault" in path.lower() for path in paths))
+
+    def test_foreign_truncated_deleted_chmod_and_bad_metadata_denied(self):
+        commit = f"/repos/{gate.REPO}/commits/{HEAD}"
+        mutations = [
+            (commit, lambda v: v["author"].update(login="attacker")),
+            (commit, lambda v: v.update(parents=[])),
+            (commit, lambda v: v["parents"].append({"sha": BASE})),
+            (commit, lambda v: v.update(sha="0" * 40)),
+            (self.tpath, lambda v: v.update(truncated=True)),
+            (self.tpath, lambda v: v.update(sha="0" * 40)),
+            (self.tpath, lambda v: v["tree"].append(v["tree"][0].copy())),
+            (self.tpath, lambda v: v["tree"][0].update(path="github_hosted/policy.py")),
+            (self.tpath, lambda v: v["tree"][0].update(mode="100755")),
+            (self.tpath, lambda v: v["tree"].clear()),
+        ]
+        for path, mutate in mutations:
+            with self.subTest(path=path, mutate=str(mutate)):
+                original = copy.deepcopy(self.rows[path])
+                mutate(self.rows[path])
+                try:
+                    with self.assertRaises(gate.CandidateBlocked):
+                        self.run_gate()
+                finally:
+                    self.rows[path] = original
+        self.pull["changed_files"] += 1
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_COMPLETE_DIFF_UNAVAILABLE"):
+            self.run_gate()
+
+    def test_only_recognized_http_422_enters_recovery(self):
+        import io
+        import json
+        from urllib.error import HTTPError
+        path = f"/repos/{gate.REPO}/compare/{BASE}...{HEAD}"
+        body = json.dumps({"message":
+            "Server Error: Sorry, this diff is taking too long to generate.",
+            "errors": [{"resource": "Comparison", "field": "diff",
+                        "code": "not_available"}]}).encode()
+        def send(payload, status):
+            raise HTTPError("https://api.github.com" + path,
+                            status, "synthetic", {}, io.BytesIO(payload))
+        with mock.patch.object(gate.urllib.request, "urlopen",
+                               side_effect=lambda *a, **kw: send(body, 422)):
+            with self.assertRaises(gate.CompareDiffTimeout):
+                gate._api(path, "synthetic_token_not_secret")
+            with self.assertRaisesRegex(gate.CandidateBlocked,
+                                        "PUBLIC_GITHUB_EVIDENCE_UNAVAILABLE"):
+                gate._api(f"/repos/{gate.REPO}/pulls/104",
+                          "synthetic_token_not_secret")
+        for payload, status in ((b"{}", 422), (body, 403), (body, 500)):
+            with mock.patch.object(gate.urllib.request, "urlopen",
+                                   side_effect=lambda *a, **kw: send(payload, status)):
+                with self.assertRaisesRegex(gate.CandidateBlocked,
+                                            "PUBLIC_GITHUB_EVIDENCE_UNAVAILABLE"):
+                    gate._api(path, "synthetic_token_not_secret")
+
+
 if __name__ == "__main__":
     unittest.main()

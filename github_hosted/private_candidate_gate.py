@@ -34,6 +34,10 @@ class CandidateBlocked(ValueError):
     """Only fixed public status codes, never GitHub payloads or secrets."""
 
 
+class CompareDiffTimeout(CandidateBlocked):
+    """Exact SHA-pinned GitHub Comparison/diff/not_available timeout."""
+
+
 def require(ok, code):
     if not ok:
         raise CandidateBlocked(code)
@@ -73,9 +77,159 @@ def _api(path, token):
             data = response.read(MAX_BYTES + 1)
             require(len(data) <= MAX_BYTES, "PUBLIC_API_RESPONSE_TOO_LARGE")
             return json.loads(data)
+    except urllib.error.HTTPError as error:
+        # Only this exact server-side GitHub comparison failure can trigger
+        # the independent immutable-object proof. Never accept arbitrary 422s.
+        try:
+            detail = json.loads(error.read(16385))
+            recoverable = (
+                error.code == 422 and
+                re.fullmatch(r"/repos/" + re.escape(REPO) +
+                             r"/compare/[a-f0-9]{40}\.\.\.[a-f0-9]{40}",
+                             path) is not None and
+                isinstance(detail, dict) and
+                detail.get("message") ==
+                    "Server Error: Sorry, this diff is taking too long to generate." and
+                isinstance(detail.get("errors"), list) and
+                any(isinstance(row, dict) and
+                    row.get("resource") == "Comparison" and
+                    row.get("field") == "diff" and
+                    row.get("code") == "not_available"
+                    for row in detail["errors"])
+            )
+        except (ValueError, UnicodeError, OSError):
+            recoverable = False
+        if recoverable:
+            raise CompareDiffTimeout("GITHUB_COMPARE_DIFF_TIMEOUT") from None
+        raise CandidateBlocked("PUBLIC_GITHUB_EVIDENCE_UNAVAILABLE") from None
     except (urllib.error.URLError, OSError, ValueError,
             UnicodeError, TimeoutError):
         raise CandidateBlocked("PUBLIC_GITHUB_EVIDENCE_UNAVAILABLE") from None
+
+
+
+MAX_PROOF_COMMITS = 512
+MAX_PROOF_TREE_ENTRIES = 20000
+
+
+def _git_comparison_from_objects(main_sha, candidate_sha, api, token):
+    """Reconstruct the existing compare contract, without relaxing validation.
+
+    Request each commit and full tree by immutable SHA, enforce linear ancestry
+    and exact owner provenance, and independently compute every changed path.
+    Merge ambiguity, incomplete trees, chmod, symlinks and unknown paths deny.
+    """
+    cache = {}
+
+    def get_commit(value):
+        require(isinstance(value, str) and SHA.fullmatch(value),
+                "PR_GIT_OBJECT_UNVERIFIED")
+        if value not in cache:
+            obj = api("/repos/" + REPO + "/commits/" + value, token)
+            require(isinstance(obj, dict) and obj.get("sha") == value and
+                    isinstance(obj.get("parents"), list) and
+                    isinstance(obj.get("commit"), dict) and
+                    isinstance(obj["commit"].get("tree"), dict) and
+                    isinstance(obj["commit"]["tree"].get("sha"), str) and
+                    SHA.fullmatch(obj["commit"]["tree"]["sha"]),
+                    "PR_GIT_OBJECT_UNVERIFIED")
+            require(len(obj["parents"]) <= 1 and all(
+                isinstance(p, dict) and isinstance(p.get("sha"), str) and
+                SHA.fullmatch(p["sha"]) for p in obj["parents"]),
+                "PR_GIT_ANCESTRY_AMBIGUOUS")
+            cache[value] = obj
+        return cache[value]
+
+    main_path = [main_sha]
+    for _ in range(MAX_MAIN_ADVANCE):
+        parents = get_commit(main_path[-1])["parents"]
+        if not parents:
+            break
+        value = parents[0]["sha"]
+        require(value not in main_path, "PR_GIT_ANCESTRY_AMBIGUOUS")
+        main_path.append(value)
+    main_positions = {value: i for i, value in enumerate(main_path)}
+    commits = []
+    seen = set()
+    value = candidate_sha
+    while value not in main_positions:
+        require(value not in seen and len(commits) < MAX_PROOF_COMMITS,
+                "PR_GIT_ANCESTRY_AMBIGUOUS")
+        seen.add(value)
+        obj = get_commit(value)
+        require(len(obj["parents"]) == 1, "PR_GIT_ANCESTRY_UNQUALIFIED")
+        require(isinstance(obj.get("author"), dict) and
+                obj["author"].get("login") == OWNER and
+                isinstance(obj.get("committer"), dict) and
+                obj["committer"].get("login") == OWNER,
+                "PR_COMMIT_PROVENANCE_DENIED")
+        commits.append({"sha": value, "author": {"login": OWNER},
+                        "committer": {"login": OWNER}})
+        value = obj["parents"][0]["sha"]
+    require(bool(commits), "PR_GIT_ANCESTRY_UNQUALIFIED")
+    common = value
+    behind = main_positions[common]
+    ahead = len(commits)
+
+    def leaves(revision):
+        tree_sha = get_commit(revision)["commit"]["tree"]["sha"]
+        obj = api("/repos/" + REPO + "/git/trees/" + tree_sha +
+                  "?recursive=1", token)
+        require(isinstance(obj, dict) and obj.get("sha") == tree_sha and
+                obj.get("truncated") is False and
+                isinstance(obj.get("tree"), list) and
+                len(obj["tree"]) <= MAX_PROOF_TREE_ENTRIES,
+                "PR_GIT_TREE_INCOMPLETE")
+        result = {}
+        seen_paths = set()
+        for row in obj["tree"]:
+            require(isinstance(row, dict) and
+                    isinstance(row.get("path"), str) and row["path"] and
+                    not row["path"].startswith("/") and
+                    not row["path"].endswith("/") and
+                    "\\" not in row["path"] and
+                    all(p not in ("", ".", "..") for p in
+                        row["path"].split("/")) and
+                    row["path"] not in seen_paths and
+                    isinstance(row.get("sha"), str) and
+                    SHA.fullmatch(row["sha"]),
+                    "PR_GIT_TREE_INCOMPLETE")
+            path = row["path"]
+            seen_paths.add(path)
+            if row.get("type") == "tree":
+                require(row.get("mode") in ("040000", "40000"),
+                        "PR_GIT_TREE_INCOMPLETE")
+                continue
+            require(row.get("type") == "blob" and
+                    row.get("mode") in ("100644", "100755", "120000"),
+                    "PR_GIT_TREE_INCOMPLETE")
+            result[path] = (row["sha"], row["mode"])
+        return result
+
+    old = leaves(common)
+    new = leaves(candidate_sha)
+    files = []
+    for path in sorted(old.keys() | new.keys()):
+        before, after = old.get(path), new.get(path)
+        if before == after:
+            continue
+        require((before is None or before[1] == "100644") and
+                (after is None or after[1] == "100644") and
+                (before is None or after is None or before[1] == after[1]),
+                "PR_UNTRUSTED_FILE_SCOPE_DENIED")
+        files.append({"filename": path, "status":
+                      "added" if before is None else
+                      "removed" if after is None else "modified"})
+    require(1 <= len(files) <= MAX_FILES, "PR_COMPLETE_DIFF_UNAVAILABLE")
+    pinned = {"status": "ahead", "ahead_by": ahead, "behind_by": 0,
+              "base_commit": {"sha": common},
+              "merge_base_commit": {"sha": common},
+              "commits": list(reversed(commits)), "files": files}
+    comparison = (pinned if behind == 0 else {
+        "status": "diverged", "ahead_by": ahead, "behind_by": behind,
+        "base_commit": {"sha": main_sha},
+        "merge_base_commit": {"sha": common}})
+    return comparison, pinned
 
 
 def _ci_runs_validate(runs, jobs_by_run, artifacts_by_run, *, pr, sha, branch, allowed_bases):
@@ -241,12 +395,25 @@ def execute_gate(env, api=_api):
                                   pull=None, comparison=None, runs=None,
                                   jobs_by_run=None, artifacts_by_run=None)
     pull = api("/repos/" + REPO + "/pulls/" + str(number), token)
-    comparison = api("/repos/" + REPO + "/compare/" + trusted + "..." + sha, token)
-    common = comparison.get("merge_base_commit", {}).get("sha")
-    require(isinstance(common, str) and SHA.fullmatch(common),
-            "PR_ANCESTRY_UNQUALIFIED")
-    pinned_delta = (comparison if common == trusted else
-                    api("/repos/" + REPO + "/compare/" + common + "..." + sha, token))
+    try:
+        comparison = api("/repos/" + REPO + "/compare/" + trusted + "..." + sha, token)
+    except CompareDiffTimeout:
+        comparison, pinned_delta = _git_comparison_from_objects(
+            trusted, sha, api, token)
+    else:
+        common = comparison.get("merge_base_commit", {}).get("sha")
+        require(isinstance(common, str) and SHA.fullmatch(common),
+                "PR_ANCESTRY_UNQUALIFIED")
+        try:
+            pinned_delta = (comparison if common == trusted else
+                            api("/repos/" + REPO + "/compare/" + common + "..." + sha, token))
+        except CompareDiffTimeout:
+            reconstructed, pinned_delta = _git_comparison_from_objects(
+                trusted, sha, api, token)
+            require(reconstructed["merge_base_commit"]["sha"] == common and
+                    reconstructed["ahead_by"] == comparison["ahead_by"] and
+                    reconstructed["behind_by"] == comparison["behind_by"],
+                    "PR_GIT_COMPARISON_MISMATCH")
     runs = api("/repos/" + REPO +
                "/actions/runs?head_sha=" + sha +
                "&event=pull_request&per_page=100", token)
