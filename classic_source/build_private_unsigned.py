@@ -20,6 +20,7 @@ from classic_first import GateFailure, OLD_PACKAGE, NEW_PACKAGE, digest_file, in
 from dex_authority_remap import (remap_dex, DexRemapError, assert_self_consistent_dex,
                                  _entries, _replacement)
 from smali_authority_reassembly import stage_reassembled_oem
+from private_ci.oem_ui_reuse_audit import analyze as original_ui_reuse_audit
 from bridge.build_bridge import build as build_sidecar, ToolError, find_sdk_tools, no_oem_class_collisions, dex_descriptors
 from apk_readonly_audit import parse_binary_xml, AxmlError
 from secondary_dex_transport import normalize_private_multidex, DexTransportBlocked
@@ -278,10 +279,18 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             # The stock package/authorities need no reassembly.
             smali_report = {"status": "ORIGINAL_OEM_DEX_BYTES_PRESERVED",
                             "private_payload_published": False}
+            ui_reuse = {"status": "IDENTITY_CONTROL_NO_SOURCE_DECODE",
+                        "original_apk_or_smali_published": False,
+                        "runtime_ui_navigation_verified": False}
         else:
             codeonly = temp / 'source-code-only'
             run([*apktool, 'd', '-r', '-f', '-o', codeonly, original],
                 timeout=600)
+            # The original resources (-s) and original Smali (-r) are already
+            # decoded for the mandatory OEM DEX reassembly. Reuse those
+            # immutable PRIVATE inputs to record safe UI-role evidence.
+            # Never analyze patched decoded trees or publish original symbols.
+            ui_reuse = original_ui_reuse_audit(decoded, codeonly)
             smali_report = stage_reassembled_oem(original, codeonly, staged)
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         zip_layout = normalize_private_multidex(original, unsigned)
@@ -290,6 +299,7 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             dex_mode="raw" if identity_control else "smali",
             identity_control=identity_control)
         report["oem_smali_reassembly"] = smali_report
+        report["original_ui_reuse_inventory"] = ui_reuse
         report['secondary_dex_transport'] = zip_layout
         report["firebase_early_init_boundary"] = verify_final_firebase_boundary(
             unsigned, identity_control=identity_control)

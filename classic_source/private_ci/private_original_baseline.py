@@ -21,6 +21,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from classic_first import GateFailure, ORIGINAL_SHA256, inspect_original
+from private_ci.oem_ui_surface import summarize as ui_surface_summary, UiSurfaceBlocked
 from android17_start_smoke import (
     APK_PATH, GLOBAL_TOP, TOP_COMPONENT, ROOT_CAUSE, MISSING_QUOTED,
     MISSING_DIRECT, MAX_FATAL_BLOCK_LINES, _android_runtime_message,
@@ -412,10 +413,32 @@ def compare_private_emulator(original, candidate, *, serial, approved,
         resumed = bool(valid_am and original_foreground(snapshot) and
                        not original_crash["target_crash"] and
                        not original_crash["unattributed_fatal"])
-        return compare_results(clone_crash, clone_missing, original_crash,
-                               original_missing, resumed, null_relation,
-                               receiver_origin, writer_route, writer_relation,
-                               caller_route, caller_relation, caller_context)
+        surface = {"status": "ORIGINAL_UI_NOT_OBSERVED",
+                   "original_ui_hierarchy_visible": False,
+                   "original_music_screen_reached": False,
+                   "navigation_or_device_action_taken": False,
+                   "raw_hierarchy_published": False}
+        if resumed:
+            # Read only the already-running, unmodified original app's current
+            # UI hierarchy; never navigate, tap, authenticate or use devices.
+            # A missing dump cannot silently bless the original UI.
+            offline_guard()
+            ui_code, ui_xml = run_adb(
+                ["shell", "uiautomator", "dump", "/dev/tty"],
+                timeout=35, allow_failure=True)
+            if ui_code == 0:
+                try:
+                    surface = ui_surface_summary(ui_xml)
+                except UiSurfaceBlocked:
+                    surface["status"] = "ORIGINAL_UI_HIERARCHY_UNAVAILABLE"
+            else:
+                surface["status"] = "ORIGINAL_UI_HIERARCHY_UNAVAILABLE"
+        report = compare_results(clone_crash, clone_missing, original_crash,
+                                 original_missing, resumed, null_relation,
+                                 receiver_origin, writer_route, writer_relation,
+                                 caller_route, caller_relation, caller_context)
+        report["original_ui_surface"] = surface
+        return report
     finally:
         # Always remove the original and any emulator app data. Nothing may
         # survive outside this disposable emulator runner or its cleanup trap.
