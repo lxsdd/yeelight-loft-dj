@@ -261,6 +261,29 @@ def classify_android_overlay(ui_xml: str, focused_windows: str) -> str:
     return "ANDROID_WINDOW_UNCLASSIFIED_NO_ACTION"
 
 
+def read_focused_window_snapshot(run=adb):
+    """Use display focus on modern Android; fall back to legacy windows dump.
+
+    AOSP Android 16+ no longer guarantees mCurrentFocus in the 'windows'
+    section. Never print a window dump or grant permission. If a section
+    declares ambiguous/null focus, preserve it as unresolved (never guess).
+    """
+    try:
+        displays = run(["shell", "dumpsys", "window", "displays"])
+        if type(displays) is not str or len(displays) > 2_000_000:
+            return "", "DISPLAY_FOCUS_INVALID_NO_ACTION"
+        if re.search(r"(?m)^\s*mCurrentFocus=", displays):
+            return displays, "DISPLAY_FOCUS_DECLARED"
+        windows = run(["shell", "dumpsys", "window", "windows"])
+        if type(windows) is not str or len(windows) > 2_000_000:
+            return "", "WINDOW_FOCUS_INVALID_NO_ACTION"
+        if re.search(r"(?m)^\s*mCurrentFocus=", windows):
+            return windows, "LEGACY_WINDOW_FOCUS_DECLARED"
+        return "", "FOCUS_NOT_DECLARED_NO_ACTION"
+    except (BaselineBlocked, OSError, ValueError, TypeError):
+        return "", "FOCUS_PROBE_UNAVAILABLE_NO_ACTION"
+
+
 def scope(original: Path, candidate: Path, *, serial: str, approved: bool,
           env=None):
     e = os.environ if env is None else env
@@ -497,7 +520,8 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
                 # Never serialize the OEM/window text. Verification operates
                 # only in this process and returns either coordinates or None.
                 try:
-                    window_state = adb(["shell", "dumpsys", "window", "windows"])
+                    window_state, focus_source = read_focused_window_snapshot()
+                    report["legacy_android_warning"]["overlay_focus_source"] = focus_source
                     display = adb(["shell", "wm", "size"])
                     warning_point = legacy_target_warning_ok_point(
                         ui_xml, window_state, display)

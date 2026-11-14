@@ -367,6 +367,63 @@ class IdentityAblationTests(unittest.TestCase):
         self.assertIn('report["legacy_android_warning"]["overlay_classification"]', source)
 
 
+    def test_modern_android_focus_comes_from_displays_not_windows(self):
+        # Modern AOSP DisplayContent.dump emits mCurrentFocus here. The old
+        # script queried only 'windows', leading to a false unknown result.
+        screen = ('WINDOW MANAGER DISPLAY CONTENTS\n'
+                  '  mCurrentFocus=Window{6a u0 '
+                  'DeprecatedTargetSdkVersionDialog}\n'
+                  '  mFocusedApp=ActivityRecord{some private owner}\n')
+        calls = []
+        def read(args):
+            calls.append(tuple(args))
+            return screen
+        data, source = ident.read_focused_window_snapshot(read)
+        self.assertEqual(source, "DISPLAY_FOCUS_DECLARED")
+        self.assertEqual(data, screen)
+        self.assertEqual(calls, [("shell", "dumpsys", "window", "displays")])
+        # No raw data is published in source enum.
+        self.assertNotIn("some private", source)
+
+    def test_focus_falls_back_only_when_displays_omits_declaration(self):
+        calls = []
+        def read(args):
+            calls.append(tuple(args))
+            if args[-1] == "displays":
+                return "WINDOW MANAGER DISPLAY CONTENTS: no focus field"
+            return "  mCurrentFocus=Window{abcdef u0 SomeOldDialog}\n"
+        raw, source = ident.read_focused_window_snapshot(read)
+        self.assertEqual(source, "LEGACY_WINDOW_FOCUS_DECLARED")
+        self.assertIn("SomeOldDialog", raw)
+        self.assertEqual([args[-1] for args in calls], ["displays", "windows"])
+
+    def test_focus_null_duplicate_or_invalid_is_never_auto_actionable(self):
+        ui = ('<?xml version="1.0"?><hierarchy>'
+              '<node package="android" text="private"/>'
+              '</hierarchy>')
+        for focus in ("  mCurrentFocus=null\n",
+                      " mCurrentFocus=Window{6a u0 Unknown}\n"
+                      " mCurrentFocus=Window{6b u0 Different}\n"):
+            calls = []
+            def read(args):
+                calls.append(args[-1])
+                return focus
+            raw, source = ident.read_focused_window_snapshot(read)
+            self.assertEqual(source, "DISPLAY_FOCUS_DECLARED")
+            self.assertEqual(calls, ["displays"])
+            self.assertEqual(ident.classify_android_overlay(ui, raw),
+                             "ANDROID_FOCUS_UNRESOLVED_NO_ACTION")
+        self.assertEqual(ident.read_focused_window_snapshot(
+            lambda args: 5), ("", "DISPLAY_FOCUS_INVALID_NO_ACTION"))
+        self.assertEqual(ident.read_focused_window_snapshot(
+            lambda args: (_ for _ in ()).throw(OSError("private"))),
+            ("", "FOCUS_PROBE_UNAVAILABLE_NO_ACTION"))
+        source = (ROOT / "private_ci/private_identity_control.py").read_text("utf-8")
+        self.assertIn('window_state, focus_source = read_focused_window_snapshot()', source)
+        self.assertIn('report["legacy_android_warning"]["overlay_focus_source"]', source)
+        self.assertNotIn('pm grant ', source)
+
+
     def test_legacy_warning_scope_is_owner_only_and_single_tap_not_global(self):
         source = (ROOT / "private_ci/private_identity_control.py").read_text(
             "utf-8")
