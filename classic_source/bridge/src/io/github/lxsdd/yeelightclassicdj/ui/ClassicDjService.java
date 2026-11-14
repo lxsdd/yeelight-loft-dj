@@ -22,6 +22,8 @@ public final class ClassicDjService extends Service {
     private DjRuntime runtime;
     private final Object sessionGuard = new Object();
     private final ClassicSessionFence sessionFence = new ClassicSessionFence();
+    private final android.os.Handler cleanupHandler =
+        new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean shuttingDown;
     private long currentToken;
     private Thread startupWorker;
@@ -157,6 +159,16 @@ public final class ClassicDjService extends Service {
             .build();
     }
 
+    /**
+     * Fence audio callbacks synchronously, then release owned Music sessions
+     * off the UI thread for a user-initiated Stop. A Music STOP ACK and the
+     * post-stop confirmation still run per owned lamp: no blind fire-and-forget
+     * and no querying/saving the previous color or power state here.
+     *
+     * Android may destroy this Service independently of a user action. That
+     * destruction path retains synchronous cleanup to avoid abandoning an
+     * owned reverse socket as the process stops.
+     */
     private void stopSession(long expectedToken, String finalState, boolean requestStopSelf) {
         final DjRuntime instance;
         synchronized (sessionGuard) {
@@ -169,12 +181,42 @@ public final class ClassicDjService extends Service {
             startupWorker = null;
             lastBpm = 0.0;
             lastLevel = 0f;
-            currentState = finalState;
+            currentState = instance == null ? finalState : "DJ wird beendet · Verbindungen schließen";
         }
-        if (instance != null) {
-            try { instance.stop(); }
-            catch (Exception error) { Log.e("ClassicDJ", "Manual recovery may be needed", error); }
+        if (instance == null) {
+            finishSessionStop(finalState, true, requestStopSelf);
+            return;
         }
+        if (!requestStopSelf) {
+            // Android lifecycle destruction: complete the owned cleanup before
+            // leaving onDestroy; no background work is assumed to outlive us.
+            finishSessionStop(finalState, closeOwnedRuntime(instance), false);
+            return;
+        }
+        Thread cleanup = new Thread(() -> {
+            final boolean clean = closeOwnedRuntime(instance);
+            cleanupHandler.post(() -> finishSessionStop(finalState, clean, true));
+        }, "Classic-DJ-Owned-Music-Cleanup");
+        // A foreground service remains alive until finishSessionStop calls
+        // stopSelf. The UI remains responsive while per-device ACKs complete.
+        cleanup.setDaemon(true);
+        try { cleanup.start(); }
+        catch (RuntimeException unableToStartThread) {
+            // Do not orphan an owned session if a worker cannot be created.
+            finishSessionStop(finalState, closeOwnedRuntime(instance), true);
+        }
+    }
+
+    private boolean closeOwnedRuntime(DjRuntime instance) {
+        try { instance.stop(); return true; }
+        catch (Exception | LinkageError error) {
+            Log.e("ClassicDJ", "Owned Music cleanup unconfirmed; manual check required", error);
+            return false;
+        }
+    }
+
+    private void finishSessionStop(String finalState, boolean clean, boolean requestStopSelf) {
+        currentState = clean ? finalState : "Stopp nicht bestätigt · Lampenstatus prüfen";
         stopForeground(true);
         if (requestStopSelf) stopSelf();
     }
