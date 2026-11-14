@@ -30,6 +30,12 @@ public final class ClassicDjEntryProvider extends ContentProvider
     private static final String ORIGINAL_PACKAGE = "com.yeelight.cherry";
     private static final String ENTRY_TAG = "io.github.lxsdd.yeelightclassicdj.entry.overlay";
     private final Handler handler = new Handler(Looper.getMainLooper());
+    // Some OEM screens replace their content view after onResume. Perform only
+    // bounded, cancelable in-Activity rechecks; no global overlay or OEM patch.
+    private static final long[] LAYOUT_RECHECK_MS = {0L, 180L, 700L, 1600L, 2800L};
+    private final java.util.WeakHashMap<Activity, java.util.List<Runnable>> pending =
+        new java.util.WeakHashMap<>();
+
 
     @Override public boolean onCreate() {
         final Context context = getContext();
@@ -46,13 +52,30 @@ public final class ClassicDjEntryProvider extends ContentProvider
     }
 
     @Override public void onActivityResumed(final Activity activity) {
-        if (activity == null) return;
-        // OEM may finish layout inflation during resume; schedule after it.
-        handler.post(new Runnable() {
-            @Override public void run() {
-                attachOptionalButton(activity);
-            }
-        });
+        if (activity == null || !ORIGINAL_PACKAGE.equals(activity.getPackageName())
+                || activity instanceof ClassicDjActivity) return;
+        cancelPending(activity);
+        java.util.List<Runnable> tasks = new java.util.ArrayList<>();
+        pending.put(activity, tasks);
+        for (long delayMs : LAYOUT_RECHECK_MS) {
+            Runnable attempt = new Runnable() {
+                @Override public void run() {
+                    if (activity.isFinishing() || activity.isDestroyed()
+                            || !activity.hasWindowFocus()) return;
+                    // The tagged entry is idempotent. If OEM content was
+                    // replaced, the later pass sees the new content root.
+                    attachOptionalButton(activity);
+                }
+            };
+            tasks.add(attempt);
+            handler.postDelayed(attempt, delayMs);
+        }
+    }
+
+    private void cancelPending(Activity activity) {
+        java.util.List<Runnable> tasks = pending.remove(activity);
+        if (tasks == null) return;
+        for (Runnable task : tasks) handler.removeCallbacks(task);
     }
 
     private static void attachOptionalButton(Activity activity) {
@@ -65,7 +88,8 @@ public final class ClassicDjEntryProvider extends ContentProvider
         }
         try {
             View content = activity.findViewById(android.R.id.content);
-            if (!(content instanceof FrameLayout)) return;
+            if (!(content instanceof FrameLayout) || content.getWidth() <= 0 ||
+                    content.getHeight() <= 0) return;
             FrameLayout root = (FrameLayout) content;
             if (hasExistingEntry(root, 0)) return;
 
@@ -78,14 +102,20 @@ public final class ClassicDjEntryProvider extends ContentProvider
             final float density = activity.getResources().getDisplayMetrics().density;
             int margin = (int) (12 * density + 0.5f);
             params.setMargins(margin, margin, margin, margin);
+            // Above siblings within THIS Activity, never a global window.
+            button.setElevation(8f * density);
             root.addView(button, params);
+            button.bringToFront();
         } catch (RuntimeException ignored) {
             // Fail without disturbing any OEM Activity, layout or login state.
         }
     }
 
     private static boolean hasExistingEntry(View view, int depth) {
-        if (ENTRY_TAG.equals(view.getTag())) return true;
+        if (ENTRY_TAG.equals(view.getTag())) {
+            if (view instanceof ClassicDjEntryView) view.bringToFront();
+            return true;
+        }
         if (view instanceof ClassicDjEntryView) {
             Rect visible = new Rect();
             if (view.isShown() && view.isClickable() &&
@@ -103,10 +133,10 @@ public final class ClassicDjEntryProvider extends ContentProvider
 
     @Override public void onActivityCreated(Activity a, Bundle savedInstanceState) {}
     @Override public void onActivityStarted(Activity a) {}
-    @Override public void onActivityPaused(Activity a) {}
+    @Override public void onActivityPaused(Activity a) { cancelPending(a); }
     @Override public void onActivityStopped(Activity a) {}
     @Override public void onActivitySaveInstanceState(Activity a, Bundle state) {}
-    @Override public void onActivityDestroyed(Activity a) {}
+    @Override public void onActivityDestroyed(Activity a) { cancelPending(a); }
 
     // No queryable state or remote control surface. Manifest exported=false.
     @Override public Cursor query(Uri uri, String[] projection, String selection,

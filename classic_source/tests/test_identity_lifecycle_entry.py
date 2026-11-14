@@ -59,6 +59,28 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
                     classic.GateFailure, code):
                 self._verify(elements, identity=True)
 
+    def test_delayed_oem_layout_is_reattached_without_global_overlay(self):
+        source = (ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj"
+                  "/ui/ClassicDjEntryProvider.java").read_text("utf-8")
+        import re
+        sequence = re.search(r"LAYOUT_RECHECK_MS\s*=\s*\{([^}]+)\}", source)
+        self.assertIsNotNone(sequence)
+        delays = [int(v.strip().removesuffix("L")) for v in sequence.group(1).split(",")]
+        self.assertEqual(delays[0], 0)
+        self.assertLessEqual(len(delays), 6)
+        self.assertEqual(delays, sorted(set(delays)))
+        self.assertLessEqual(delays[-1], 3000)
+        self.assertIn("handler.postDelayed(attempt, delayMs)", source)
+        self.assertIn("cancelPending(activity);", source)
+        self.assertIn("onActivityPaused(Activity a) { cancelPending(a); }", source)
+        self.assertIn("onActivityDestroyed(Activity a) { cancelPending(a); }", source)
+        self.assertIn("activity.hasWindowFocus()", source)
+        self.assertIn("content.getWidth() <= 0", source)
+        self.assertIn("button.bringToFront();", source)
+        self.assertIn("view.bringToFront();", source)
+        for prohibited in ("WindowManager", "setContentView(", "set_music", "startActivity(intent)"):
+            self.assertNotIn(prohibited, source)
+
     def test_clone_must_not_ship_identity_provider(self):
         with self.assertRaisesRegex(classic.GateFailure,
                                     "FINAL_PROVIDER_COUNT_NOT_FIVE"):
@@ -73,7 +95,7 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("implements Application.ActivityLifecycleCallbacks", source)
         self.assertIn("registerActivityLifecycleCallbacks(this)", source)
         self.assertIn("onActivityResumed(final Activity activity)", source)
-        self.assertIn("handler.post(", source)
+        self.assertIn("handler.postDelayed(", source)
         self.assertIn("ORIGINAL_PACKAGE.equals(activity.getPackageName())", source)
         self.assertIn("activity instanceof ClassicDjActivity", source)
         self.assertIn("hasExistingEntry(root, 0)", source)
