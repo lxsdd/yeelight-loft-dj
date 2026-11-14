@@ -123,6 +123,44 @@ qualifiziert noch keine MusicActivity-Navigation.
 7. Keine automatische Änderung an Produktions-Signing, Physical Devices,
    öffentlich veröffentlichten OEM-Dateien, fremden Claims oder Kosten.
 
+
+### Schutzlauf #43605461018 (14.11.2026): neuer Befund
+
+Der **echte** Eigentümer-Workflow hat Kandidat
+`2d5c8b52b1e513bdfa30ecbda583e5b2534bdd76` bis zur Erstellung,
+Klassen-/DEX-Paritätsprüfung, temporären Testsignierung und unabhängigen
+signiert/unsigniert-Payload-Prüfung erfolgreich gebracht. Anders als bei
+#43604199565 ist der Build **kein Fehler mehr**.
+
+Erst beim anschließenden geschützten Offline-Emulatorskript brach der
+neue, optionale UI-Befund-Emitter vor dem Emulatorstart mit
+`ModuleNotFoundError: No module named 'private_ci'` ab. Die Ursache
+ist die unterschiedliche Python-Modulsuchpfadumgebung von
+`python -m unittest` (Paketimport) und
+`python3 classic_source/private_ci/emit_oem_ui_evidence.py`
+(Skripteinstieg). Dieser Fehler ist **kein Classic-Startfehler**.
+
+Der Emitter verwendet nun einen expliziten Paket- bzw. Geschwisterimport
+abhängig vom tatsächlichen Aufrufmodus. Eine neue positive/negative
+Regression startet ihn als realen separaten Python-Prozess **ohne
+`PYTHONPATH`**, prüft beide Besitzerfälle und bestätigt, dass
+bei fehlgeschlagener optionaler UI-Inventur keinerlei Original-UI-
+Belege erfunden oder vertrauliche Eingaben ausgegeben werden.
+
+Zusätzlich geprüft: `classic_first.prepare()` kopiert den originalen
+dekodierten Ressourcenbaum vor jeder Veränderung in einen neuen
+Arbeitsbaum. Die aktuelle UI-Inventur liest weiterhin den unangetasteten
+Originalbaum `decoded` und die separat dekodierte ursprüngliche
+Smali-Struktur `codeonly`. Die frühere Vermutung, die Inventur werde
+wegen bereits modifizierter Ressourcen ausgeführt, trifft nicht zu;
+die genaue Ursache ihres `UNAVAILABLE_NOT_ACCEPTED`-Status muss
+erst aus den geschützten bereinigten Befunden hervorgehen.
+
+**Weiterhin nicht als Erfolg behauptet:** Emulatorstart, native
+`MusicActivity`-Navigation und Sichtbarkeit/Bedienbarkeit des
+DJ-Einstiegs. Kein Produktions-Hook oder OEM-Layout wurde in diesem
+Diagnoseblock verändert.
+
 ## Exakter Stand dieses Entwicklungsblocks
 
 Die gesicherten **Originalnamen** aus dem ersten APK-Befund sowie die

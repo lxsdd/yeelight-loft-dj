@@ -1,6 +1,9 @@
 """Synthetic closed-schema OEM UI evidence emission and scope regression."""
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -95,6 +98,68 @@ class OemEvidenceTests(unittest.TestCase):
             path.unlink()
             with self.assertRaisesRegex(EvidenceBlocked,"UI_EVIDENCE_OWNER_SCOPE_REQUIRED"):
                 emit(path,env)
+
+    def test_real_protected_shell_invocation_resolves_standalone_import(self):
+        # Exact invocation from run_android17_emulator.sh: script file, not
+        # python -m and without a PYTHONPATH that might conceal the defect.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt_path = root / "private-output/classic-loft-dj-UNSIGNED.apk.preflight.json"
+            receipt_path.parent.mkdir(parents=True)
+            data = receipt()
+            data["original_ui_reuse_inventory"] = {
+                "status": "ORIGINAL_UI_REUSE_AUDIT_UNAVAILABLE_NOT_ACCEPTED",
+                "safe_reason": "UI_XML_PARSE_INVALID",
+                "original_apk_or_smali_published": False,
+                "private_symbols_emitted": False,
+                "runtime_ui_navigation_verified": False,
+                "original_behavior_compatibility_verified": False,
+                "production_hook_approved": False,
+            }
+            # Canary data must never reach stdout, including a rejected run.
+            data["never_emit"] = "PRIVATE_EMAIL_dont_export@example.com"
+            receipt_path.write_text(json.dumps(data), encoding="utf8")
+            project = Path(__file__).resolve().parents[1]
+            script = project / "private_ci/emit_oem_ui_evidence.py"
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            env.update({
+                "RUNNER_TEMP": str(root),
+                "GITHUB_REPOSITORY": "lxsdd/yeelight-loft-dj",
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_ACTOR": "lxsdd",
+                "GITHUB_REF": "refs/heads/main",
+                "RUNNER_ENVIRONMENT": "github-hosted",
+            })
+            result = subprocess.run(
+                [sys.executable, str(script), str(receipt_path)],
+                cwd=project, env=env, capture_output=True, text=True,
+                timeout=15, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
+            self.assertIn("CLASSIC_PRIVATE_ORIGINAL_UI_REUSE=", result.stdout)
+            payload = json.loads(result.stdout.strip().split("=", 1)[1])
+            self.assertEqual(
+                payload["status"], "OEM_UI_REUSE_ANALYSIS_UNAVAILABLE_NOT_ACCEPTED"
+            )
+            self.assertEqual(payload["reason"], "UI_XML_PARSE_INVALID")
+            self.assertEqual(payload["roles"], {})
+            self.assertFalse(payload["actual_original_ui_runtime_proven"])
+            self.assertNotIn("PRIVATE_EMAIL", result.stdout)
+            self.assertNotIn("example.com", result.stdout)
+
+            env["GITHUB_ACTOR"] = "foreign"
+            denied = subprocess.run(
+                [sys.executable, str(script), str(receipt_path)],
+                cwd=project, env=env, capture_output=True, text=True,
+                timeout=15, check=False,
+            )
+            self.assertEqual(denied.returncode, 2)
+            self.assertEqual(denied.stdout.strip(),
+                             "CLASSIC_PRIVATE_UI_REUSE_EVIDENCE_BLOCKED")
+            self.assertEqual(denied.stderr, "")
+            self.assertNotIn("PRIVATE_EMAIL", denied.stdout)
 
     def test_protected_script_emits_only_after_verified_private_receipt(self):
         script=(Path(__file__).resolve().parents[1]/"private_ci/run_android17_emulator.sh").read_text("utf8")
