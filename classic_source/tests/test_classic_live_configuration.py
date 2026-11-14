@@ -27,7 +27,11 @@ class LiveDJConfigurationContract(unittest.TestCase):
         self.assertIn("EXTRA_GAIN, liveGain", ui)
         self.assertIn("EXTRA_SCENE, liveScene", ui)
         self.assertIn("if (!ClassicDjService.hasActiveSession()) return;", ui)
-        self.assertIn('String[] codes = {"SPECTRUM", "AMBIENT", "BEAT"}', ui)
+        self.assertIn('String[] codes = {"SPECTRUM", "AMBIENT", "BEAT", "PULSE"}', ui)
+        self.assertIn('writePulseSettings(config);', ui)
+        self.assertIn('writePulseSettings(i);', ui)
+        self.assertIn('pulseBeatSync = false;', ui)
+        self.assertIn('pulseBeatSync = true;', ui)
 
     def test_live_config_does_not_restart_mic_or_music_network(self):
         service = self.sources["service"]
@@ -41,10 +45,26 @@ class LiveDJConfigurationContract(unittest.TestCase):
         self.assertIn("boolean configure(double sensitivity, String scene);",
                       self.sources["interface"])
 
+    def test_pulse_owned_dispatch_and_strict_parameter_gate(self):
+        service = self.sources["service"]
+        self.assertIn("configureRuntime(runtime, intent, gain, scene)", service)
+        self.assertIn("configureRuntime(session, intent, requestedGain, requestedScene)", service)
+        self.assertIn('if (!"BEAT".equals(mode) && !"TIMER".equals(mode)) return false;', service)
+        self.assertIn("value != Math.rint(value)", service)
+        self.assertIn("target.configurePulse(", service)
+        self.assertIn("target.configure(gain, scene)", service)
+        self.assertIn("boolean configurePulse(int rgb, boolean beatSync", self.sources["interface"])
+        run = self.sources["runtime"]
+        block = run[run.index("override fun configurePulse("):run.index("override fun start(")]
+        for forbidden in ("requestStart(", "requestStop(", "Socket(", "set_power", "set_music", "startGroup("):
+            self.assertNotIn(forbidden, block)
+        self.assertIn("newEngine.configurePulse(pulse)", run)
+        self.assertIn("ClassicPulseScene.Options(", block)
+
     def test_dsp_bounded_scene_and_gain_without_new_transport(self):
         run = self.sources["runtime"]
         cfg = run[run.index("override fun configure("):run.index("override fun start(")]
-        self.assertIn('scene !in setOf("SPECTRUM", "AMBIENT", "BEAT")', cfg)
+        self.assertIn('scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE")', cfg)
         self.assertIn("sensitivity !in 0.25..4.0", cfg)
         self.assertIn("inputBridge?.setSensitivity(sensitivity)", cfg)
         self.assertIn("engine?.setScene(scene)", cfg)

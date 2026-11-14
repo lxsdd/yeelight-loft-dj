@@ -51,6 +51,10 @@ class ClassicDjEngine(
                       (0.5 * result.bass + 0.25 * result.mid + 0.15 * result.presence + 0.10 * result.treble).coerceIn(0.0, 1.0))
     }
 
+    /** Pure pulse envelope configuration: no socket, power command or new session. */
+    @Synchronized fun configurePulse(options: ClassicPulseScene.Options): Boolean =
+        lighting.configurePulse(options)
+
     /** Switch light scenes on the existing generation-fenced reverse session. */
     @Synchronized fun setScene(scene: String): Boolean = lighting.setScene(scene)
 

@@ -5,6 +5,7 @@ import android.os.SystemClock
 import loftdj.classic.ClassicAndroidAudioRecordInput
 import loftdj.classic.ClassicDjEngine
 import loftdj.classic.ClassicMusicCoordinator
+import loftdj.classic.ClassicPulseScene
 import loftdj.classic.ClassicPcmCaptureSession
 import loftdj.classic.ClassicPcmDjBridge
 import loftdj.classic.ClassicYeelightMusicTransport
@@ -27,6 +28,7 @@ class CheckpointRuntime : DjRuntime {
     private var inputBridge: ClassicPcmDjBridge? = null
     private var sensitivity = 1.0
     private var scene = "SPECTRUM"
+    private var pulse = ClassicPulseScene.Options()
     private var listener: DjRuntime.Listener? = null
     private var generation = 0L
 
@@ -46,13 +48,28 @@ class CheckpointRuntime : DjRuntime {
     /** State-only in-place reconfiguration. No network, new worker or re-handshake. */
     override fun configure(sensitivity: Double, scene: String): Boolean {
         if (!sensitivity.isFinite() || sensitivity !in 0.25..4.0 ||
-            scene !in setOf("SPECTRUM", "AMBIENT", "BEAT")) return false
+            scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE")) return false
         synchronized(lock) {
             if (state == State.STOPPING || state == State.CLOSED) return false
             inputBridge?.setSensitivity(sensitivity)
             engine?.setScene(scene)
             this.sensitivity = sensitivity
             this.scene = scene
+            return true
+        }
+    }
+
+    override fun configurePulse(
+        rgb: Int, beatSync: Boolean, bpm: Int, minimum: Int, maximum: Int,
+        attackMs: Int, decayMs: Int, gamma: Double
+    ): Boolean {
+        val proposed = runCatching {
+            ClassicPulseScene.Options(rgb, beatSync, bpm, minimum, maximum, attackMs, decayMs, gamma)
+        }.getOrNull() ?: return false
+        synchronized(lock) {
+            if (state == State.STOPPING || state == State.CLOSED) return false
+            if (engine?.configurePulse(proposed) == false) return false
+            pulse = proposed
             return true
         }
     }
@@ -102,6 +119,7 @@ class CheckpointRuntime : DjRuntime {
                 check(state == State.STARTING) { "Stop requested during startup" }
                 // Changes received while the network handshake was pending
                 // apply before the very first live PCM frame.
+                check(newEngine.configurePulse(pulse))
                 check(newEngine.setScene(scene))
                 check(bridge.setSensitivity(sensitivity))
                 capture = newCapture

@@ -20,6 +20,14 @@ public final class ClassicDjService extends Service {
     public static final String ACTION_CONFIG = "io.github.lxsdd.yeelightclassicdj.CONFIG";
     public static final String EXTRA_GAIN = "io.github.lxsdd.yeelightclassicdj.LIVE_GAIN";
     public static final String EXTRA_SCENE = "io.github.lxsdd.yeelightclassicdj.LIVE_SCENE";
+    public static final String EXTRA_PULSE_MODE = "io.github.lxsdd.yeelightclassicdj.PULSE_MODE";
+    public static final String EXTRA_PULSE_COLOR = "io.github.lxsdd.yeelightclassicdj.PULSE_COLOR";
+    public static final String EXTRA_PULSE_BPM = "io.github.lxsdd.yeelightclassicdj.PULSE_BPM";
+    public static final String EXTRA_PULSE_MIN = "io.github.lxsdd.yeelightclassicdj.PULSE_MIN";
+    public static final String EXTRA_PULSE_MAX = "io.github.lxsdd.yeelightclassicdj.PULSE_MAX";
+    public static final String EXTRA_PULSE_ATTACK = "io.github.lxsdd.yeelightclassicdj.PULSE_ATTACK";
+    public static final String EXTRA_PULSE_DECAY = "io.github.lxsdd.yeelightclassicdj.PULSE_DECAY";
+    public static final String EXTRA_PULSE_GAMMA = "io.github.lxsdd.yeelightclassicdj.PULSE_GAMMA";
     private static final String CHANNEL = "classic-loft-dj";
     private static final int NOTIFICATION_ID = 4812;
     private DjRuntime runtime;
@@ -68,7 +76,7 @@ public final class ClassicDjService extends Service {
             String scene = intent.getStringExtra(EXTRA_SCENE);
             synchronized (sessionGuard) {
                 if (sessionFence.owns(currentToken) && !shuttingDown &&
-                    runtime != null && runtime.configure(gain, scene)) {
+                    runtime != null && configureRuntime(runtime, intent, gain, scene)) {
                     currentState = "DJ-Einstellung live aktualisiert";
                 }
             }
@@ -80,7 +88,7 @@ public final class ClassicDjService extends Service {
             "SPECTRUM" : intent.getStringExtra(EXTRA_SCENE);
         if (!Double.isFinite(requestedGain) || requestedGain < 0.25 ||
             requestedGain > 4.0 ||
-            !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT").contains(requestedScene)) {
+            !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT", "PULSE").contains(requestedScene)) {
             currentState = "Ungültige DJ-Live-Einstellung";
             stopSelf();
             return START_NOT_STICKY;
@@ -111,7 +119,7 @@ public final class ClassicDjService extends Service {
                 return START_NOT_STICKY;
             }
             // Stage the user's settings BEFORE any microphone or lamp socket.
-            if (!session.configure(requestedGain, requestedScene)) {
+            if (!configureRuntime(session, intent, requestedGain, requestedScene)) {
                 currentState = "DJ-Einstellungen nicht unterstützt";
                 stopSelf();
                 return START_NOT_STICKY;
@@ -168,6 +176,38 @@ public final class ClassicDjService extends Service {
             stopSession(token, "DJ-Start fehlgeschlagen; Lampenstatus prüfen", true);
         }
         return START_NOT_STICKY;
+    }
+
+    /**
+     * Configuration changes only the owned DSP, never a Music socket.
+     * On first MIC start this runs BEFORE microphone or any device command.
+     */
+    private static boolean configureRuntime(DjRuntime target, Intent intent,
+                                            double gain, String scene) {
+        if (target == null || intent == null || scene == null ||
+                !Double.isFinite(gain) || gain < 0.25 || gain > 4.0 ||
+                !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT", "PULSE").contains(scene))
+            return false;
+        String mode = intent.getStringExtra(EXTRA_PULSE_MODE);
+        if (mode == null) mode = "BEAT";
+        if (!"BEAT".equals(mode) && !"TIMER".equals(mode)) return false;
+        int rgb = pulseInt(intent, EXTRA_PULSE_COLOR, 0x25CBE8);
+        int bpm = pulseInt(intent, EXTRA_PULSE_BPM, 120);
+        int minimum = pulseInt(intent, EXTRA_PULSE_MIN, 12);
+        int maximum = pulseInt(intent, EXTRA_PULSE_MAX, 90);
+        int attack = pulseInt(intent, EXTRA_PULSE_ATTACK, 90);
+        int decay = pulseInt(intent, EXTRA_PULSE_DECAY, 600);
+        double gamma = intent.getDoubleExtra(EXTRA_PULSE_GAMMA, 2.0);
+        if (!target.configurePulse(rgb, "BEAT".equals(mode), bpm, minimum,
+                                    maximum, attack, decay, gamma)) return false;
+        return target.configure(gain, scene);
+    }
+
+    private static int pulseInt(Intent intent, String key, int fallback) {
+        double value = intent.getDoubleExtra(key, fallback);
+        if (!Double.isFinite(value) || value < 0 || value > Integer.MAX_VALUE ||
+                value != Math.rint(value)) return -1;
+        return (int) value;
     }
 
     // Caller owns sessionGuard. A token of zero must never be treated as live.

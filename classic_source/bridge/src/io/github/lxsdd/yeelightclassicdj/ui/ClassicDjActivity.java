@@ -26,6 +26,13 @@ public final class ClassicDjActivity extends Activity {
     private CheckBox musicOptIn;
     private double liveGain = 1.0;
     private String liveScene = "SPECTRUM";
+    private boolean pulseBeatSync = true;
+    private int pulseBpm = 90;
+    // Future color selection must reuse the existing OEM Classic picker.
+    // Never substitute a second raw hex picker in this interim DJ screen.
+    private int pulseRgb = 0x25CBE8;
+    private int pulseMin = 12, pulseMax = 90, pulseAttack = 90, pulseDecay = 600;
+    private double pulseGamma = 2.0;
     private String transientStatus;
     private long transientUntilMs;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
@@ -76,8 +83,8 @@ public final class ClassicDjActivity extends Activity {
         layout.addView(liveTitle);
         LinearLayout scenes = new LinearLayout(this);
         scenes.setOrientation(LinearLayout.HORIZONTAL);
-        String[] codes = {"SPECTRUM", "AMBIENT", "BEAT"};
-        String[] labels = {"Spektrum", "Ruhig", "Beat"};
+        String[] codes = {"SPECTRUM", "AMBIENT", "BEAT", "PULSE"};
+        String[] labels = {"Spektrum", "Ruhig", "Beat", "Puls"};
         for (int index = 0; index < codes.length; index++) {
             final String chosen = codes[index];
             Button choice = new Button(this);
@@ -90,6 +97,63 @@ public final class ClassicDjActivity extends Activity {
             scenes.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
         }
         layout.addView(scenes);
+        TextView pulseTitle = new TextView(this);
+        pulseTitle.setText("Puls · Beat oder eigener Takt");
+        layout.addView(pulseTitle);
+        LinearLayout pulseModes = new LinearLayout(this);
+        pulseModes.setOrientation(LinearLayout.HORIZONTAL);
+        Button analyzed = new Button(this);
+        analyzed.setText("Musik-Beat");
+        analyzed.setOnClickListener(v -> {
+            pulseBeatSync = true; liveScene = "PULSE";
+            updateRunningSettings();
+            showTransientStatus("Puls folgt analysierten Beats");
+        });
+        pulseModes.addView(analyzed, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button timer = new Button(this);
+        timer.setText("Freier Takt");
+        timer.setOnClickListener(v -> {
+            pulseBeatSync = false; liveScene = "PULSE";
+            updateRunningSettings();
+            showTransientStatus("Puls mit " + pulseBpm + " BPM");
+        });
+        pulseModes.addView(timer, new LinearLayout.LayoutParams(0, -2, 1f));
+        layout.addView(pulseModes);
+        LinearLayout pulseTempo = new LinearLayout(this);
+        pulseTempo.setOrientation(LinearLayout.HORIZONTAL);
+        for (int bpm : new int[]{60, 90, 120}) {
+            Button choice = new Button(this);
+            choice.setText(bpm + " BPM");
+            choice.setOnClickListener(v -> {
+                pulseBeatSync = false; pulseBpm = bpm; liveScene = "PULSE";
+                updateRunningSettings();
+                showTransientStatus("Freier Puls: " + bpm + " BPM");
+            });
+            pulseTempo.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        layout.addView(pulseTempo);
+        LinearLayout pulseShape = new LinearLayout(this);
+        pulseShape.setOrientation(LinearLayout.HORIZONTAL);
+        Button calm = new Button(this);
+        calm.setText("Puls sanft");
+        calm.setOnClickListener(v -> {
+            pulseMin = 12; pulseMax = 65; pulseAttack = 160; pulseDecay = 900; pulseGamma = 2.2;
+            liveScene = "PULSE"; updateRunningSettings();
+            showTransientStatus("Sanfter Puls übernommen");
+        });
+        pulseShape.addView(calm, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button vivid = new Button(this);
+        vivid.setText("Puls kräftig");
+        vivid.setOnClickListener(v -> {
+            pulseMin = 8; pulseMax = 100; pulseAttack = 70; pulseDecay = 330; pulseGamma = 1.2;
+            liveScene = "PULSE"; updateRunningSettings();
+            showTransientStatus("Kräftiger Puls übernommen");
+        });
+        pulseShape.addView(vivid, new LinearLayout.LayoutParams(0, -2, 1f));
+        layout.addView(pulseShape);
+        TextView pulseNote = new TextView(this);
+        pulseNote.setText("Niedrige Helligkeit bleibt sichtbar, nicht AUS. Farbauswahl später über den Classic-Picker.");
+        layout.addView(pulseNote);
         TextView gainTitle = new TextView(this);
         gainTitle.setText("Mikrofonempfindlichkeit · direkt auswählen");
         layout.addView(gainTitle);
@@ -148,7 +212,19 @@ public final class ClassicDjActivity extends Activity {
         config.setAction(ClassicDjService.ACTION_CONFIG);
         config.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
         config.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
+        writePulseSettings(config);
         startService(config);
+    }
+
+    private void writePulseSettings(Intent intent) {
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MODE, pulseBeatSync ? "BEAT" : "TIMER");
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_COLOR, (double) pulseRgb);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) pulseBpm);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MIN, (double) pulseMin);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MAX, (double) pulseMax);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, (double) pulseAttack);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, (double) pulseDecay);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, pulseGamma);
     }
 
     private void requestMic() {
@@ -182,6 +258,7 @@ public final class ClassicDjActivity extends Activity {
         i.putExtra(EXTRA_SELECTED_IPS, ips.toArray(new String[0]));
         i.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
         i.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
+        writePulseSettings(i);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
         showTransientStatus(ips.isEmpty() ? "Mikrofonanalyse ohne Lampen gestartet." :
