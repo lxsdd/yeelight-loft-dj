@@ -36,5 +36,24 @@ fun main() {
     }
     check(runCatching { ClassicLiveLightStyle(minFrameIntervalMs = 50L) }.isFailure)
     check(runCatching { ClassicLiveLightStyle(quietThreshold = Double.NaN) }.isFailure)
-    println("PASS live light: quiet HSV flow, loudness, bounded 4-Hz frames, rewind, bad input")
+    // Live scene switches do not reset timestamps, open network channels or
+    // bypass the per-device output pacing. In AMBIENT, keep hue flowing
+    // independently of beat; in BEAT, hold hue between audio onsets.
+    val dynamic = ClassicLiveLightStyle(minFrameIntervalMs = 300L)
+    check(dynamic.accept(0L, false, .25, .25, .25, .25) != null)
+    check(dynamic.setScene("AMBIENT"))
+    check(dynamic.accept(150L, false, .25, .25, .25, .25) == null)
+    val ambientFrame = dynamic.accept(300L, false, .25, .25, .25, .25)
+    check(ambientFrame != null && ambientFrame.brightness in 12..75)
+    check(dynamic.setScene("BEAT"))
+    val stationary = dynamic.accept(600L, false, .25, .25, .25, .25)
+    check(stationary != null && stationary.rgb == ambientFrame.rgb)
+    val beatFrame = dynamic.accept(900L, true, .9, .9, .9, .9)
+    check(beatFrame != null && beatFrame.rgb != stationary.rgb)
+    check(dynamic.setScene("SPECTRUM"))
+    check(!dynamic.setScene("UNSUPPORTED"))
+    check(!dynamic.setScene("BEAT;set_power"))
+    check(dynamic.accept(1200L, false, .4, .4, .4, .4) != null)
+
+    println("PASS live light: quiet HSV flow, loudness, bounded 4-Hz frames, rewind, bad input, live scenes")
 }

@@ -17,6 +17,9 @@ import io.github.lxsdd.yeelightclassicdj.runtime.DjRuntime;
 public final class ClassicDjService extends Service {
     public static final String ACTION_MIC = "io.github.lxsdd.yeelightclassicdj.MIC";
     public static final String ACTION_STOP = "io.github.lxsdd.yeelightclassicdj.STOP";
+    public static final String ACTION_CONFIG = "io.github.lxsdd.yeelightclassicdj.CONFIG";
+    public static final String EXTRA_GAIN = "io.github.lxsdd.yeelightclassicdj.LIVE_GAIN";
+    public static final String EXTRA_SCENE = "io.github.lxsdd.yeelightclassicdj.LIVE_SCENE";
     private static final String CHANNEL = "classic-loft-dj";
     private static final int NOTIFICATION_ID = 4812;
     private DjRuntime runtime;
@@ -30,6 +33,10 @@ public final class ClassicDjService extends Service {
     private static volatile String currentState = "Bereit · ausgewählte Color4-Lampen";
     private static volatile double lastBpm = 0.0;
     private static volatile float lastLevel = 0f;
+    private static volatile boolean activeSession = false;
+
+    /** Same-process observation only; not a device power-state assertion. */
+    public static boolean hasActiveSession() { return activeSession; }
 
     public static String uiStatus() {
         String bpm = lastBpm > 0.0 ? String.format(java.util.Locale.ROOT, "%.0f BPM", lastBpm) : "BPM wird analysiert";
@@ -56,7 +63,28 @@ public final class ClassicDjService extends Service {
             stopSession(0L, "Gestoppt", true);
             return START_NOT_STICKY;
         }
+        if (ACTION_CONFIG.equals(action)) {
+            double gain = intent.getDoubleExtra(EXTRA_GAIN, Double.NaN);
+            String scene = intent.getStringExtra(EXTRA_SCENE);
+            synchronized (sessionGuard) {
+                if (sessionFence.owns(currentToken) && !shuttingDown &&
+                    runtime != null && runtime.configure(gain, scene)) {
+                    currentState = "DJ-Einstellung live aktualisiert";
+                }
+            }
+            return START_NOT_STICKY;
+        }
         if (!ACTION_MIC.equals(action)) return START_NOT_STICKY;
+        final double requestedGain = intent.getDoubleExtra(EXTRA_GAIN, 1.0);
+        final String requestedScene = intent.getStringExtra(EXTRA_SCENE) == null ?
+            "SPECTRUM" : intent.getStringExtra(EXTRA_SCENE);
+        if (!Double.isFinite(requestedGain) || requestedGain < 0.25 ||
+            requestedGain > 4.0 ||
+            !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT").contains(requestedScene)) {
+            currentState = "Ungültige DJ-Live-Einstellung";
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         if (Build.VERSION.SDK_INT >= 23 &&
                 checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             currentState = "Mikrofonberechtigung fehlt";
@@ -82,10 +110,17 @@ public final class ClassicDjService extends Service {
                 stopSelf();
                 return START_NOT_STICKY;
             }
+            // Stage the user's settings BEFORE any microphone or lamp socket.
+            if (!session.configure(requestedGain, requestedScene)) {
+                currentState = "DJ-Einstellungen nicht unterstützt";
+                stopSelf();
+                return START_NOT_STICKY;
+            }
             token = sessionFence.begin();
             if (token == 0L) return START_NOT_STICKY;
             currentToken = token;
             runtime = session;
+            activeSession = true;
             currentState = "Mikrofon-Analyse wird vorbereitet";
         }
         try {
@@ -176,6 +211,7 @@ public final class ClassicDjService extends Service {
             shuttingDown = true;
             sessionFence.cancel(); // fence callbacks before touching any session/socket
             currentToken = 0L;
+            activeSession = false;
             instance = runtime;
             runtime = null;
             startupWorker = null;

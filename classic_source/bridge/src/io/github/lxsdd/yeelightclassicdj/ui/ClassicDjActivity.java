@@ -24,6 +24,8 @@ public final class ClassicDjActivity extends Activity {
     private TextView status;
     private EditText lampIps;
     private CheckBox musicOptIn;
+    private double liveGain = 1.0;
+    private String liveScene = "SPECTRUM";
     private String transientStatus;
     private long transientUntilMs;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
@@ -69,6 +71,44 @@ public final class ClassicDjActivity extends Activity {
         start.setText("Mikrofon starten");
         start.setOnClickListener(v -> requestMic());
         layout.addView(start);
+        TextView liveTitle = new TextView(this);
+        liveTitle.setText("Live-Szene · ohne DJ-Neustart");
+        layout.addView(liveTitle);
+        LinearLayout scenes = new LinearLayout(this);
+        scenes.setOrientation(LinearLayout.HORIZONTAL);
+        String[] codes = {"SPECTRUM", "AMBIENT", "BEAT"};
+        String[] labels = {"Spektrum", "Ruhig", "Beat"};
+        for (int index = 0; index < codes.length; index++) {
+            final String chosen = codes[index];
+            Button choice = new Button(this);
+            choice.setText(labels[index]);
+            choice.setOnClickListener(v -> {
+                liveScene = chosen;
+                updateRunningSettings();
+                showTransientStatus("Szene: " + chosen + " · direkt übernommen");
+            });
+            scenes.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        layout.addView(scenes);
+        TextView gainTitle = new TextView(this);
+        gainTitle.setText("Mikrofonempfindlichkeit · direkt auswählen");
+        layout.addView(gainTitle);
+        LinearLayout gains = new LinearLayout(this);
+        gains.setOrientation(LinearLayout.HORIZONTAL);
+        double[] steps = {0.5, 1.0, 2.0};
+        String[] gainLabels = {"Leise", "Normal", "Empfindlich"};
+        for (int index = 0; index < steps.length; index++) {
+            final double chosen = steps[index];
+            Button choice = new Button(this);
+            choice.setText(gainLabels[index]);
+            choice.setOnClickListener(v -> {
+                liveGain = chosen;
+                updateRunningSettings();
+                showTransientStatus("Empfindlichkeit: " + chosen + "× · direkt übernommen");
+            });
+            gains.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        layout.addView(gains);
         Button stop = new Button(this);
         stop.setText("DJ stoppen");
         stop.setOnClickListener(v -> {
@@ -101,6 +141,16 @@ public final class ClassicDjActivity extends Activity {
         if (status != null) status.setText(message);
     }
 
+    /** Config changes only the already-owned DSP pipeline; never starts lamps. */
+    private void updateRunningSettings() {
+        if (!ClassicDjService.hasActiveSession()) return;
+        Intent config = new Intent(this, ClassicDjService.class);
+        config.setAction(ClassicDjService.ACTION_CONFIG);
+        config.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
+        config.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
+        startService(config);
+    }
+
     private void requestMic() {
         if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_REQUEST);
@@ -130,6 +180,8 @@ public final class ClassicDjActivity extends Activity {
         Intent i = new Intent(this, ClassicDjService.class);
         i.setAction(ClassicDjService.ACTION_MIC);
         i.putExtra(EXTRA_SELECTED_IPS, ips.toArray(new String[0]));
+        i.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
+        i.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
         showTransientStatus(ips.isEmpty() ? "Mikrofonanalyse ohne Lampen gestartet." :

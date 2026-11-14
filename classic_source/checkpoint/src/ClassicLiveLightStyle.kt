@@ -16,6 +16,15 @@ internal class ClassicLiveLightStyle(
     private val quietThreshold: Double = 0.26,
 ) {
     data class Frame(val rgb: Int, val brightness: Int)
+    enum class Scene { SPECTRUM, AMBIENT, BEAT }
+
+    private var scene = Scene.SPECTRUM
+    /** No scene change sends any command; it affects only the next owned frame. */
+    fun setScene(value: String): Boolean {
+        val parsed = Scene.entries.firstOrNull { it.name == value } ?: return false
+        scene = parsed
+        return true
+    }
 
     private var lastTimestampMs = -1L
     private var lastFrameMs = -1L
@@ -56,15 +65,28 @@ internal class ClassicLiveLightStyle(
 
         // A confirmed beat supplies a distinct hue, never an unbounded output burst.
         // In quiet sections a gradual, less intrusive sweep remains active.
-        if (beat) {
-            nextBeatHue = (nextBeatHue + 137) % 360
-            hueDegrees = nextBeatHue.toDouble()
-        } else if (smoothLevel <= quietThreshold) {
-            hueDegrees = (hueDegrees + delta.coerceAtMost(500L) * 0.006) % 360.0
+        when (scene) {
+            Scene.SPECTRUM -> {
+                if (beat) {
+                    nextBeatHue = (nextBeatHue + 137) % 360
+                    hueDegrees = nextBeatHue.toDouble()
+                } else if (smoothLevel <= quietThreshold) {
+                    hueDegrees = (hueDegrees + delta.coerceAtMost(500L) * 0.006) % 360.0
+                }
+            }
+            Scene.AMBIENT ->
+                hueDegrees = (hueDegrees + delta.coerceAtMost(500L) * 0.006) % 360.0
+            Scene.BEAT -> if (beat) {
+                nextBeatHue = (nextBeatHue + 137) % 360
+                hueDegrees = nextBeatHue.toDouble()
+            }
         }
         if (lastFrameMs >= 0 && timestampMs - lastFrameMs < minFrameIntervalMs) return null
         lastFrameMs = timestampMs
-        val brightness = (12 + smoothLevel * 88).toInt().coerceIn(12, 100)
+        val brightness = when (scene) {
+            Scene.AMBIENT -> (12 + smoothLevel * 58).toInt().coerceIn(12, 75)
+            Scene.SPECTRUM, Scene.BEAT -> (12 + smoothLevel * 88).toInt().coerceIn(12, 100)
+        }
         return Frame(hsvRgb(hueDegrees), brightness)
     }
 

@@ -29,6 +29,7 @@ val testMains = linkedMapOf(
     "Coordinator" to "loftdj.classic.CoordinatorTestKt",
     "CancelDuringStart" to "loftdj.classic.CancelDuringStartTestKt",
     "BeatAnalyzer" to "loftdj.classic.BeatAnalyzerTestKt",
+    "LiveLightStyle" to "loftdj.classic.LiveLightStyleTestKt",
     "DjEngine" to "loftdj.classic.DjEngineTestKt",
     "PcmBands" to "loftdj.classic.PcmBandsTestKt",
     "CaptureSession" to "loftdj.classic.CaptureSessionTestKt",
@@ -48,6 +49,6 @@ val runTasks = testMains.map { (label, className) ->
 }
 tasks.register("verifyClassicJvm") {
     group = "verification"
-    description = "Compile ALL Classic JVM/DJ source and execute all nine real integration test programs."
+    description = "Compile ALL Classic JVM/DJ source and execute all ten real integration test programs."
     dependsOn(runTasks)
 }
