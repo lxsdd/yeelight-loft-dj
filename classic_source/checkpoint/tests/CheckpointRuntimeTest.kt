@@ -37,13 +37,28 @@ fun main() {
     runtime.clock = { now += 64; now }
     runtime.idle = { Thread.sleep(1) }
     val result = Listener()
+    check(runtime.configure(0.5, "AMBIENT")) // next start has these settings
+    check(runtime.configurePulse(0x18BEF0, true, 120, 12, 90, 90, 600, 2.0))
+    check(!runtime.configurePulse(-1, true, 120, 12, 90, 90, 600, 2.0))
+    check(!runtime.configurePulse(0x18BEF0, true, 120, 0, 90, 90, 600, 2.0))
+    check(!runtime.configurePulse(0x18BEF0, true, 120, 12, 90, 90, 600, Double.NaN))
+    check(!runtime.configure(Double.NaN, "BEAT"))
+    check(!runtime.configure(0.1, "BEAT"))
+    check(!runtime.configure(2.0, "BEAT\nset_power"))
     check(runCatching { runtime.start(Context(), "internal", emptyList(), result) }.isFailure)
     runtime.start(Context(), "microphone", emptyList(), result)
     check(result.beat.await(4, TimeUnit.SECONDS)) { "No PCM output" }
     check(result.lastLevel.isFinite() && result.lastLevel in 0f..1f)
+    check(runtime.configure(2.0, "BEAT"))
+    check(runtime.configure(2.0, "PULSE"))
+    check(runtime.configurePulse(0xFF0033, false, 90, 8, 100, 70, 330, 1.2))
+    check(runtime.configure(1.0, "SPECTRUM"))
+    check(runtime.configure(0.25, "AMBIENT"))
     check(runCatching { runtime.start(Context(), "microphone", emptyList(), result) }.isFailure)
     runtime.stop(); runtime.stop()
     check(sample.closed)
+    check(!runtime.configure(1.0, "SPECTRUM"))
+    check(!runtime.configurePulse(0xFFFFFF, false, 90, 8, 100, 70, 330, 1.2))
     check(result.states.contains("MIC_ANALYSIS_ONLY_NO_LAMPS"))
     check(result.states.contains("STOPPED"))
     check(runCatching { runtime.start(Context(), "microphone", emptyList(), result) }.isFailure)
@@ -82,6 +97,9 @@ fun main() {
     selected.start(Context(), "microphone", listOf("192.168.55.42"), userStatus)
     check(userStatus.beat.await(4,TimeUnit.SECONDS))
     check(userStatus.states.contains("DJ_ACTIVE_1_LAMPS"))
+    check(selected.configure(4.0, "AMBIENT"))
+    check(selected.configure(0.5, "BEAT"))
+    check(transport.starts == 1 && transport.stops == 0)
     selected.stop()
     check(mic.closed && transport.starts == 1 && transport.stops == 1 && !transport.active)
     // Invalid/non-private participants never reach transport or mic acquisition.

@@ -1,7 +1,7 @@
 """Fail-closed source gate: native Classic Kotlin must be exercised by CI.
 
 No SDK, OEM byte, hardware, Gradle execution or network call occurs in this
-test; actual Kotlin compilation and nine main-method regressions run in Android CI.
+test; actual Kotlin compilation and ten main-method regressions run in Android CI.
 """
 import re
 from pathlib import Path
@@ -12,7 +12,7 @@ PROJECT = ROOT / "classic_source/checkpoint_jvm_ci"
 WORKFLOW = ROOT / ".github/workflows/android.yml"
 MAIN_CLASSES = (
     "CoordinatorTestKt", "CancelDuringStartTestKt", "BeatAnalyzerTestKt",
-    "DjEngineTestKt", "PcmBandsTestKt", "CaptureSessionTestKt",
+    "LiveLightStyleTestKt", "DjEngineTestKt", "PcmBandsTestKt", "CaptureSessionTestKt",
     "AndroidAudioRecordInputTestKt", "YeelightReverseMusicTransportTestKt",
     "CheckpointRuntimeTestKt",
 )
@@ -31,13 +31,13 @@ class NativeKotlinCITests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertIn("contents: read", workflow)
 
-    def test_all_nine_production_jvm_programs_and_owned_sources_wired(self):
+    def test_all_ten_production_jvm_programs_and_owned_sources_wired(self):
         build = (PROJECT / "build.gradle.kts").read_text(encoding="utf-8")
         settings = (PROJECT / "settings.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('kotlin("jvm") version "2.2.20"', build)
         for name in MAIN_CLASSES:
             self.assertIn(name, build)
-        self.assertEqual(build.count('to "loftdj.classic.') + build.count('to "io.github.lxsdd.'), 9)
+        self.assertEqual(build.count('to "loftdj.classic.') + build.count('to "io.github.lxsdd.'), len(MAIN_CLASSES))
         for directory in ('"../checkpoint/src"', '"../checkpoint/tests"',
                           '"../checkpoint/tests/android-stubs"', '"../bridge/kotlin"'):
             self.assertIn(directory, build)

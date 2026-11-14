@@ -9,6 +9,11 @@ public interface DjRuntime {
     void start(Context context, String source, List<String> selectedLampIps, Listener listener) throws Exception;
     /** Idempotent, per-bulb safe stop/close; must not send blind recovery retries. */
     void stop();
+    /** Update DSP sensitivity and visual scene without reconnecting owned Music sockets. */
+    boolean configure(double sensitivity, String scene);
+    /** Beat or clock driven pulse, on the same generation-owned Music session. */
+    boolean configurePulse(int rgb, boolean beatSync, int bpm, int minimum, int maximum,
+                           int attackMs, int decayMs, double gamma);
     interface Listener {
         void onState(String state);
         void onBeat(double bpm, float level);

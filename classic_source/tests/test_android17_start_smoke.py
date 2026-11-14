@@ -370,6 +370,86 @@ class Android17StartupTest(unittest.TestCase):
         self.assertTrue(result["target_crash"])
 
 
+    def test_null_dereference_origin_with_obfuscated_oem_class_and_activity_resume(self):
+        prefix = "11-13 09:03:30.000  2200  2200 E AndroidRuntime: "
+        private = "PrivateMethodNameNeverPublish"
+        log = (
+            prefix + "FATAL EXCEPTION: main\n" +
+            prefix + "Process: " + PACKAGE + ", PID: 2200\n" +
+            prefix + "java.lang.NullPointerException: Attempt to invoke virtual method "
+            "'void vendor.Private."+private+"()' on a null object reference\n" +
+            prefix + "    at a.b.c.d(Unknown Source:12)\n" +
+            prefix + "    at android.app.ActivityThread.performResumeActivity(Unknown Source:77)\n"
+        )
+        candidate = {"definitions": frozenset({"La/b/c;"}),
+                     "dex_origin": {"La/b/c;": "SECONDARY_OEM_DEX"}}
+        found = classify_crash(log, candidate_graph=candidate)
+        self.assertEqual(found["exception_category"], "NULL_DEREFERENCE")
+        self.assertEqual(found["exception_depth"], "TOP_LEVEL")
+        self.assertEqual(found["null_operation_bucket"], "NULL_METHOD_INVOKE")
+        self.assertEqual(found["null_top_frame_origin"], "SECONDARY_OEM_DEX")
+        self.assertEqual(found["null_first_owned_frame_origin"], "SECONDARY_OEM_DEX")
+        self.assertEqual(found["null_activity_lifecycle_hint"], "ACTIVITY_RESUME_STACK")
+        self.assertEqual(found["null_crash_thread"], "MAIN_THREAD")
+        self.assertEqual(found["null_frame_evidence"], "STACK_FRAMES_SEEN")
+        self.assertTrue(found["null_origin_attribution_is_diagnostic_only"])
+        for token in ("a.b.c", private, "Private", "Unknown Source", "vendor"):
+            self.assertNotIn(token, str(found))
+
+    def test_null_dereference_non_oem_and_field_or_array_crashes(self):
+        for description, operation in (
+            ("Attempt to read from field 'int vendor.Secret.code' on a null object reference",
+             "NULL_FIELD_READ"),
+            ("Attempt to write to field 'int vendor.Secret.code' on a null object reference",
+             "NULL_FIELD_WRITE"),
+            ("Attempt to get length of null array", "NULL_ARRAY_LENGTH"),
+            ("secret payload", "NULL_OTHER"),
+        ):
+            with self.subTest(operation=operation):
+                log = ("FATAL EXCEPTION: worker\nProcess: " + PACKAGE +
+                       ", PID: 123\njava.lang.NullPointerException: " + description +
+                       "\n    at android.widget.FrameLayout.measure(Unknown Source:4)\n")
+                report = classify_crash(log)
+                self.assertEqual(report["null_operation_bucket"], operation)
+                self.assertEqual(report["null_top_frame_origin"], "PLATFORM_CLASS")
+                self.assertEqual(report["null_first_owned_frame_origin"], "NONE")
+                self.assertEqual(report["null_crash_thread"], "NON_MAIN_THREAD")
+                self.assertNotIn("Secret", str(report))
+
+    def test_null_dereference_foreign_log_and_foreign_process_cannot_set_origin(self):
+        foreign_prefix = "11-13 09:03:30.001  123  123 E WrongTag: "
+        log = ("FATAL EXCEPTION: main\nProcess: com.other.foreign, PID: 77\n"
+               "java.lang.NullPointerException: unrelated\n"
+               "    at io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity.run(Source:2)\n"
+               "FATAL EXCEPTION: main\nProcess: " + PACKAGE + ", PID: 12\n"
+               "java.lang.NullPointerException: bounded\n" +
+               foreign_prefix + "    at fake.Other.stage(Unknown Source:1)\n")
+        found = classify_crash(log)
+        self.assertTrue(found["target_crash"])
+        self.assertEqual(found["null_top_frame_origin"], "NO_FRAME")
+        self.assertEqual(found["null_first_owned_frame_origin"], "NONE")
+        self.assertEqual(found["null_frame_evidence"], "NO_PARSED_FRAMES")
+        self.assertNotIn("fake", str(found))
+        self.assertNotIn("ClassicDjActivity", str(found))
+        old = classify_crash("FATAL EXCEPTION: main\nProcess: "+PACKAGE+
+                             ", PID: 4\njava.lang.ClassNotFoundException: absent\n")
+        self.assertNotIn("null_top_frame_origin", old)
+
+    def test_null_dereference_native_bridge_first_frame_and_framework_recovery(self):
+        bridge = DJ_ACTIVITY
+        frame = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                 ", PID: 29\njava.lang.NullPointerException: secret\n" +
+                 " at " + bridge + ".onCreate(Unknown Source:22)\n" +
+                 " at android.app.Instrumentation.callActivityOnCreate(Unknown Source:99)\n")
+        descriptor = "L" + bridge.replace(".", "/") + ";"
+        result = classify_crash(frame, candidate_graph={
+            "dex_origin": {descriptor: "NATIVE_BRIDGE_DEX"},
+        })
+        self.assertEqual(result["null_top_frame_origin"], "NATIVE_BRIDGE_DEX")
+        self.assertEqual(result["null_first_owned_frame_origin"], "NATIVE_BRIDGE_DEX")
+        self.assertEqual(result["null_activity_lifecycle_hint"], "ACTIVITY_CREATE_STACK")
+        self.assertNotIn(bridge, str(result))
+
     def test_private_provider_class_missing_distinguished_from_transitive_dependency(self):
         provider = "hidden.vendor.PrivateProvider"
         dependency = "com.yeelight.cherry.internal.SecretDependency"

@@ -16,6 +16,22 @@ internal class ClassicLiveLightStyle(
     private val quietThreshold: Double = 0.26,
 ) {
     data class Frame(val rgb: Int, val brightness: Int)
+    enum class Scene { SPECTRUM, AMBIENT, BEAT, PULSE }
+
+    private var scene = Scene.SPECTRUM
+    private val pulse = ClassicPulseScene()
+
+    fun configurePulse(value: ClassicPulseScene.Options): Boolean {
+        pulse.configure(value)
+        return true
+    }
+    /** No scene change sends any command; it affects only the next owned frame. */
+    fun setScene(value: String): Boolean {
+        val parsed = Scene.entries.firstOrNull { it.name == value } ?: return false
+        if (scene != parsed && parsed == Scene.PULSE) pulse.reset()
+        scene = parsed
+        return true
+    }
 
     private var lastTimestampMs = -1L
     private var lastFrameMs = -1L
@@ -34,6 +50,7 @@ internal class ClassicLiveLightStyle(
         hueDegrees = 24.0
         smoothLevel = 0.0
         nextBeatHue = 0
+        pulse.reset()
     }
 
     /** Returns at most one frame per interval, even under arbitrarily fast beat callbacks. */
@@ -53,19 +70,36 @@ internal class ClassicLiveLightStyle(
         // Repeated short PCM updates and sparse updates both behave predictably.
         val alpha = if (delta <= 0) 1.0 else (delta.toDouble() / (delta + 170.0)).coerceIn(0.02, 0.7)
         smoothLevel += (level - smoothLevel) * alpha
+        // Preserve onsets occurring between two bounded reverse output frames.
+        val pulseBrightness = if (scene == Scene.PULSE) pulse.brightness(timestampMs, beat) else null
 
         // A confirmed beat supplies a distinct hue, never an unbounded output burst.
         // In quiet sections a gradual, less intrusive sweep remains active.
-        if (beat) {
-            nextBeatHue = (nextBeatHue + 137) % 360
-            hueDegrees = nextBeatHue.toDouble()
-        } else if (smoothLevel <= quietThreshold) {
-            hueDegrees = (hueDegrees + delta.coerceAtMost(500L) * 0.006) % 360.0
+        when (scene) {
+            Scene.SPECTRUM -> {
+                if (beat) {
+                    nextBeatHue = (nextBeatHue + 137) % 360
+                    hueDegrees = nextBeatHue.toDouble()
+                } else if (smoothLevel <= quietThreshold) {
+                    hueDegrees = (hueDegrees + delta.coerceAtMost(500L) * 0.006) % 360.0
+                }
+            }
+            Scene.AMBIENT ->
+                hueDegrees = (hueDegrees + delta.coerceAtMost(500L) * 0.006) % 360.0
+            Scene.BEAT -> if (beat) {
+                nextBeatHue = (nextBeatHue + 137) % 360
+                hueDegrees = nextBeatHue.toDouble()
+            }
+            Scene.PULSE -> Unit
         }
         if (lastFrameMs >= 0 && timestampMs - lastFrameMs < minFrameIntervalMs) return null
         lastFrameMs = timestampMs
-        val brightness = (12 + smoothLevel * 88).toInt().coerceIn(12, 100)
-        return Frame(hsvRgb(hueDegrees), brightness)
+        val brightness = when (scene) {
+            Scene.AMBIENT -> (12 + smoothLevel * 58).toInt().coerceIn(12, 75)
+            Scene.SPECTRUM, Scene.BEAT -> (12 + smoothLevel * 88).toInt().coerceIn(12, 100)
+            Scene.PULSE -> requireNotNull(pulseBrightness)
+        }
+        return Frame(if (scene == Scene.PULSE) pulse.rgb() else hsvRgb(hueDegrees), brightness)
     }
 
     private fun hsvRgb(hue: Double): Int {
