@@ -222,12 +222,66 @@ class IdentityAblationTests(unittest.TestCase):
         self.assertTrue(observation["entry_added_to_activity"])
         self.assertFalse(observation["ui_visibility_proven"])
         self.assertFalse(observation["raw_logcat_published"])
+        with_laid_out = ident.classify_private_entry_markers(
+            "11-14 18:00:00 I ClassicDjProbe: ENTRY_VIEW_LAID_OUT")
+        self.assertTrue(with_laid_out["entry_view_laid_out"])
+        self.assertFalse(with_laid_out["ui_visibility_proven"])
         self.assertNotIn("secret-private-class", str(observation))
         self.assertEqual(
             ident.classify_private_entry_markers("no provider markers")["status"],
             "PRIVATE_ENTRY_MARKERS_ABSENT_NOT_ACCEPTED")
         with self.assertRaisesRegex(ident.BaselineBlocked, "IDENTITY_ENTRY_LOG_INVALID"):
             ident.classify_private_entry_markers(None)
+
+
+    def test_private_identity_file_capture_is_read_only_and_cleaned(self):
+        actions = []
+        raw = '<?xml version="1.0"?><hierarchy><node text="private"/></hierarchy>'
+        def fake(args, *, timeout, allow_failure):
+            actions.append(tuple(args))
+            if args[:2] == ["shell", "cat"]:
+                return 0, raw
+            return 0, ""
+        output, status = ident.capture_private_hierarchy(fake)
+        self.assertEqual(output, raw)
+        self.assertEqual(status, "UI_DUMP_FILE_OBSERVED_NOT_ACCEPTED")
+        path = ident.PRIVATE_UI_FILE
+        self.assertEqual(actions, [
+            ("shell", "rm", "-f", path),
+            ("shell", "uiautomator", "dump", path),
+            ("shell", "cat", path),
+            ("shell", "rm", "-f", path)])
+        self.assertNotIn("private", status)
+
+    def test_missing_identity_ui_data_is_distinct_from_missing_button(self):
+        calls = []
+        def no_data(args, *, timeout, allow_failure):
+            calls.append(tuple(args))
+            if args[:3] == ["shell", "uiautomator", "dump"]:
+                return 2, "private not printed"
+            return 0, ""
+        self.assertEqual(ident.capture_private_hierarchy(no_data),
+                         (None, "UIAUTOMATOR_DUMP_FAILED"))
+        self.assertEqual(calls[-1], ("shell", "rm", "-f", ident.PRIVATE_UI_FILE))
+        def no_xml(args, *, timeout, allow_failure):
+            if args[:2] == ["shell", "cat"]:
+                return 0, "not an XML hierarchy"
+            return 0, ""
+        self.assertEqual(ident.capture_private_hierarchy(no_xml),
+                         (None, "UI_DUMP_HIERARCHY_MISSING"))
+
+    def test_ui_capture_cleanup_denial_is_not_reported_as_success(self):
+        calls = []
+        def cleanup_fails(args, *, timeout, allow_failure):
+            calls.append(tuple(args))
+            if args[:3] == ["shell", "rm", "-f"]:
+                return (0 if len(calls) == 1 else 2), ""
+            return 0, ""
+        with self.assertRaisesRegex(ident.BaselineBlocked,
+                                    "IDENTITY_UI_TEMP_CLEANUP_FAILED"):
+            ident.capture_private_hierarchy(cleanup_fails)
+        self.assertEqual(calls[-1],
+                         ("shell", "rm", "-f", ident.PRIVATE_UI_FILE))
 
     def test_identity_dj_ui_option_is_boolean_only(self):
         with self.assertRaisesRegex(ident.BaselineBlocked,"IDENTITY_CONTROL_BAD_UI_MODE"):

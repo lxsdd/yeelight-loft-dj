@@ -134,7 +134,17 @@ public final class ClassicDjEntryProvider extends ContentProvider
 
     private static boolean hasExistingEntry(View view, int depth) {
         if (ENTRY_TAG.equals(view.getTag())) {
-            if (view instanceof ClassicDjEntryView) view.bringToFront();
+            if (view instanceof ClassicDjEntryView) {
+                view.bringToFront();
+                Rect visible = new Rect();
+                boolean laidOut = view.isAttachedToWindow() && view.isShown()
+                    && view.isClickable() && view.getGlobalVisibleRect(visible)
+                    && visible.width() > 0 && visible.height() > 0;
+                // Android-side layout is not a proof of top-window
+                // accessibility or UI navigation.
+                probe(laidOut ? "ENTRY_VIEW_LAID_OUT"
+                              : "ENTRY_VIEW_NOT_LAID_OUT");
+            }
             return true;
         }
         if (view instanceof ClassicDjEntryView) {

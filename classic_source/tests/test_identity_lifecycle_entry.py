@@ -114,6 +114,9 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("return null;", source)
         self.assertIn('probe("ENTRY_PROVIDER_REGISTERED")', source)
         self.assertIn('probe("ENTRY_ACTIVITY_RESUMED")', source)
+        self.assertIn("ENTRY_VIEW_LAID_OUT", source)
+        self.assertIn("ENTRY_VIEW_NOT_LAID_OUT", source)
+        self.assertIn("view.getGlobalVisibleRect(visible)", source)
         self.assertIn('if (DIAG_EVENTS.getAndIncrement() >= 40) return;', source)
         self.assertNotIn("Log.d(", source)
 

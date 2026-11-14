@@ -40,7 +40,8 @@ ENTRY_LOG_RE = re.compile(
     r"(?:^|\s)(?:I/)?ClassicDjProbe(?:\s*\(\d+\))?\s*:\s*"
     r"(ENTRY_PROVIDER_REGISTERED|ENTRY_ACTIVITY_RESUMED|"
     r"ENTRY_ROOT_UNAVAILABLE|ENTRY_ALREADY_PRESENT|"
-    r"ENTRY_ADDED_TO_ACTIVITY)\s*$"
+    r"ENTRY_ADDED_TO_ACTIVITY|ENTRY_VIEW_LAID_OUT|"
+    r"ENTRY_VIEW_NOT_LAID_OUT)\s*$"
 )
 
 
@@ -61,9 +62,42 @@ def classify_private_entry_markers(logcat: str) -> dict:
         "root_unavailable": "ENTRY_ROOT_UNAVAILABLE" in observed,
         "entry_added_to_activity": "ENTRY_ADDED_TO_ACTIVITY" in observed,
         "entry_already_present": "ENTRY_ALREADY_PRESENT" in observed,
+        "entry_view_laid_out": "ENTRY_VIEW_LAID_OUT" in observed,
+        "entry_view_not_laid_out": "ENTRY_VIEW_NOT_LAID_OUT" in observed,
         "ui_visibility_proven": False,
         "raw_logcat_published": False,
     }
+
+
+
+PRIVATE_UI_FILE = "/data/local/tmp/classic-dj-owner-only-ui.xml"
+
+
+def capture_private_hierarchy(run=run_adb):
+    """Read a bounded UI hierarchy from an ephemeral offline emulator file.
+
+    Caller already checks pinned APK, exact owner and isolated emulator.
+    Never publish the raw hierarchy; fail closed if removal cannot be proven.
+    """
+    try:
+        code, _ = run(["shell", "rm", "-f", PRIVATE_UI_FILE],
+                      timeout=15, allow_failure=True)
+        require(code == 0, "IDENTITY_UI_TEMP_PREPARE_FAILED")
+        code, _ = run(["shell", "uiautomator", "dump", PRIVATE_UI_FILE],
+                      timeout=40, allow_failure=True)
+        if code != 0:
+            return None, "UIAUTOMATOR_DUMP_FAILED"
+        code, raw = run(["shell", "cat", PRIVATE_UI_FILE],
+                        timeout=20, allow_failure=True)
+        if code != 0:
+            return None, "UI_DUMP_FILE_UNREADABLE"
+        if not isinstance(raw, str) or "<?xml" not in raw or "</hierarchy>" not in raw:
+            return None, "UI_DUMP_HIERARCHY_MISSING"
+        return raw, "UI_DUMP_FILE_OBSERVED_NOT_ACCEPTED"
+    finally:
+        code, _ = run(["shell", "rm", "-f", PRIVATE_UI_FILE],
+                      timeout=15, allow_failure=True)
+        require(code == 0, "IDENTITY_UI_TEMP_CLEANUP_FAILED")
 
 
 def scope(original: Path, candidate: Path, *, serial: str, approved: bool,
@@ -242,7 +276,11 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
         # Only the known in-Classic visible button may open the nonexported
         # DJ Activity. Never use am start against the embedded component.
         offline_guard()
-        ui_xml = adb(["shell", "uiautomator", "dump", "/dev/tty"])
+        ui_xml, capture_code = capture_private_hierarchy()
+        report["native_entry_hierarchy_capture"] = {
+            "status": capture_code, "raw_hierarchy_published": False,
+            "ui_visibility_proven": False,
+        }
         # The provider exists only in this private identity-control build.
         # Its bounded, literal markers distinguish lifecycle/attach failure
         # from an Android accessibility hierarchy observation failure.
@@ -257,11 +295,15 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
                 "ui_visibility_proven": False,
                 "raw_logcat_published": False,
             }
+        if ui_xml is None:
+            report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
+            return report
         try:
             entry_visible = classify_visible_ui(ui_xml, stage="classic_entry")[
                 "expected_native_ui_observed"]
         except SmokeBlocked:
-            entry_visible = False
+            report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
+            return report
         if not entry_visible:
             report["native_dj_observed_state"] = "CLASSIC_DJ_ENTRY_NOT_VISIBLE"
             return report
@@ -277,9 +319,14 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
         pause(3)
         dj_snapshot = adb(["shell", "dumpsys", "activity", "activities"])
         dj_crashes = adb(["logcat", "-b", "crash", "-d"])
-        dj_ui = adb(["shell", "uiautomator", "dump", "/dev/tty"])
+        dj_ui, dj_capture_code = capture_private_hierarchy()
+        report["native_dj_hierarchy_capture"] = {
+            "status": dj_capture_code, "raw_hierarchy_published": False,
+            "ui_visibility_proven": False,
+        }
         report.update(evaluate_identity_navigation(
-            dj_snapshot, classify_crash(dj_crashes, package=ORIGINAL), dj_ui))
+            dj_snapshot, classify_crash(dj_crashes, package=ORIGINAL),
+            dj_ui if dj_ui is not None else ""))
         return report
     finally:
         if installed_path(ORIGINAL) is not None:
