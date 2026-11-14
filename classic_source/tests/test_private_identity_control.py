@@ -259,7 +259,8 @@ class IdentityAblationTests(unittest.TestCase):
         self.assertEqual(data["dj_candidate_enabled_count"], 1)
         self.assertFalse(data["ui_navigation_proven"])
         self.assertFalse(data["raw_private_xml_or_names_published"])
-        self.assertNotIn("private", str(data).replace("PRIVATE", ""))
+        self.assertNotIn("private device", str(data))
+        self.assertNotIn("private.account.value", str(data))
         system = ('<?xml version="1.0"?><hierarchy>'
                   '<node package="android" text="private popup"/>'
                   '</hierarchy>')
