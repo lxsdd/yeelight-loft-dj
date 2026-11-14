@@ -176,6 +176,7 @@ public abstract class ContentProvider {
  public android.content.Context getContext(){return c;}
  public void setTag(Object o){tag=o;} public Object getTag(){return tag;}
  public boolean isShown(){return true;} public boolean isClickable(){return true;}
+ public boolean isAttachedToWindow(){return true;}
  public int getWidth(){return 1;} public int getHeight(){return 1;}
  public void setElevation(float v){} public void bringToFront(){}
  public boolean getGlobalVisibleRect(android.graphics.Rect r){return true;}
