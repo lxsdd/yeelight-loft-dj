@@ -20,7 +20,6 @@ OWNER = "lxsdd"
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 MAX_PR = 1000000
 MAX_RUNS = 100
-MAX_COMMITS = 8
 MAX_MAIN_ADVANCE = 8
 MAX_FILES = 100
 MAX_BYTES = 4_000_000
@@ -173,7 +172,7 @@ def validate_candidate(main_sha, pr_number, candidate_sha, *, main, pull,
     require(isinstance(common, str) and SHA.fullmatch(common) and
             comparison.get("base_commit", {}).get("sha") == main_sha and
             type(behind) is int and 0 <= behind <= MAX_MAIN_ADVANCE and
-            type(ahead) is int and 1 <= ahead <= MAX_COMMITS and
+            type(ahead) is int and ahead >= 1 and
             ((comparison.get("status") == "ahead" and behind == 0 and
               common == main_sha) or
              (comparison.get("status") == "diverged" and behind > 0 and
@@ -198,6 +197,12 @@ def validate_candidate(main_sha, pr_number, candidate_sha, *, main, pull,
                 item.get("committer", {}).get("login") == OWNER and
                 isinstance(item.get("sha"), str) and SHA.fullmatch(item["sha"]),
                 "PR_COMMIT_PROVENANCE_DENIED")
+    # No arbitrary commit-count limit: every GitHub compare commit must be
+    # present, unique, owner-authored and pinned to the requested source SHA.
+    # GitHub compare pagination/truncation must never count as approval: the
+    # exact complete list length above remains mandatory even for long PRs.
+    require(len({item["sha"] for item in commits}) == len(commits),
+            "PR_DUPLICATE_COMMIT_IN_COMPARISON")
     require(commits[-1]["sha"] == candidate_sha,
             "PR_COMMIT_SHA_DRIFT")
     for f in files:

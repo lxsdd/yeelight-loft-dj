@@ -142,6 +142,74 @@ class StrictPreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.CandidateBlocked, "PR_COMPLETE_DIFF_UNAVAILABLE"):
             check(values)
 
+    def test_no_artificial_eight_commit_limit_with_all_provenance_verified(self):
+        # This is the exact class of real regression that blocked Classic PR108:
+        # 10 owner-authored commits and three latest exact-head public CI passes.
+        # Each commit is verified; only the arbitrary count ceiling goes away.
+        for count in (9, 10, 24, 60):
+            with self.subTest(commits=count):
+                vals = copy.deepcopy(self.data)
+                commits = [{
+                    "sha": f"{i:040x}", "author": {"login": "lxsdd"},
+                    "committer": {"login": "lxsdd"},
+                } for i in range(1, count)]
+                commits.append({
+                    "sha": HEAD, "author": {"login": "lxsdd"},
+                    "committer": {"login": "lxsdd"},
+                })
+                vals[2]["ahead_by"] = count
+                vals[2]["commits"] = commits
+                self.assertEqual(check(vals)["source_sha"], HEAD)
+
+                incomplete = copy.deepcopy(vals)
+                incomplete[2]["commits"].pop(count // 2)
+                with self.assertRaisesRegex(
+                        gate.CandidateBlocked, "PR_COMPLETE_DIFF_UNAVAILABLE"):
+                    check(incomplete)
+
+                foreign = copy.deepcopy(vals)
+                foreign[2]["commits"][count // 2]["author"]["login"] = "attacker"
+                with self.assertRaisesRegex(
+                        gate.CandidateBlocked, "PR_COMMIT_PROVENANCE_DENIED"):
+                    check(foreign)
+
+                foreign_committer = copy.deepcopy(vals)
+                foreign_committer[2]["commits"][count // 2]["committer"]["login"] = "attacker"
+                with self.assertRaisesRegex(
+                        gate.CandidateBlocked, "PR_COMMIT_PROVENANCE_DENIED"):
+                    check(foreign_committer)
+
+                duplicate = copy.deepcopy(vals)
+                duplicate[2]["commits"][1]["sha"] = duplicate[2]["commits"][0]["sha"]
+                with self.assertRaisesRegex(
+                        gate.CandidateBlocked, "PR_DUPLICATE_COMMIT_IN_COMPARISON"):
+                    check(duplicate)
+
+                forbidden = copy.deepcopy(vals)
+                forbidden[2]["files"][0]["filename"] = "github_hosted/private_candidate_gate.py"
+                with self.assertRaisesRegex(
+                        gate.CandidateBlocked, "PR_UNTRUSTED_FILE_SCOPE_DENIED"):
+                    check(forbidden)
+
+    def test_commit_count_cannot_override_full_diff_or_exact_head(self):
+        vals = copy.deepcopy(self.data)
+        vals[2]["ahead_by"] = 11
+        vals[2]["commits"] = [
+            {"sha": f"{i:040x}", "author": {"login": "lxsdd"},
+             "committer": {"login": "lxsdd"}}
+            for i in range(1, 11)
+        ] + [{"sha": "c" * 40, "author": {"login": "lxsdd"},
+              "committer": {"login": "lxsdd"}}]
+        # 11 authentic-looking entries do not help if the immutable last
+        # commit differs from the owner-pinned candidate.
+        with self.assertRaisesRegex(gate.CandidateBlocked, "PR_COMMIT_SHA_DRIFT"):
+            check(vals)
+        vals[2]["commits"][-1]["sha"] = HEAD
+        vals[1]["changed_files"] += 1
+        with self.assertRaisesRegex(
+                gate.CandidateBlocked, "PR_COMPLETE_DIFF_UNAVAILABLE"):
+            check(vals)
+
     def test_missing_red_pending_or_unbound_ci_cannot_use_vault(self):
         for index in range(3):
             for mutate in (
