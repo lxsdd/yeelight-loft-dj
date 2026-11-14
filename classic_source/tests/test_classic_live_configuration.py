@@ -38,7 +38,7 @@ class LiveDJConfigurationContract(unittest.TestCase):
         start = service.index('if (ACTION_CONFIG.equals(action))')
         end = service.index('if (!ACTION_MIC.equals(action))', start)
         cfg = service[start:end]
-        self.assertIn("runtime.configure(gain, scene)", cfg)
+        self.assertIn("configureRuntime(runtime, intent, gain, scene)", cfg)
         for invalid in ("startForeground(", "startMusicMode", "set_music", "set_power",
                         "session.start(", "sessionFence.begin()", "obtainExistingCheckpoint()"):
             self.assertNotIn(invalid, cfg)
