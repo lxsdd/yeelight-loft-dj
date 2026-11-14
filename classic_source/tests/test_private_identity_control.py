@@ -323,6 +323,50 @@ class IdentityAblationTests(unittest.TestCase):
         self.assertIsNone(ident.legacy_target_warning_ok_point(
             None, focused, screen))
 
+    def test_android_only_overlay_diagnostic_never_guesses_login_or_taps(self):
+        # The 14 Nov private OEM run exposed 16 Android-only nodes, with no
+        # Classic UI. This read-only classifier must not turn that into an
+        # assertion about a login page or permission to dismiss a dialog.
+        ui = ('<?xml version="1.0"?><hierarchy>'
+              '<node package="android" text="private account token 987"/>'
+              '</hierarchy>')
+        cases = {
+            "mCurrentFocus=Window{6a u0 DeprecatedTargetSdkVersionDialog}":
+                "AOSP_LEGACY_WARNING_TEXT_UNVERIFIED_NO_ACTION",
+            "mCurrentFocus=Window{6a u0 com.android.permissioncontroller/"
+            "GrantPermissionsActivity}":
+                "ANDROID_PERMISSION_DIALOG_NO_ACTION",
+            "mCurrentFocus=Window{6a u0 com.android.systemui/SomeDialog}":
+                "ANDROID_SYSTEM_UI_WINDOW_NO_ACTION",
+            "mCurrentFocus=Window{6a u0 UnexpectedDialog}":
+                "ANDROID_WINDOW_UNCLASSIFIED_NO_ACTION",
+            "mCurrentFocus=null":
+                "ANDROID_FOCUS_UNRESOLVED_NO_ACTION",
+        }
+        for window, expected in cases.items():
+            with self.subTest(expected=expected):
+                result = ident.classify_android_overlay(ui, window)
+                self.assertEqual(result, expected)
+                self.assertNotIn("private account", result)
+                self.assertNotIn("987", result)
+        self.assertEqual(
+            ident.classify_android_overlay(
+                ui.replace('package="android"', 'package="com.yeelight.cherry"'),
+                "mCurrentFocus=Window{6a u0 UnexpectedDialog}"),
+            "NOT_ANDROID_ONLY_NO_ACTION")
+        self.assertEqual(
+            ident.classify_android_overlay(ui, "mCurrentFocus=null\n"
+                                           "mCurrentFocus=null"),
+            "ANDROID_FOCUS_UNRESOLVED_NO_ACTION")
+        self.assertEqual(ident.classify_android_overlay("<bad/>", ""),
+                         "SYSTEM_OVERLAY_HIERARCHY_INVALID_NO_ACTION")
+        self.assertEqual(ident.classify_android_overlay(None, ""),
+                         "SYSTEM_OVERLAY_INPUT_INVALID_NO_ACTION")
+        source = (ROOT / "private_ci/private_identity_control.py").read_text("utf-8")
+        self.assertIn("classify_android_overlay(ui_xml, window_state)", source)
+        self.assertIn('report["legacy_android_warning"]["overlay_classification"]', source)
+
+
     def test_legacy_warning_scope_is_owner_only_and_single_tap_not_global(self):
         source = (ROOT / "private_ci/private_identity_control.py").read_text(
             "utf-8")

@@ -223,6 +223,44 @@ def legacy_target_warning_ok_point(xml: str, focused_windows: str,
         return None
     return ((x1 + x2) // 2, (y1 + y2) // 2)
 
+def classify_android_overlay(ui_xml: str, focused_windows: str) -> str:
+    """Read-only, closed-enum explanation for an Android-only foreground UI.
+
+    This NEVER authorizes a tap. An observed legacy warning still requires the
+    independent exact-warning, button and geometry gate. Raw UI/window strings,
+    OEM identifiers and account contents must never reach public logs.
+    """
+    if (type(ui_xml) is not str or type(focused_windows) is not str
+            or not 0 < len(ui_xml) <= 2_000_000
+            or len(focused_windows) > 2_000_000):
+        return "SYSTEM_OVERLAY_INPUT_INVALID_NO_ACTION"
+    try:
+        surface = classify_private_ui_surface(ui_xml)
+    except BaselineBlocked:
+        return "SYSTEM_OVERLAY_HIERARCHY_INVALID_NO_ACTION"
+    if (surface["original_package_node_count"] != 0
+            or surface["android_package_node_count"] != surface["node_count"]):
+        return "NOT_ANDROID_ONLY_NO_ACTION"
+    focuses = re.findall(
+        r"(?m)^\s*mCurrentFocus=(Window\{[^\r\n]{1,300}\}|null)\s*$",
+        focused_windows)
+    if len(focuses) != 1 or focuses[0] == "null":
+        return "ANDROID_FOCUS_UNRESOLVED_NO_ACTION"
+    focus = focuses[0]
+    if "DeprecatedTargetSdkVersionDialog}" in focus:
+        if "This app was built for an older version of Android" not in ui_xml:
+            return "AOSP_LEGACY_WARNING_TEXT_UNVERIFIED_NO_ACTION"
+        if 'resource-id="android:id/button1"' not in ui_xml:
+            return "AOSP_LEGACY_WARNING_BUTTON_UNVERIFIED_NO_ACTION"
+        return "AOSP_LEGACY_WARNING_OTHER_GUARD_UNVERIFIED_NO_ACTION"
+    if ("GrantPermissionsActivity" in focus
+            or "com.android.permissioncontroller" in focus):
+        return "ANDROID_PERMISSION_DIALOG_NO_ACTION"
+    if "com.android.systemui" in focus:
+        return "ANDROID_SYSTEM_UI_WINDOW_NO_ACTION"
+    return "ANDROID_WINDOW_UNCLASSIFIED_NO_ACTION"
+
+
 def scope(original: Path, candidate: Path, *, serial: str, approved: bool,
           env=None):
     e = os.environ if env is None else env
@@ -463,8 +501,12 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
                     display = adb(["shell", "wm", "size"])
                     warning_point = legacy_target_warning_ok_point(
                         ui_xml, window_state, display)
+                    report["legacy_android_warning"]["overlay_classification"] = (
+                        classify_android_overlay(ui_xml, window_state))
                 except (BaselineBlocked, OSError, ValueError, TypeError):
                     warning_point = None
+                    report["legacy_android_warning"]["overlay_classification"] = (
+                        "WINDOW_PROBE_UNAVAILABLE_NO_ACTION")
                 if warning_point is not None:
                     offline_guard()
                     adb(["shell", "input", "tap",
