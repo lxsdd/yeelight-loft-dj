@@ -94,6 +94,33 @@ STUBS = {
 }
 
 
+# Synthetic only: support in-place live config Intent values and horizontal
+# native control rows; the production Android SDK remains authoritative.
+STUBS.update({
+'android/content/Intent.java': '''package android.content; public class Intent {
+ public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4;
+ public Intent(Context c, Class<?> k){} public Intent addFlags(int f){return this;}
+ public Intent setAction(String a){return this;} public String getAction(){return "";}
+ public Intent putExtra(String k,String[] a){return this;}
+ public Intent putExtra(String k,String v){return this;}
+ public Intent putExtra(String k,double v){return this;}
+ public String[] getStringArrayExtra(String k){return null;}
+ public String getStringExtra(String k){return null;}
+ public double getDoubleExtra(String k,double fallback){return fallback;}
+}''',
+'android/widget/LinearLayout.java': '''package android.widget;
+public class LinearLayout extends android.view.View {
+ public static final int VERTICAL=1, HORIZONTAL=0;
+ public LinearLayout(android.content.Context c){super(c);}
+ public void setOrientation(int v){} public void setPadding(int a,int b,int c,int d){}
+ public void setGravity(int g){} public void addView(android.view.View v){}
+ public void addView(android.view.View v,LayoutParams p){}
+ public static class LayoutParams extends android.view.ViewGroup.LayoutParams {
+  public LayoutParams(int w,int h,float weight){super(w,h);}
+ }
+}''',
+})
+
 # These stubs cover the new original-identity-only lifecycle adapter.
 # The production build still uses the real Android SDK and D8, not these fakes.
 STUBS.update({
