@@ -253,12 +253,65 @@ def classify_android_overlay(ui_xml: str, focused_windows: str) -> str:
         if 'resource-id="android:id/button1"' not in ui_xml:
             return "AOSP_LEGACY_WARNING_BUTTON_UNVERIFIED_NO_ACTION"
         return "AOSP_LEGACY_WARNING_OTHER_GUARD_UNVERIFIED_NO_ACTION"
-    if ("GrantPermissionsActivity" in focus
-            or "com.android.permissioncontroller" in focus):
+    # An unrelated Android launcher may ANR on a busy offline emulator;
+    # a system modal can then obscure a resumed Classic Activity. This is
+    # read-only evidence, not consent to dismiss, retry or grant permissions.
+    lower = focus.lower()
+    if ("application not responding:" in lower or "app not responding:" in lower
+            or "isn't responding" in lower):
+        if re.search(r"(?<![a-z0-9_.])com\.yeelight\.cherry(?=[^a-z0-9_.]|$)", lower):
+            return "ANDROID_CLASSIC_ANR_DIALOG_NO_ACTION"
+        if ("com.google.android.apps.nexuslauncher" in lower
+                or "com.android.launcher3" in lower):
+            return "ANDROID_LAUNCHER_ANR_DIALOG_NO_ACTION"
+        if "system}" in lower or "com.android.systemui" in lower:
+            return "ANDROID_SYSTEM_ANR_DIALOG_NO_ACTION"
+        return "ANDROID_OTHER_APP_ANR_DIALOG_NO_ACTION"
+    if ("application error:" in lower or "apperrordialog" in lower
+            or "crashdialog" in lower or "keeps stopping" in lower):
+        return "ANDROID_PROCESS_ERROR_DIALOG_NO_ACTION"
+    if ("splash screen com.yeelight.cherry" in lower
+            or "starting com.yeelight.cherry" in lower):
+        return "ANDROID_CLASSIC_SPLASH_WINDOW_NO_ACTION"
+    if ("GrantPermissionsActivity" in focus or "permissioncontroller" in lower):
         return "ANDROID_PERMISSION_DIALOG_NO_ACTION"
-    if "com.android.systemui" in focus:
+    if "com.android.systemui" in lower:
         return "ANDROID_SYSTEM_UI_WINDOW_NO_ACTION"
+    if ("com.google.android.apps.nexuslauncher" in lower
+            or "com.android.launcher3" in lower):
+        return "ANDROID_LAUNCHER_WINDOW_NO_ACTION"
+    if "com.yeelight.cherry" in lower:
+        return "ANDROID_CLASSIC_OWNED_WINDOW_ANDROID_UI_NO_ACTION"
+    if "com.android." in lower or "com.google.android." in lower:
+        return "ANDROID_OTHER_SYSTEM_PACKAGE_WINDOW_NO_ACTION"
+    # Match only immutable public AOSP error phrases, without exporting text.
+    if ("isn't responding" in ui_xml.lower()
+            and ("close app" in ui_xml.lower() or "wait" in ui_xml.lower())):
+        return "ANDROID_ANR_UI_FINGERPRINT_NO_ACTION"
     return "ANDROID_WINDOW_UNCLASSIFIED_NO_ACTION"
+
+
+def focused_app_relation(focused_windows: str) -> str:
+    """Closed enum comparing WM focused Activity with Classic; no raw IDs."""
+    if type(focused_windows) is not str or len(focused_windows) > 2_000_000:
+        return "FOCUSED_APP_INPUT_INVALID_NO_ACTION"
+    rows = re.findall(r"(?m)^[ \t]*mFocusedApp=([^\r\n]{1,512})[ \t]*$",
+                      focused_windows)
+    if len(rows) != 1:
+        return "FOCUSED_APP_AMBIGUOUS_OR_MISSING_NO_ACTION"
+    token = rows[0].strip()
+    if token == "null":
+        return "FOCUSED_APP_NULL_NO_ACTION"
+    if re.search(r"(?<![A-Za-z0-9_.])com\.yeelight\.cherry(?=[/:\s}])", token):
+        return "CLASSIC_APP_SELECTED"
+    if ("com.google.android.apps.nexuslauncher/" in token
+            or "com.android.launcher3/" in token):
+        return "ANDROID_LAUNCHER_SELECTED"
+    if "com.android.systemui/" in token:
+        return "ANDROID_SYSTEM_UI_SELECTED"
+    if "permissioncontroller/" in token:
+        return "ANDROID_PERMISSION_CONTROLLER_SELECTED"
+    return "OTHER_OR_UNRESOLVED_APP_SELECTED"
 
 
 def read_focused_window_snapshot(run=adb):
@@ -522,6 +575,8 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
                 try:
                     window_state, focus_source = read_focused_window_snapshot()
                     report["legacy_android_warning"]["overlay_focus_source"] = focus_source
+                    report["legacy_android_warning"]["focused_app_relation"] = (
+                        focused_app_relation(window_state))
                     display = adb(["shell", "wm", "size"])
                     warning_point = legacy_target_warning_ok_point(
                         ui_xml, window_state, display)

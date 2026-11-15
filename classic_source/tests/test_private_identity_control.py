@@ -424,6 +424,90 @@ class IdentityAblationTests(unittest.TestCase):
         self.assertNotIn('pm grant ', source)
 
 
+    def test_android_only_focus_classifies_system_anr_without_login_guesses(self):
+        ui = ('<?xml version="1.0"?><hierarchy>'
+              '<node package="android" text="Private email@example.org"/>'
+              '</hierarchy>')
+        cases = {
+            "Application Not Responding: com.google.android.apps.nexuslauncher":
+                "ANDROID_LAUNCHER_ANR_DIALOG_NO_ACTION",
+            "Application Not Responding: com.yeelight.cherry":
+                "ANDROID_CLASSIC_ANR_DIALOG_NO_ACTION",
+            "Application Not Responding: system":
+                "ANDROID_SYSTEM_ANR_DIALOG_NO_ACTION",
+            "Application Not Responding: com.other.example":
+                "ANDROID_OTHER_APP_ANR_DIALOG_NO_ACTION",
+            "Application Error: com.other.example":
+                "ANDROID_PROCESS_ERROR_DIALOG_NO_ACTION",
+            "Splash Screen com.yeelight.cherry":
+                "ANDROID_CLASSIC_SPLASH_WINDOW_NO_ACTION",
+            "com.google.android.permissioncontroller/.GrantPermissionsActivity":
+                "ANDROID_PERMISSION_DIALOG_NO_ACTION",
+            "com.google.android.apps.nexuslauncher/.Launcher":
+                "ANDROID_LAUNCHER_WINDOW_NO_ACTION",
+            "com.yeelight.cherry/.MainActivity":
+                "ANDROID_CLASSIC_OWNED_WINDOW_ANDROID_UI_NO_ACTION",
+            "com.google.android.setupwizard/.Wizard":
+                "ANDROID_OTHER_SYSTEM_PACKAGE_WINDOW_NO_ACTION",
+            "OpaquePrivateWindow": "ANDROID_WINDOW_UNCLASSIFIED_NO_ACTION",
+        }
+        for title, expected in cases.items():
+            with self.subTest(expected=expected):
+                actual = ident.classify_android_overlay(
+                    ui, "  mCurrentFocus=Window{6a u0 " + title + "}\n")
+                self.assertEqual(actual, expected)
+                self.assertNotIn("email@example.org", actual)
+                self.assertTrue(actual.endswith("_NO_ACTION"))
+        self.assertEqual(ident.classify_android_overlay(
+            ui, "mCurrentFocus=Window{6a u0 Application Not Responding: "
+                "prefixcom.yeelight.cherry.evil}"),
+            "ANDROID_OTHER_APP_ANR_DIALOG_NO_ACTION")
+        self.assertEqual(ident.classify_android_overlay(
+            ui, "mCurrentFocus=Window{6a u0 Unknown}\n"
+                "mCurrentFocus=Window{7a u0 Other}"),
+            "ANDROID_FOCUS_UNRESOLVED_NO_ACTION")
+
+    def test_android_only_ui_anr_fingerprint_is_diagnostic_only(self):
+        ui = ('<?xml version="1.0"?><hierarchy>'
+              '<node package="android" text="Launcher isn\'t responding"/>'
+              '<node package="android" text="Close app"/></hierarchy>')
+        self.assertEqual(ident.classify_android_overlay(
+            ui, "mCurrentFocus=Window{6a u0 UnknownWindow}"),
+            "ANDROID_ANR_UI_FINGERPRINT_NO_ACTION")
+        self.assertEqual(ident.classify_android_overlay(
+            ui.replace("Close app", "Cancel"),
+            "mCurrentFocus=Window{6a u0 UnknownWindow}"),
+            "ANDROID_WINDOW_UNCLASSIFIED_NO_ACTION")
+
+    def test_display_focused_app_relation_is_redacted_and_fail_closed(self):
+        cases = {
+            "ActivityRecord{123 u0 com.yeelight.cherry/.MainActivity t2}":
+                "CLASSIC_APP_SELECTED",
+            "ActivityRecord{123 u0 com.google.android.apps.nexuslauncher/.Launcher t2}":
+                "ANDROID_LAUNCHER_SELECTED",
+            "ActivityRecord{123 u0 com.android.systemui/.Demo t2}":
+                "ANDROID_SYSTEM_UI_SELECTED",
+            "ActivityRecord{123 u0 com.google.android.permissioncontroller/.Dialog t2}":
+                "ANDROID_PERMISSION_CONTROLLER_SELECTED",
+            "ActivityRecord{123 u0 com.other.thing/.Activity t2}":
+                "OTHER_OR_UNRESOLVED_APP_SELECTED",
+            "null": "FOCUSED_APP_NULL_NO_ACTION",
+        }
+        for focused, expected in cases.items():
+            with self.subTest(expected=expected):
+                result = ident.focused_app_relation("  mFocusedApp=" + focused + "\n")
+                self.assertEqual(result, expected)
+        self.assertEqual(ident.focused_app_relation(""),
+                         "FOCUSED_APP_AMBIGUOUS_OR_MISSING_NO_ACTION")
+        self.assertEqual(ident.focused_app_relation(
+            "mFocusedApp=null\nmFocusedApp=null"),
+            "FOCUSED_APP_AMBIGUOUS_OR_MISSING_NO_ACTION")
+        self.assertEqual(ident.focused_app_relation(None),
+                         "FOCUSED_APP_INPUT_INVALID_NO_ACTION")
+        source = (ROOT / "private_ci/private_identity_control.py").read_text("utf-8")
+        self.assertIn("focused_app_relation(window_state)", source)
+        self.assertNotIn("pm grant ", source)
+
     def test_legacy_warning_scope_is_owner_only_and_single_tap_not_global(self):
         source = (ROOT / "private_ci/private_identity_control.py").read_text(
             "utf-8")
