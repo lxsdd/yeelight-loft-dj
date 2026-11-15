@@ -16,7 +16,8 @@ from zipfile import ZipFile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "private_ci"))
 from classloader_linkage_forensics import (
     ForensicsBlocked, bucket, summarize_linkage, target_crash_descriptor,
-    load_dex_graphs, verify_compiler, safe_main,
+    summarize_target_suppressed_errors, load_dex_graphs, verify_compiler,
+    safe_main, stage_guard,
 )
 
 A = "Ltest/fixture/Target;"
@@ -26,6 +27,39 @@ JAVA = "Ljava/lang/Object;"
 
 
 class StaticLinkageTests(unittest.TestCase):
+    def test_valid_dex_flat_and_obfuscated_class_names(self):
+        # FullClassName accepts no package plus DEX-only digits and '-'.
+        for name in ("La;", "L1;", "L-;", "L$;", "Lpkg/9;", "Lpkg/-$$Lambda$3;"):
+            with self.subTest(name=name):
+                graph = {A: [name], name: [JAVA]}
+                origins = {A: "SECONDARY_OEM_DEX", name: "PRIMARY_OEM_DEX"}
+                report = summarize_linkage(graph, dict(graph), origins, A)
+                self.assertEqual(report["clone_direct_unresolved_parent_bucket"], "NONE")
+                self.assertEqual(report["clone_transitive_unresolved_parent_bucket"], "NONE")
+                self.assertTrue(report["target_parents_preserved"])
+                self.assertFalse(report["art_class_loading_verified"])
+                direct = summarize_linkage({name: [JAVA]}, {name: [JAVA]},
+                                           {name: "SECONDARY_OEM_DEX"}, name)
+                self.assertEqual(direct["clone_target_definition"], "PRESENT")
+                self.assertFalse(direct["art_class_loading_verified"])
+
+    def test_valid_flat_name_does_not_waive_missing_parent(self):
+        root = "L1;"
+        report = summarize_linkage({A: [root]}, {A: [root]},
+                                   {A: "SECONDARY_OEM_DEX"}, A)
+        self.assertEqual(report["clone_direct_unresolved_parent_bucket"], "ONE")
+        self.assertEqual(report["clone_transitive_unresolved_parent_bucket"], "ONE")
+        self.assertFalse(report["art_class_loading_verified"])
+
+    def test_invalid_dex_class_descriptors_still_fail_closed(self):
+        for malformed in ("L;", "L/bad;", "Lbad//Name;", "Lbad/;",
+                          "Lbad Name;", "Lbad[Array;", "L../secret;",
+                          "Lbad.Type;", "Lbad/Type;extra;"):
+            with self.subTest(malformed=malformed):
+                with self.assertRaisesRegex(ForensicsBlocked, "^CLASS_GRAPH_INVALID$"):
+                    summarize_linkage({A: [malformed]}, {A: [malformed]},
+                                      {A: "SECONDARY_OEM_DEX"}, A)
+
     def test_existing_target_no_parent_gaps_still_unverified(self):
         g = {A: [B], B: [JAVA]}
         result = summarize_linkage(g, dict(g), {A: "SECONDARY_OEM_DEX",
@@ -153,6 +187,107 @@ class CrashSelectionTests(unittest.TestCase):
                 target_crash_descriptor(bad)
 
 
+
+    def test_suppressed_causes_are_target_scoped_and_privacy_safe(self):
+        log = ("FATAL EXCEPTION: main\nProcess: foreign.app, PID: 2\n"
+               "Suppressed: java.lang.VerifyError: PRIVATE_FOREIGN\n"
+               "FATAL EXCEPTION: main\nProcess: io.lxsdd.yeelightdj, PID: 3\n"
+               "Caused by: java.lang.ClassNotFoundException: PRIVATE_APP\n"
+               "Suppressed: java.io.IOException: /private/file/path\n"
+               "Suppressed: java.lang.NoClassDefFoundError: PRIVATE_LINK\n")
+        report = summarize_target_suppressed_errors(log)
+        self.assertEqual(report["status"], "TARGET_SUPPRESSED_CAUSE_EVIDENCE_ONLY")
+        self.assertEqual(report["suppressed_count_bucket"], "TWO_TO_THREE")
+        self.assertTrue(report["suppressed_io_failure_present"])
+        self.assertTrue(report["suppressed_linkage_failure_present"])
+        self.assertFalse(report["suppressed_verifier_failure_present"])
+        self.assertFalse(report["suppressed_security_failure_present"])
+        self.assertFalse(report["art_class_loading_verified"])
+        self.assertNotIn("PRIVATE_", json.dumps(report))
+        self.assertNotIn("/private/", json.dumps(report))
+
+    def test_target_suppressed_verify_is_not_confused_with_foreign_crash(self):
+        log = ("FATAL EXCEPTION: main\nProcess: foreign.app, PID: 2\n"
+               "Suppressed: java.io.IOException: FOREIGN\n"
+               "FATAL EXCEPTION: main\nProcess: io.lxsdd.yeelightdj, PID: 3\n"
+               "Suppressed: java.lang.VerifyError: PRIVATE_TARGET\n"
+               "Suppressed: java.lang.SecurityException: PRIVATE_REDACTED\n")
+        report = summarize_target_suppressed_errors(log)
+        self.assertTrue(report["suppressed_verifier_failure_present"])
+        self.assertTrue(report["suppressed_security_failure_present"])
+        self.assertFalse(report["suppressed_io_failure_present"])
+        self.assertFalse(report["suppressed_other_failure_present"])
+        self.assertNotIn("PRIVATE_", json.dumps(report))
+
+    def test_suppressed_absence_and_invalid_inputs_fail_closed(self):
+        no_target = "FATAL EXCEPTION: main\nProcess: foreign.app, PID: 2\n"
+        report = summarize_target_suppressed_errors(no_target)
+        self.assertEqual(report["status"], "TARGET_FATAL_NOT_FOUND")
+        self.assertEqual(report["suppressed_count_bucket"], "NONE")
+        for invalid in (b"no", "x" * 2_000_001):
+            with self.assertRaisesRegex(ForensicsBlocked, "^CRASH_LOG_INVALID$"):
+                summarize_target_suppressed_errors(invalid)
+
+class CliImportAndStageFailureTests(unittest.TestCase):
+    def test_real_script_import_layout_from_clean_python_process(self):
+        """Catch the original private_ci -> classic_source import bug pre-merge.
+
+        -I prevents PYTHONPATH/site/user imports from making a broken CI pass.
+        The private_ci directory is the *only* initial application path, exactly
+        as when GitHub Actions invokes the diagnostic file as a Python script.
+        No OEM input or filesystem modification is needed.
+        """
+        script_dir = Path(__file__).resolve().parents[1] / "private_ci"
+        program = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(script_dir)!r})\n"
+            "from pathlib import Path\n"
+            "from classloader_linkage_forensics import load_dex_graphs, ForensicsBlocked\n"
+            "try:\n"
+            "    load_dex_graphs(Path('unavailable-stock.apk'), "
+            "Path('unavailable-clone.apk'))\n"
+            "except ForensicsBlocked as exc:\n"
+            "    assert str(exc) == 'PRIVATE_GRAPH_UNREADABLE'\n"
+            "else:\n"
+            "    raise AssertionError('expected missing synthetic fixture')\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", program], cwd=str(script_dir),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
+            check=False,
+        )
+        # Do not forward possible exception tracebacks containing private paths.
+        self.assertEqual(completed.returncode, 0, "isolated CLI import regression")
+
+    def test_unexpected_exceptions_become_fixed_phase_codes(self):
+        secret = "PRIVATE_OEM_INTERNAL_SYMBOL_SHOULD_NOT_ESCAPE"
+        for code in (
+            "TARGET_CRASH_CLASSIFICATION_FAILED",
+            "PRIVATE_GRAPH_ANALYSIS_FAILED",
+            "CLASS_LINKAGE_ANALYSIS_FAILED",
+            "ART_VERIFY_EXECUTION_FAILED",
+        ):
+            with self.subTest(code=code):
+                def crash():
+                    raise RuntimeError(secret)
+                with self.assertRaises(ForensicsBlocked) as captured:
+                    stage_guard(code, crash)
+                self.assertEqual(str(captured.exception), code)
+                self.assertNotIn(secret, str(captured.exception))
+
+    def test_explicit_diagnostic_block_code_survives_phase_guard(self):
+        def rejected():
+            raise ForensicsBlocked("PRIVATE_GRAPH_UNREADABLE")
+        with self.assertRaisesRegex(ForensicsBlocked, "^PRIVATE_GRAPH_UNREADABLE$"):
+            stage_guard("PRIVATE_GRAPH_ANALYSIS_FAILED", rejected)
+
+    def test_arbitrary_phase_codes_cannot_leak_private_data(self):
+        operation = mock.Mock()
+        with self.assertRaisesRegex(ForensicsBlocked, "^STAGE_CODE_INVALID$"):
+            stage_guard("private/class/name/from-oem", operation)
+        operation.assert_not_called()
+
+
 class ArchiveAndRunnerTests(unittest.TestCase):
     def test_exact_archive_dex_sets_and_duplicate_rejection(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -191,7 +326,17 @@ class ArchiveAndRunnerTests(unittest.TestCase):
         denied = subprocess.CompletedProcess([], 1, b"Failure", b"")
         with mock.patch("subprocess.run", return_value=denied):
             self.assertEqual(verify_compiler("emulator-5554"),
-                             "ART_VERIFY_COMMAND_REJECTED")
+                             "ART_VERIFY_REPORTED_FAILURE")
+        for result, expected in (
+            (subprocess.CompletedProcess([], 0, b"Failure", b""), "ART_VERIFY_REPORTED_FAILURE"),
+            (subprocess.CompletedProcess([], 1, b"Permission denied", b""), "ART_VERIFY_COMMAND_EXIT_NONZERO"),
+            (subprocess.CompletedProcess([], 1, b"Success", b""), "ART_VERIFY_COMMAND_EXIT_NONZERO"),
+            (subprocess.CompletedProcess([], 0, b"Success not really", b""), "ART_VERIFY_COMMAND_UNRECOGNIZED_OUTPUT"),
+            (subprocess.CompletedProcess([], 0, b"", b""), "ART_VERIFY_COMMAND_UNRECOGNIZED_OUTPUT"),
+        ):
+            with self.subTest(expected=expected):
+                with mock.patch("subprocess.run", return_value=result):
+                    self.assertEqual(verify_compiler("emulator-5554"), expected)
         with mock.patch("subprocess.run",
                         side_effect=subprocess.TimeoutExpired([], 120)):
             self.assertEqual(verify_compiler("emulator-5554"),
