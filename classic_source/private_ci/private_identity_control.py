@@ -30,6 +30,7 @@ from android17_start_smoke import (
     classify_crash, classify_visible_ui, entry_button_coordinates,
     SmokeBlocked, DJ_ACTIVITY, GLOBAL_TOP, TOP_COMPONENT,
 )
+from page_size_warning import read_warning_action
 
 SIGNED = "classic-loft-dj-IDENTITY-TEST-SIGNED.apk"
 UNSIGNED = "classic-loft-dj-IDENTITY-UNSIGNED.apk"
@@ -173,9 +174,11 @@ def legacy_target_warning_ok_point(xml: str, focused_windows: str,
         return None
     if "<!DOCTYPE" in xml.upper() or "<!ENTITY" in xml.upper():
         return None
-    if not re.search(
-            r"mCurrentFocus=Window\{[^\n]{0,300}\bDeprecatedTargetSdkVersionDialog\}",
-            focused_windows):
+    current_focus = re.findall(
+        r"(?m)^[ \t]*mCurrentFocus=(Window\{[^\r\n]{1,300}\}|null)[ \t]*$",
+        focused_windows)
+    if len(current_focus) != 1 or not current_focus[0].endswith(
+            " DeprecatedTargetSdkVersionDialog}"):
         return None
     start = xml.find("<?xml")
     end = xml.find("</hierarchy>", start if start >= 0 else 0)
@@ -337,6 +340,80 @@ def read_focused_window_snapshot(run=adb):
         return "", "FOCUS_PROBE_UNAVAILABLE_NO_ACTION"
 
 
+def reveal_after_known_warnings(ui_xml, *, pause=time.sleep):
+    """At most one acknowledgment per known warning, then recapture the UI.
+
+    PageSizeMismatchDialog can appear on EACH Activity start, including DJ.
+    Two distinct Android compatibility warnings may be stacked. Unknown,
+    repeated, non-system or permission dialogs are never clicked. This is
+    called only inside the SHA/owner/offline-verified identity probe.
+    """
+    observations = []
+    seen = set()
+    for _ in range(2):
+        if ui_xml is None:
+            break
+        try:
+            surface = classify_private_ui_surface(ui_xml)
+            android_only = (surface["android_package_node_count"] == surface["node_count"])
+            if not android_only:
+                break
+            window_state, focus_source = read_focused_window_snapshot(run=adb)
+            observation = {
+                "status": "NOT_MATCHED_NO_ACTION", "acknowledged": False,
+                "permission_granted": False, "product_ui_accepted": False,
+                "overlay_focus_source": focus_source,
+                "focused_app_relation": focused_app_relation(window_state),
+                "overlay_classification": classify_android_overlay(ui_xml, window_state),
+            }
+            display = adb(["shell", "wm", "size"])
+            warning_point = legacy_target_warning_ok_point(ui_xml, window_state, display)
+            kind = "DEPRECATED_TARGET"
+            if warning_point is None:
+                page_warning = read_warning_action(ui_xml, window_state, display, adb)
+                if page_warning is not None:
+                    warning_point, reason = page_warning
+                    kind = "PAGE_SIZE"
+                    observation["page_size_warning_reason"] = reason
+            # Even the old legacy handler must be associated with Classic,
+            # not an unrelated system modal left over from another app.
+            if observation["focused_app_relation"] != "CLASSIC_APP_SELECTED":
+                warning_point = None
+            if warning_point is None or kind in seen:
+                if kind in seen:
+                    observation["status"] = "REPEATED_WARNING_NO_ACTION"
+                observations.append(observation)
+                break
+            # Re-read focus before a tap: never act on a stale system window
+            # after the app changed foreground during resource lookups.
+            current, _ = read_focused_window_snapshot(run=adb)
+            tokens = lambda value: re.findall(
+                r"(?m)^[ \t]*m(?:CurrentFocus|FocusedApp)=[^\r\n]+", value)
+            if tokens(current) != tokens(window_state):
+                observation["status"] = "WARNING_FOCUS_CHANGED_NO_ACTION"
+                observations.append(observation)
+                break
+            offline_guard()
+            adb(["shell", "input", "tap", str(warning_point[0]), str(warning_point[1])])
+            seen.add(kind)
+            observation["status"] = (
+                "EXACT_AOSP_PAGE_SIZE_WARNING_ACKNOWLEDGED" if kind == "PAGE_SIZE"
+                else "EXACT_AOSP_DEPRECATED_TARGET_WARNING_ACKNOWLEDGED")
+            observation["acknowledged"] = True
+            observations.append(observation)
+            pause(1)
+            ui_xml, code = capture_private_hierarchy()
+            observation["recapture_status"] = code
+        except (BaselineBlocked, OSError, ValueError, TypeError, AttributeError) as error:
+            if isinstance(error, BaselineBlocked) and str(error) == "IDENTITY_UI_TEMP_CLEANUP_FAILED":
+                raise  # Never hide a failure to remove the private UI dump.
+            observations.append({"status": "WARNING_PROBE_UNAVAILABLE_NO_ACTION",
+                                 "acknowledged": False, "permission_granted": False,
+                                 "product_ui_accepted": False})
+            break
+    return ui_xml, observations
+
+
 def scope(original: Path, candidate: Path, *, serial: str, approved: bool,
           env=None):
     e = os.environ if env is None else env
@@ -451,9 +528,11 @@ def evaluate_identity_navigation(snapshot: str, crash: dict, ui_dump: str) -> di
     visible = False
     if state == "DJ_UI_NOT_VISIBLE":
         try:
-            visible = classify_visible_ui(ui_dump, stage="native_dj")[
-                "expected_native_ui_observed"]
-        except SmokeBlocked:
+            surface = classify_private_ui_surface(ui_dump)
+            visible = (surface["original_package_node_count"] == surface["node_count"]
+                       and classify_visible_ui(ui_dump, stage="native_dj")[
+                           "expected_native_ui_observed"])
+        except (SmokeBlocked, BaselineBlocked):
             visible = False
         if visible:
             state = "DJ_NATIVE_CONTROLS_VISIBLE"
@@ -463,6 +542,31 @@ def evaluate_identity_navigation(snapshot: str, crash: dict, ui_dump: str) -> di
             "native_loft_dj_functionally_accepted": False,
             "classic_functionally_accepted": False,
             "physical_device_tested": False,
+            "raw_private_payload_published": False}
+
+
+def evaluate_original_surface(snapshot, crash, ui_xml):
+    """Require original OEM views beyond our injected debug entry."""
+    visible = False
+    entry = False
+    try:
+        surface = classify_private_ui_surface(ui_xml)
+        root = ET.fromstring(ui_xml[ui_xml.find("<?xml"):
+                                  ui_xml.find("</hierarchy>") + len("</hierarchy>")])
+        oem = [n for n in root.iter("node") if n.get("package") == ORIGINAL
+               and n.get("resource-id", "").startswith(ORIGINAL + ":id/")
+               and not n.get("resource-id", "").endswith("/loft_dj_button")]
+        visible = (original_foreground(snapshot) and not crash["target_crash"]
+                   and not crash["unattributed_fatal"] and bool(oem)
+                   and surface["original_package_node_count"] == surface["node_count"])
+        buttons = [n for n in root.iter("node") if n.get("package") == ORIGINAL
+                   and n.get("text") == "Loft DJ" and n.get("clickable") == "true"
+                   and n.get("enabled") == "true"]
+        entry = visible and len(buttons) == 1
+    except (BaselineBlocked, SmokeBlocked, ET.ParseError, TypeError, ValueError):
+        pass
+    return {"original_ui_visible": bool(visible), "classic_entry_visible": bool(entry),
+            "classic_functionally_accepted": False, "login_gate_proven": False,
             "raw_private_payload_published": False}
 
 
@@ -552,76 +656,34 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
             report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
             return report
         if not entry_visible:
-            # An Android-only hierarchy is not proof the app's own Button is
-            # hidden. AOSP's first-launch deprecated-target SDK warning can
-            # cover an otherwise attached/resumed legacy Classic Activity.
-            # Acknowledge ONLY the exact documented warning once, using its
-            # verified visible positive button on the offline test emulator.
-            # Unknown windows, runtime permission requests, Play Protect, and
-            # unrelated dialogs stay untouched and cannot be passed.
-            report["legacy_android_warning"] = {
-                "status": "NOT_MATCHED_NO_ACTION",
-                "acknowledged": False,
-                "permission_granted": False,
-                "product_ui_accepted": False,
-            }
-            surface = report["native_entry_ui_surface"]
-            android_only = (
-                surface["original_package_node_count"] == 0
-                and surface["android_package_node_count"] == surface["node_count"])
-            if android_only:
-                # Never serialize the OEM/window text. Verification operates
-                # only in this process and returns either coordinates or None.
-                try:
-                    window_state, focus_source = read_focused_window_snapshot()
-                    report["legacy_android_warning"]["overlay_focus_source"] = focus_source
-                    report["legacy_android_warning"]["focused_app_relation"] = (
-                        focused_app_relation(window_state))
-                    display = adb(["shell", "wm", "size"])
-                    warning_point = legacy_target_warning_ok_point(
-                        ui_xml, window_state, display)
-                    report["legacy_android_warning"]["overlay_classification"] = (
-                        classify_android_overlay(ui_xml, window_state))
-                except (BaselineBlocked, OSError, ValueError, TypeError):
-                    warning_point = None
-                    report["legacy_android_warning"]["overlay_classification"] = (
-                        "WINDOW_PROBE_UNAVAILABLE_NO_ACTION")
-                if warning_point is not None:
-                    offline_guard()
-                    adb(["shell", "input", "tap",
-                         str(warning_point[0]), str(warning_point[1])])
-                    report["legacy_android_warning"] = {
-                        "status": "EXACT_AOSP_DEPRECATED_TARGET_WARNING_ACKNOWLEDGED",
-                        "acknowledged": True,
-                        "permission_granted": False,
-                        "product_ui_accepted": False,
-                    }
-                    pause(1)
-                    ui_xml, capture_code = capture_private_hierarchy()
-                    report["native_entry_hierarchy_after_warning"] = {
-                        "status": capture_code,
-                        "raw_hierarchy_published": False,
-                        "product_ui_accepted": False,
-                    }
-                    if ui_xml is None:
-                        report["native_dj_observed_state"] = (
-                            "CLASSIC_UI_HIERARCHY_UNAVAILABLE")
-                        return report
-                    try:
-                        report["native_entry_ui_surface_after_warning"] = (
-                            classify_private_ui_surface(ui_xml))
-                        entry_visible = classify_visible_ui(
-                            ui_xml, stage="classic_entry")[
-                                "expected_native_ui_observed"]
-                    except (BaselineBlocked, SmokeBlocked):
-                        report["native_dj_observed_state"] = (
-                            "CLASSIC_UI_HIERARCHY_UNAVAILABLE")
-                        return report
-            if not entry_visible:
-                report["native_dj_observed_state"] = (
-                    "CLASSIC_DJ_ENTRY_NOT_VISIBLE")
+            ui_xml, warnings = reveal_after_known_warnings(ui_xml, pause=pause)
+            report["system_compatibility_warnings"] = warnings
+            if warnings:
+                report["legacy_android_warning"] = warnings[-1]
+            if ui_xml is None:
+                report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
                 return report
+            try:
+                report["native_entry_ui_surface_after_warning"] = classify_private_ui_surface(ui_xml)
+                entry_visible = classify_visible_ui(ui_xml, stage="classic_entry")[
+                    "expected_native_ui_observed"]
+            except (BaselineBlocked, SmokeBlocked):
+                report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
+                return report
+            if not entry_visible:
+                report["native_dj_observed_state"] = "CLASSIC_DJ_ENTRY_NOT_VISIBLE"
+                return report
+
         display = adb(["shell", "wm", "size"])
+        # Fresh evidence after warnings: a laid-out injected button alone is
+        # insufficient to prove that original Classic content is visible.
+        entry_snapshot = adb(["shell", "dumpsys", "activity", "activities"])
+        entry_crash = classify_crash(adb(["logcat", "-b", "crash", "-d"]), package=ORIGINAL)
+        report["original_surface_before_navigation"] = evaluate_original_surface(
+            entry_snapshot, entry_crash, ui_xml)
+        if not report["original_surface_before_navigation"]["classic_entry_visible"]:
+            report["native_dj_observed_state"] = "ORIGINAL_CLASSIC_SURFACE_NOT_VERIFIED"
+            return report
         try:
             x, y = entry_button_coordinates(ui_xml, display)
         except SmokeBlocked:
@@ -638,9 +700,33 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
             "status": dj_capture_code, "raw_hierarchy_published": False,
             "ui_visibility_proven": False,
         }
+        # The system page-size warning is per-Activity. Resolve only the same
+        # verified AOSP warning after the real in-app navigation as well.
+        if dj_ui is not None:
+            dj_ui, warnings = reveal_after_known_warnings(dj_ui, pause=pause)
+            report["native_dj_system_compatibility_warnings"] = warnings
+            dj_snapshot = adb(["shell", "dumpsys", "activity", "activities"])
+            dj_crashes = adb(["logcat", "-b", "crash", "-d"])
         report.update(evaluate_identity_navigation(
             dj_snapshot, classify_crash(dj_crashes, package=ORIGINAL),
             dj_ui if dj_ui is not None else ""))
+        if report["native_dj_navigation_observed"]:
+            # Exercise the normal return route only from the proven visible
+            # DJ screen. Never start audio, request mic permission or log in.
+            offline_guard()
+            adb(["shell", "input", "keyevent", "KEYCODE_BACK"])
+            pause(3)
+            back_ui, back_code = capture_private_hierarchy()
+            if back_ui is not None:
+                back_ui, warnings = reveal_after_known_warnings(back_ui, pause=pause)
+                report["return_system_compatibility_warnings"] = warnings
+            back_snapshot = adb(["shell", "dumpsys", "activity", "activities"])
+            back_crash = classify_crash(adb(["logcat", "-b", "crash", "-d"]), package=ORIGINAL)
+            back = evaluate_original_surface(back_snapshot, back_crash, back_ui)
+            report["original_surface_after_return"] = back
+            report["native_navigation_round_trip_observed"] = (
+                back["original_ui_visible"] and back["classic_entry_visible"])
+            report["return_hierarchy_status"] = back_code
         return report
     finally:
         if installed_path(ORIGINAL) is not None:

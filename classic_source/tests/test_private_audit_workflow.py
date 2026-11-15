@@ -44,6 +44,29 @@ class TestPrivatePayloadParity(unittest.TestCase):
         with self.assertRaisesRegex(private_payload_parity.Refused,"STARTUP_PAYLOAD_SET_CHANGED"):
             private_payload_parity.parity(self.a,self.b)
 
+    def test_native_resources_and_assets_must_survive_signing(self):
+        for member in ('lib/x86_64/libsynthetic.so', 'resources.arsc',
+                       'res/layout/synthetic.xml', 'META-INF/services/example'):
+            with self.subTest(member=member):
+                self.apk(self.a, extra=False)
+                self.apk(self.b, extra=True)
+                with ZipFile(self.a, 'a') as z:
+                    z.writestr(member, b'original-payload')
+                with ZipFile(self.b, 'a') as z:
+                    z.writestr(member, b'mutated-payload')
+                with self.assertRaisesRegex(private_payload_parity.Refused,
+                                            'SIGNED_NON_SIGNATURE_PAYLOAD_CHANGED'):
+                    private_payload_parity.parity(self.a, self.b)
+
+    def test_extra_native_library_cannot_hide_as_signature_metadata(self):
+        self.apk(self.a, extra=False)
+        self.apk(self.b, extra=True)
+        with ZipFile(self.b, 'a') as z:
+            z.writestr('META-INF/private/addon.so', b'unexpected')
+        with self.assertRaisesRegex(private_payload_parity.Refused,
+                                    'SIGNED_NON_SIGNATURE_PAYLOAD_SET_CHANGED'):
+            private_payload_parity.parity(self.a, self.b)
+
 class TestMandatoryRealOemGate(unittest.TestCase):
     def test_no_oem_variable_refused(self):
         with patch.dict("os.environ",{"CLASSIC_ORIGINAL_APK":""}):

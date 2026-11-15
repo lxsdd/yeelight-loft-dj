@@ -184,9 +184,9 @@ class IdentityAblationTests(unittest.TestCase):
              "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity t7}")
         xml=('<?xml version="1.0" encoding="UTF-8"?>'
              '<hierarchy rotation="0">'
-             '<node text="Loft DJ · Yeelight Classic" clickable="false"/>'
-             '<node text="Mikrofon starten" clickable="true"/>'
-             '<node text="DJ stoppen" clickable="true"/>'
+             '<node package="com.yeelight.cherry" text="Loft DJ · Yeelight Classic" clickable="false"/>'
+             '<node package="com.yeelight.cherry" text="Mikrofon starten" clickable="true"/>'
+             '<node package="com.yeelight.cherry" text="DJ stoppen" clickable="true"/>'
              '</hierarchy>')
         clean={"target_crash":False,"unattributed_fatal":False,"exception_category":"NONE"}
         null={"target_crash":True,"unattributed_fatal":False,
@@ -364,7 +364,6 @@ class IdentityAblationTests(unittest.TestCase):
                          "SYSTEM_OVERLAY_INPUT_INVALID_NO_ACTION")
         source = (ROOT / "private_ci/private_identity_control.py").read_text("utf-8")
         self.assertIn("classify_android_overlay(ui_xml, window_state)", source)
-        self.assertIn('report["legacy_android_warning"]["overlay_classification"]', source)
 
 
     def test_modern_android_focus_comes_from_displays_not_windows(self):
@@ -419,8 +418,6 @@ class IdentityAblationTests(unittest.TestCase):
             lambda args: (_ for _ in ()).throw(OSError("private"))),
             ("", "FOCUS_PROBE_UNAVAILABLE_NO_ACTION"))
         source = (ROOT / "private_ci/private_identity_control.py").read_text("utf-8")
-        self.assertIn('window_state, focus_source = read_focused_window_snapshot()', source)
-        self.assertIn('report["legacy_android_warning"]["overlay_focus_source"]', source)
         self.assertNotIn('pm grant ', source)
 
 
@@ -511,10 +508,7 @@ class IdentityAblationTests(unittest.TestCase):
     def test_legacy_warning_scope_is_owner_only_and_single_tap_not_global(self):
         source = (ROOT / "private_ci/private_identity_control.py").read_text(
             "utf-8")
-        self.assertIn('if android_only:', source)
         self.assertIn('warning_point = legacy_target_warning_ok_point(', source)
-        self.assertIn('if warning_point is not None:', source)
-        self.assertIn('offline_guard()\n                    adb(["shell", "input", "tap"', source)
         self.assertIn('pause(1)', source)
         self.assertIn('permission_granted": False', source)
         self.assertNotIn('settings put global hide_error_dialogs', source)

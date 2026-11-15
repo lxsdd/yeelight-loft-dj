@@ -126,13 +126,20 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path,
                  '-dname','CN=Yeelight Classic Loft DJ PRIVATE TEST,O=Local Test',
                  '-storepass:env','CLASSIC_EPHEMERAL_SIGN_PASS',
                  '-keypass:env','CLASSIC_EPHEMERAL_SIGN_PASS'],env=env)
-            run([zipalign,'-f','-p','4',source,aligned],env=env)
+            # The qualified API37 image uses 16 KiB pages. Legacy -p only
+            # aligns stored native libraries to 4 KiB and can itself trigger
+            # Android's page-size compatibility dialog. This changes ZIP
+            # padding only; it does not repair/rewrite OEM ELF load segments.
+            run([zipalign,'-f','-P','16','4',source,aligned],env=env)
             run([apksigner,'sign','--ks',key,'--ks-type','PKCS12',
                  '--ks-key-alias','classic-test-only',
                  '--ks-pass','env:CLASSIC_EPHEMERAL_SIGN_PASS',
                  '--key-pass','env:CLASSIC_EPHEMERAL_SIGN_PASS',
                  '--out',temp_signed,aligned],env=env)
             run([apksigner,'verify','--verbose','--min-sdk-version','23',temp_signed],env=env)
+            # Check the actual signed bytes, before exposing the output or
+            # its receipt. A failed alignment check is never a signed PASS.
+            run([zipalign,'-c','-P','16','4',temp_signed],env=env)
             if temp_signed.stat().st_size < 1000: raise Refused('SIGNED_OUTPUT_INVALID')
             # Signature is tied only to this test build; no vendor key or stable app identity is claimed.
             shutil.copyfile(temp_signed,output)
@@ -151,6 +158,9 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path,
         'hardware':'NOT_TESTED',
         'yeelight_classic_compatibility':'NOT_TESTED',
         'source_build_report_sha256':sha256(preflight),
+        'native_zip_alignment_bytes':16384,
+        'signed_zip_alignment_verified':True,
+        'native_elf_16k_compatibility':'NOT_PROVEN_BY_ZIP_ALIGNMENT',
     }
     output.with_name(output.name+'.test-signing.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
     return report

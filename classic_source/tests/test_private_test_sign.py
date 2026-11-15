@@ -56,7 +56,7 @@ class TestPrivateTestSigning(unittest.TestCase):
                 args=[str(a) for a in args];seen.append(args)
                 assert env.get('CLASSIC_EPHEMERAL_SIGN_PASS')
                 if '-genkeypair' in args: Path(args[args.index('-keystore')+1]).write_bytes(b'private-key-in-memory-only')
-                elif Path(args[0]).name=='zipalign':
+                elif Path(args[0]).name=='zipalign' and '-c' not in args:
                     Path(args[-1]).write_bytes(Path(args[-2]).read_bytes())
                 elif Path(args[0]).name=='apksigner' and args[1]=='sign':
                     Path(args[args.index('--out')+1]).write_bytes(b'cryptographically-fake-signed\n'+Path(args[-1]).read_bytes())
@@ -71,8 +71,38 @@ class TestPrivateTestSigning(unittest.TestCase):
             self.assertEqual(record['signature'],'EPHEMERAL_UNIQUE_TEST_KEY_NOT_SUITABLE_FOR_APP_UPDATES')
             self.assertIn('sign', [a[1] for a in seen if Path(a[0]).name=='apksigner'])
             self.assertIn('verify', [a[1] for a in seen if Path(a[0]).name=='apksigner'])
+            alignment = [a for a in seen if Path(a[0]).name == 'zipalign']
+            self.assertEqual(alignment[0][1:5], ['-f', '-P', '16', '4'])
+            self.assertEqual(alignment[1][1:5], ['-c', '-P', '16', '4'])
+            self.assertEqual(record['native_zip_alignment_bytes'], 16384)
+            self.assertTrue(record['signed_zip_alignment_verified'])
             self.assertFalse(any(p.suffix in ('.p12','.jks') for p in root.rglob('*')))
             self.assertNotIn('CLASSIC_EPHEMERAL_SIGN_PASS',signed.with_name(signed.name+'.test-signing.json').read_text())
+
+    def test_failed_final_alignment_never_copies_output_or_receipt(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            source = root / mod.INPUT_NAME
+            source.write_bytes(b'synthetic' * 200)
+            preflight = root / 'preflight.json'
+            preflight.write_text(json.dumps({
+                'status':'UNSIGNED_PRIVATE_APK_STRUCTURAL_PREFLIGHT_PASS_NOT_INSTALLED',
+                'signed':False, 'installed':False, 'package':mod.PACKAGE,
+                'apk_sha256':mod.sha256(source)}))
+            output = root / mod.OUTPUT_NAME
+            def run(args, *, env=None):
+                if str(args[0]).endswith('zipalign') and '-c' in args:
+                    raise subprocess.CalledProcessError(1, ['zipalign'])
+                if 'sign' in args:
+                    Path(args[args.index('--out') + 1]).write_bytes(b'signed' * 300)
+            with patch.object(mod, 'tool', side_effect=lambda sdk, name: name), \
+                    patch.object(mod.shutil, 'which', return_value='keytool'), \
+                    patch.object(mod, 'run', side_effect=run), \
+                    self.assertRaises(subprocess.CalledProcessError):
+                mod.sign(source, preflight, output, root)
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_name(output.name + '.test-signing.json').exists())
 
     def test_refuses_prior_existing_signed_output(self):
         with tempfile.TemporaryDirectory() as d:
