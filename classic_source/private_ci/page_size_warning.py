@@ -14,6 +14,7 @@ This module cannot tap, set compatibility flags, grant permission or log in.
 """
 from html.parser import HTMLParser
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 
 ORIGINAL = "com.yeelight.cherry"
@@ -55,6 +56,30 @@ def rendered_resource(value):
     except (ValueError, TypeError):
         return None
     return " ".join("".join(parser.parts).split()) or None
+
+
+def read_framework_resources(run, diagnostic=None):
+    """Read each fixed resource independently across Android build variants.
+
+    API37 currently has the APK warning but can omit older ELF warning keys.
+    Missing keys never authorize a tap and must not discard another exact,
+    successfully read framework warning. No fallback English text is invented.
+    """
+    resources, states = {}, {}
+    for name in (*RESOURCES, 'ok'):
+        label = RESOURCES.get(name, 'POSITIVE_BUTTON')
+        try:
+            value = run(['shell', 'cmd', 'overlay', 'lookup', 'android', 'android:string/' + name])
+            if rendered_resource(value):
+                resources[name] = value
+                states[label] = 'READ'
+            else:
+                states[label] = 'INVALID_VALUE'
+        except (OSError, ValueError, subprocess.SubprocessError):
+            states[label] = 'READ_FAILED'
+    if type(diagnostic) is dict:
+        diagnostic['framework_resource_reads'] = states
+    return resources
 
 
 def _window_attributes(body):
@@ -203,8 +228,10 @@ def read_warning_action(xml, focus, display, run, diagnostic=None):
     if not _system_phone_window(focus, windows, evidence):
         return None
     evidence['decision'] = 'FRAMEWORK_RESOURCE_READ_FAILED'
-    resources = {name: run(["shell", "cmd", "overlay", "lookup", "android",
-                            "android:string/" + name])
-                 for name in (*RESOURCES, "ok")}
-    evidence['framework_resources_readable'] = all(bool(rendered_resource(v)) for v in resources.values())
+    resources = read_framework_resources(run, evidence)
+    evidence['required_framework_resources_readable'] = (
+        'ok' in resources and any(name in resources for name in RESOURCES))
+    if not evidence['required_framework_resources_readable']:
+        evidence['decision'] = 'FRAMEWORK_RESOURCES_UNAVAILABLE'
+        return None
     return warning_action(xml, focus, windows, display, page_size, resources, evidence)

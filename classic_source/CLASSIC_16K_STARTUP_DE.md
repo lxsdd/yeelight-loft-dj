@@ -94,6 +94,16 @@ verschachtelte Attribute, Mehrdeutigkeit, abgeschnittene Blöcke, falsche Typen
 und den Versuch ab, einen Typ aus einem anderen Fenster zu übernehmen.
 Das belegt den Parserfehler, weiterhin nicht die Identität des privaten Overlays.
 
+**Zweiter realer Befund:** Lauf `43839543548` auf
+`0b1508592701902a53a5a0202a0c7ba92bbbd2fa` konnte den Fenstertyp korrekt
+lesen und den APK-Warntext laden. Die ELF-Warnressource fehlt in diesem Image
+jedoch tatsächlich (`RESOURCE_NOT_FOUND`), auch im selben Root-Debug-Kontext
+wie im geschützten Test. Deshalb werden die fest erlaubten Ressourcen jetzt
+einzeln gelesen. Für einen Tap sind weiterhin ein exakt gelesener Warntext,
+die passende positive Schaltfläche und alle Fenster-/Fokusprüfungen nötig.
+Fehlende Varianten werden weder erfunden noch durch fest codierten Text ersetzt.
+Der öffentliche Test qualifiziert ausdrücklich nur die vorhandenen Varianten.
+
 Der Lauf auf `ae10e7a2456efe74371d0757aad13a748b5218cf` bestand Build,
 Testsignierung einschließlich finaler 16-KiB-ZIP-Prüfung und vollständiger
 Payload-Parität. Die Originalidentität lief im kurzen Beobachtungsfenster ohne

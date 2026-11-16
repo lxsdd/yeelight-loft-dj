@@ -73,10 +73,38 @@ class PublicWarningContractTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, args, stderr='Permission denied SECRET')
             return read(args)
         result = contract.check_contract(failing)
-        self.assertEqual(result['blocked_at'], 'READ_RESOURCE_APK_ALIGNMENT')
-        self.assertEqual(result['read_failure'], 'PERMISSION_DENIED')
+        self.assertEqual(result['blocked_at'], 'FRAMEWORK_RESOURCES')
+        self.assertEqual(result['framework_resource_reads']['APK_ALIGNMENT'], 'READ_FAILED')
         self.assertEqual(result['window_parser']['window_type'], 'OTHER')
         self.assertNotIn('SECRET', json.dumps(result))
+
+    def test_runtime_missing_old_elf_resources_keeps_exact_available_warning(self):
+        read = self.reader()
+        def variants(args):
+            if args[-1] in ('android:string/page_size_compat_elf_warning',
+                            'android:string/page_size_compat_apk_and_elf_warning'):
+                raise subprocess.CalledProcessError(1, args, stderr='failed to get the resource')
+            return read(args)
+        result = contract.check_contract(variants)
+        self.assertEqual(result['status'], 'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS')
+        self.assertEqual(result['available_warning_variants'], ['APK_ALIGNMENT'])
+        self.assertEqual(result['framework_resource_reads']['ELF_ALIGNMENT'], 'READ_FAILED')
+        self.assertFalse(result['real_warning_ui_tested'])
+
+    def test_private_missing_unused_resource_does_not_disable_an_exact_match(self):
+        def variants(args):
+            if args[1] == 'getconf': return '16384'
+            if args[1] == 'dumpsys': return WINDOWS
+            name = args[-1].split('/')[-1]
+            if name in ('page_size_compat_elf_warning', 'page_size_compat_apk_and_elf_warning'):
+                raise identity.BaselineBlocked('FIXED_RESOURCE_READ_FAILURE')
+            return RESOURCES[name]
+        evidence = {}
+        self.assertEqual(warning.read_warning_action(
+            ui(message=RESOURCES['page_size_compat_apk_warning']), FOCUS, DISPLAY, variants,
+            diagnostic=evidence), ((100,120), 'APK_ALIGNMENT'))
+        # Missing ELF text may NEVER be synthesized or guessed from APK text.
+        self.assertIsNone(warning.read_warning_action(ui(), FOCUS, DISPLAY, variants))
 
     def test_read_failure_exposes_only_fixed_status(self):
         env = {'GITHUB_REPOSITORY': 'lxsdd/yeelight-loft-dj', 'GITHUB_ACTOR': 'lxsdd',

@@ -11,7 +11,8 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-from page_size_warning import RESOURCES, rendered_resource, _system_phone_window, warning_action
+from page_size_warning import (RESOURCES, rendered_resource, _system_phone_window,
+                               warning_action, read_framework_resources)
 
 
 def check_contract(run):
@@ -51,21 +52,13 @@ def check_contract(run):
             or evidence.get('window_owner') == 'UNPARSEABLE'
             or evidence.get('window_type') == 'UNPARSEABLE'):
         return report
-    resources = {}
     report['blocked_at'] = 'FRAMEWORK_RESOURCES'
-    report['framework_resource_reads'] = {}
-    for name in (*RESOURCES, 'ok'):
-        label = RESOURCES.get(name, 'POSITIVE_BUTTON')
-        value = read(['shell', 'cmd', 'overlay', 'lookup', 'android', 'android:string/' + name],
-                     'READ_RESOURCE_' + label)
-        if value is None:
-            return report
-        resources[name] = value
-        report['framework_resource_reads'][label] = bool(rendered_resource(value))
-        if not rendered_resource(value):
-            report['blocked_at'] = 'FRAMEWORK_RESOURCES'
-            return report
-    report['framework_resources_readable'] = True
+    resources = read_framework_resources(run, report)
+    available = [name for name in RESOURCES if name in resources]
+    if 'ok' not in resources or not available:
+        return report
+    report['required_framework_resources_readable'] = True
+    report['available_warning_variants'] = [RESOURCES[name] for name in available]
     # Synthetic system dialog fixture with the actual runtime's localized
     # resources. Never feed these synthetic coordinates into an input command.
     simulated_focus = ('mCurrentFocus=Window{01 u0 Synthetic}\n'
@@ -73,7 +66,7 @@ def check_contract(run):
     simulated_window = ('Window #0 Window{01 u0 Synthetic}:\n'
                         ' mOwnerUid=1000 package=android\n'
                         ' mAttrs={ty=PHONE}\n')
-    for name in RESOURCES:
+    for name in available:
         root = ET.Element('hierarchy')
         ET.SubElement(root, 'node', {'package': 'android', 'resource-id': 'android:id/message',
                                     'text': rendered_resource(resources[name])})
