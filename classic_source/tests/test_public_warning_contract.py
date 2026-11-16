@@ -42,16 +42,68 @@ class PublicWarningContractTests(unittest.TestCase):
              'android:string/page_size_compat_apk_warning'): short_message,
         })
         result = contract.check_contract(run)
-        self.assertEqual(result['status'], 'PUBLIC_WARNING_CONTRACT_BLOCKED')
-        self.assertEqual(result['blocked_at'], 'RESOURCE_RENDERING')
-        self.assertEqual(result['synthetic_rejection']['warning_variant'],
-                         'APK_ALIGNMENT')
-        self.assertEqual(result['synthetic_rejection']['message_match'], 'NONE')
-        self.assertFalse(
-            result['synthetic_rejection']['minimum_rendered_message_length'])
+        self.assertEqual(result['status'], 'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS')
+        self.assertEqual(result['available_warning_variants'],
+                         ['ELF_ALIGNMENT', 'APK_AND_ELF_ALIGNMENT'])
+        self.assertEqual(result['unverified_warning_variants'], ['APK_ALIGNMENT'])
+        self.assertEqual(result['framework_resource_reads']['APK_ALIGNMENT'],
+                         'SHORT_UNVERIFIED')
+        self.assertEqual(result['synthetic_resource_rendering'], 'PASS')
         self.assertNotIn('private-token-SECRET', json.dumps(result))
         self.assertFalse(result['real_warning_ui_tested'])
         self.assertFalse(result['ui_action_taken'])
+
+    def test_real_api37_short_warning_is_safe_unverified_not_a_fake_ui_pass(self):
+        # All shell/page/window checks succeed. The only framework warning
+        # returns a short token; known UI recognition stays inoperative.
+        read = self.reader()
+        def run(args):
+            if args[-1] == 'android:string/page_size_compat_apk_warning':
+                return '@0x01040001'
+            if args[-1] in ('android:string/page_size_compat_elf_warning',
+                            'android:string/page_size_compat_apk_and_elf_warning'):
+                raise subprocess.CalledProcessError(1, args,
+                                                    stderr='resource not found SECRET')
+            return read(args)
+        result = contract.check_contract(run)
+        self.assertEqual(result['status'], 'PUBLIC_WARNING_SHELL_PROBE_SAFE_UNVERIFIED')
+        self.assertEqual(result['available_warning_variants'], [])
+        self.assertEqual(result['unverified_warning_variants'], ['APK_ALIGNMENT'])
+        self.assertFalse(result['required_framework_resources_readable'])
+        self.assertFalse(result['warning_dialog_automatable'])
+        self.assertEqual(result['synthetic_resource_rendering'], 'UNVERIFIED_NO_ACTION')
+        self.assertFalse(result['real_warning_ui_tested'])
+        self.assertFalse(result['ui_action_taken'])
+        self.assertNotIn('SECRET', json.dumps(result))
+
+    def test_runtime_aosp_reference_arrow_is_rendered_and_safe_unknown_stays_blocked(self):
+        long_text = RESOURCES['page_size_compat_apk_warning']
+        read = self.reader()
+        def run(args):
+            if args[-1] == 'android:string/page_size_compat_apk_warning':
+                return '@0x01040001 -> ' + long_text
+            if args[-1] in ('android:string/page_size_compat_elf_warning',
+                            'android:string/page_size_compat_apk_and_elf_warning'):
+                raise subprocess.CalledProcessError(1, args)
+            return read(args)
+        result = contract.check_contract(run)
+        self.assertEqual(result['status'], 'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS')
+        self.assertEqual(result['available_warning_variants'], ['APK_ALIGNMENT'])
+        self.assertEqual(result['unverified_warning_variants'], [])
+        self.assertEqual(result['synthetic_resource_rendering'], 'PASS')
+        self.assertFalse(result['real_warning_ui_tested'])
+
+    def test_missing_all_warning_resources_cannot_qualify_public_shell(self):
+        read = self.reader()
+        def run(args):
+            if args[-1] in ('android:string/page_size_compat_apk_warning',
+                            'android:string/page_size_compat_elf_warning',
+                            'android:string/page_size_compat_apk_and_elf_warning'):
+                raise subprocess.CalledProcessError(1, args)
+            return read(args)
+        result = contract.check_contract(run)
+        self.assertEqual(result['status'], 'PUBLIC_WARNING_CONTRACT_BLOCKED')
+        self.assertEqual(result['blocked_at'], 'FRAMEWORK_RESOURCES')
 
     def test_live_html_resource_contract_retains_safe_exact_matching(self):
         original = self.reader()

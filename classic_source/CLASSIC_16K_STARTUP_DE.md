@@ -142,3 +142,11 @@ Die neue ELF32-/ELF64-Zählung aus `private_payload_parity.py` ist eine
 zusätzliche private Aussage über **PT_LOAD-Ausrichtung**, keine ELF-Reparatur,
 keine sichere Aussage zu RELRO und keine Funktionsabnahme. Es werden keine
 Bibliotheksnamen oder Binärdaten exportiert.
+
+## 2026-11-16 — AOSP-Lookup: Ressourcenreferenz ist kein Dialogtext
+
+Die [AOSP-Implementierung von `cmd overlay lookup`](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/om/OverlayManagerShellCommand.java) kann eine `TypedValue`-Referenz und einen getrennten, aufgelösten String ausgeben. Ein kurzer Shellwert ist daher **kein Beweis für einen tatsächlich kurzen `PageSizeMismatchDialog`-Text**. Der bislang rote öffentliche API37-No-OEM-Test #43852387856 hatte bei `APK_ALIGNMENT` `minimum_rendered_message_length=false` gemeldet. Er installierte keine App und zeigte keinen realen Dialog.
+
+Die Ressourcenbehandlung akzeptiert nur eindeutig aufgelöste AOSP-Referenzen `@0x........ -> TEXT` beziehungsweise `@android:string/NAME -> TEXT`. Ein nacktes `@...`, unaufgelöste Alias-Ketten oder beliebige ` -> `-Zeichen bleiben unverifiziert und **können keinen Tap autorisieren**. Die ursprünglichen strengen Regeln über UID, fokussiertes Fenster, Nachrichtenlänge, echte UI-Hierarchie, Original-App, exakte Schaltfläche und Fokusrennen bleiben bestehen.
+
+Wenn nur eine unaufgelöste oder kurze Framework-Ressource vorhanden ist, aber die echte QEMU-/SDK-/16-KiB-/WindowManager-Prüfung erfolgreich war, kann der **rein öffentliche Boot-/Parserlauf** den explizit eingeschränkten Status `PUBLIC_WARNING_SHELL_PROBE_SAFE_UNVERIFIED` mit nachgewiesener negativer Nicht-Aktionsprüfung erreichen. Dies ist **keine** Qualifikation der Dialogerkennung, keine private UI-Abnahme und kein Hardware-/OEM-Test. Wenn sämtliche Warnressourcen fehlen, die OK-Ressource fehlt oder die echten Fenster-/Seitengrößenprüfungen nicht bestehen, bleibt der öffentliche Lauf rot. Aus fehlender Laufzeit-Auflösung wird niemals eine feste Ersatz-Übersetzung oder ein automatisches OK konstruiert.

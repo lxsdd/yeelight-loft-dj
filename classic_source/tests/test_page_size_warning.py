@@ -58,6 +58,36 @@ class PageSizeWarningTests(unittest.TestCase):
         data.update(changes)
         return warning.warning_action(**data)
 
+    def test_overlay_lookup_resolves_only_aosp_reference_arrows(self):
+        long_text = RESOURCES['page_size_compat_apk_warning']
+        self.assertEqual(
+            warning.rendered_resource('@0x01040001 -> ' + long_text),
+            long_text)
+        self.assertEqual(
+            warning.rendered_resource('@android:string/page_size_compat_apk_warning -> ' + long_text),
+            long_text)
+        for unverified in ('@0x01040001', '@android:string/page_size_compat_apk_warning',
+                           '0x01040001', 'private -> ' + long_text,
+                           '@0x01040001 -> @0x01040002',
+                           '@0x01040001 -> ' + long_text + '\\nSECRET',
+                           'Error: failed to get the resource'):
+            with self.subTest(value=unverified[:35]):
+                self.assertIsNone(warning.rendered_resource(unverified))
+
+    def test_only_resolved_framework_text_can_authorize_private_known_dialog(self):
+        message = RESOURCES['page_size_compat_apk_warning']
+        unresolved = dict(RESOURCES,
+                          page_size_compat_apk_warning='@0x01040001')
+        self.assertIsNone(self.action(xml=ui(message=message), resources=unresolved))
+        resolved = dict(RESOURCES,
+                        page_size_compat_apk_warning='@0x01040001 -> ' + message)
+        self.assertEqual(self.action(xml=ui(message=message), resources=resolved),
+                         ((100, 120), 'APK_ALIGNMENT'))
+        # Arbitrary arrows cannot manufacture a trusted framework resolution.
+        forged = dict(RESOURCES,
+                      page_size_compat_apk_warning='private -> ' + message)
+        self.assertIsNone(self.action(xml=ui(message=message), resources=forged))
+
     def test_title_is_not_a_technical_dialog_name(self):
         self.assertEqual(self.action(), ((100, 120), 'ELF_ALIGNMENT'))
         self.assertEqual(self.action(windows=WINDOWS.replace('ty=PHONE', 'ty=2002')),

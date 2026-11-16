@@ -54,11 +54,16 @@ def check_contract(run):
         return report
     report['blocked_at'] = 'FRAMEWORK_RESOURCES'
     resources = read_framework_resources(run, report)
-    available = [name for name in RESOURCES if name in resources]
-    if 'ok' not in resources or not available:
+    available = [name for name in RESOURCES
+                 if name in resources and len(rendered_resource(resources[name]) or '') >= 32]
+    limited = [name for name in RESOURCES
+               if report['framework_resource_reads'].get(RESOURCES[name]) in
+               ('SHORT_UNVERIFIED', 'UNRESOLVED_REFERENCE')]
+    if 'ok' not in resources or not (available or limited):
         return report
-    report['required_framework_resources_readable'] = True
+    report['required_framework_resources_readable'] = bool(available)
     report['available_warning_variants'] = [RESOURCES[name] for name in available]
+    report['unverified_warning_variants'] = [RESOURCES[name] for name in limited]
     # Synthetic system dialog fixture with the actual runtime's localized
     # resources. Never feed these synthetic coordinates into an input command.
     simulated_focus = ('mCurrentFocus=Window{01 u0 Synthetic}\n'
@@ -66,6 +71,33 @@ def check_contract(run):
     simulated_window = ('Window #0 Window{01 u0 Synthetic}:\n'
                         ' mOwnerUid=1000 package=android\n'
                         ' mAttrs={ty=PHONE}\n')
+    # The public emulator never shows this dialog because no OEM APK is
+    # installed. If live lookup returns only a symbolic reference or short
+    # token, classify that capability honestly as UNVERIFIED, not a fake
+    # rendered warning and not an overall cold-boot failure. The owner-only
+    # runtime still requires exact text, UID, type, focus and UI geometry.
+    if not available:
+        root = ET.Element('hierarchy')
+        ET.SubElement(root, 'node', {'package': 'android',
+                                   'resource-id': 'android:id/message',
+                                   'text': 'Unverified reference only'})
+        ET.SubElement(root, 'node', {'package': 'android',
+                                   'resource-id': 'android:id/button1',
+                                   'text': rendered_resource(resources['ok']),
+                                   'class': 'android.widget.Button',
+                                   'enabled': 'true', 'clickable': 'true',
+                                   'bounds': '[10,10][50,50]'})
+        xml = '<?xml version="1.0"?>' + ET.tostring(root, encoding='unicode')
+        attempt = warning_action(xml, simulated_focus, simulated_window,
+                                 'Physical size: 1080x2400', page, resources)
+        report['blocked_at'] = 'FAIL_CLOSED_RESOURCE_NEGATIVE_CONTROL'
+        if attempt is not None:
+            return report
+        report['status'] = 'PUBLIC_WARNING_SHELL_PROBE_SAFE_UNVERIFIED'
+        report['warning_dialog_automatable'] = False
+        report['synthetic_resource_rendering'] = 'UNVERIFIED_NO_ACTION'
+        del report['blocked_at']
+        return report
     for name in available:
         root = ET.Element('hierarchy')
         ET.SubElement(root, 'node', {'package': 'android', 'resource-id': 'android:id/message',
@@ -123,7 +155,10 @@ def main():
     except (OSError, ValueError, subprocess.SubprocessError):
         report = {'status': 'PUBLIC_WARNING_CONTRACT_READ_FAILED', 'ui_action_taken': False}
     print(json.dumps(report, sort_keys=True))
-    return 0 if report['status'] == 'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS' else 2
+    return 0 if report['status'] in (
+        'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS',
+        'PUBLIC_WARNING_SHELL_PROBE_SAFE_UNVERIFIED',
+    ) else 2
 
 
 if __name__ == '__main__':

@@ -44,14 +44,31 @@ class _PlainText(HTMLParser):
 
 
 def rendered_resource(value):
-    """Mirror text-only Html.fromHtml/whitespace for a trusted framework value."""
+    """Resolve only the documented AOSP lookup arrow, never guess resource text.
+
+    OverlayManagerShellCommand.runLookup prints either a value or a
+    TypedValue reference followed by ' -> ' and the resolved value. A bare
+    @reference or a short token is NOT proof of an actual warning message.
+    Its text cannot authorize a UI action in the private emulator.
+    """
     if type(value) is not str or not 0 < len(value) <= 8192:
         return None
-    if "Error:" in value or " -> " in value:
-        return None  # unresolved resource reference / shell error
+    raw = value.strip()
+    if "Error:" in raw or "\x00" in raw or "\r" in raw:
+        return None
+    if " -> " in raw:
+        arrow = re.fullmatch(
+            r"@(?:0x[0-9a-fA-F]{8}|android:string/[A-Za-z0-9_]+) -> ([^\r\n]+)",
+            raw)
+        if arrow is None:
+            return None
+        raw = arrow.group(1)
+    if (raw.startswith("@") or re.fullmatch(r"0x[0-9a-fA-F]{6,8}", raw)
+            or not raw):
+        return None
     parser = _PlainText()
     try:
-        parser.feed(value)
+        parser.feed(raw)
         parser.close()
     except (ValueError, TypeError):
         return None
@@ -70,9 +87,13 @@ def read_framework_resources(run, diagnostic=None):
         label = RESOURCES.get(name, 'POSITIVE_BUTTON')
         try:
             value = run(['shell', 'cmd', 'overlay', 'lookup', 'android', 'android:string/' + name])
-            if rendered_resource(value):
+            rendered = rendered_resource(value)
+            if rendered:
                 resources[name] = value
-                states[label] = 'READ'
+                states[label] = ('SHORT_UNVERIFIED' if name != 'ok'
+                                 and len(rendered) < 32 else 'READ')
+            elif type(value) is str and value.strip().startswith('@'):
+                states[label] = 'UNRESOLVED_REFERENCE'
             else:
                 states[label] = 'INVALID_VALUE'
         except (OSError, ValueError, subprocess.SubprocessError):
