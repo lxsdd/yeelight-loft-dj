@@ -57,6 +57,29 @@ def rendered_resource(value):
     return " ".join("".join(parser.parts).split()) or None
 
 
+def _window_attributes(body):
+    """Read the one balanced LayoutParams block, including sim={...}.
+
+    AOSP puts the nested soft-input block BEFORE ty=. Stopping at the first
+    closing brace silently loses the window type on a real Android window.
+    The caller already bounded body to this unique focused Window record.
+    """
+    starts = list(re.finditer(r'(?m)^[ \t]*mAttrs=\{', body))
+    if len(starts) != 1:
+        return None
+    start = starts[0].end() - 1
+    depth = 0
+    for index in range(start, min(len(body), start + 8192)):
+        char = body[index]
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return body[start + 1:index]
+    return None
+
+
 def _system_phone_window(focus, windows, diagnostic=None):
     evidence = diagnostic if type(diagnostic) is dict else {}
     evidence['window_check'] = 'INPUT_INVALID'
@@ -83,8 +106,8 @@ def _system_phone_window(focus, windows, diagnostic=None):
     body = windows[headers[i].end():end]
     evidence['window_binding'] = 'MATCHED'
     owners = re.findall(r"(?m)^[ \t]*mOwnerUid=(\d+)\b[^\r\n]*\bpackage=([^\s]+)", body)
-    attrs = re.findall(r"\bmAttrs=\{([^}]{1,8192})\}", body)
-    types = re.findall(r"\bty=([^\s}]+)", attrs[0]) if len(attrs) == 1 else []
+    attrs = _window_attributes(body)
+    types = re.findall(r"\bty=([^\s}]+)", attrs) if attrs is not None else []
     owner = owners == [("1000", "android")]
     phone = types in (["PHONE"], ["2002"])
     evidence['window_owner'] = ('ANDROID_SYSTEM' if owner else

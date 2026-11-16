@@ -21,7 +21,7 @@ class PublicWarningContractTests(unittest.TestCase):
         responses = {
             ('shell', 'getconf', 'PAGE_SIZE'): '16384\n',
             ('shell', 'dumpsys', 'window', 'displays'): FOCUS.replace('com.yeelight.cherry', 'example.launcher'),
-            ('shell', 'dumpsys', 'window', 'windows'): WINDOWS.replace('ty=PHONE', 'ty=BASE_APPLICATION'),
+            ('shell', 'dumpsys', 'window', 'windows'): WINDOWS.replace('ty=PHONE', 'sim={adjust=pan} ty=BASE_APPLICATION'),
             ('shell', 'getprop', 'ro.kernel.qemu'): '1\n',
             ('shell', 'getprop', 'ro.build.version.sdk'): '37\n',
         }

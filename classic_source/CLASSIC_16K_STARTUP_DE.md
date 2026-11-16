@@ -83,6 +83,17 @@ abgenommen. Loginfreiheit, OEM-Basisfunktionen und Hardware bleiben offen.
 - https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/om/OverlayManagerShellCommand.java
 # Nachtrag: geschuetzter Lauf 43780547994, 16. November 2026
 
+**Im echten öffentlichen Emulator reproduzierter Parserfehler:** Lauf
+`43837733921` auf `cad378428f79b4bfcc23093dd0d4b4abc874a200` bestätigte
+16-KiB-Seiten und die eindeutige Bindung des aktiven Fensters, scheiterte aber
+mit `window_type=UNPARSEABLE`. AOSP `LayoutParams.toString` schreibt
+`sim={...}` vor `ty=...`; der bisherige reguläre Ausdruck endete an der inneren
+schließenden Klammer. Der Parser liest nun den vollständig ausbalancierten,
+größenbegrenzten Attributblock des eindeutig gebundenen Fensters. Tests decken
+verschachtelte Attribute, Mehrdeutigkeit, abgeschnittene Blöcke, falsche Typen
+und den Versuch ab, einen Typ aus einem anderen Fenster zu übernehmen.
+Das belegt den Parserfehler, weiterhin nicht die Identität des privaten Overlays.
+
 Der Lauf auf `ae10e7a2456efe74371d0757aad13a748b5218cf` bestand Build,
 Testsignierung einschließlich finaler 16-KiB-ZIP-Prüfung und vollständiger
 Payload-Parität. Die Originalidentität lief im kurzen Beobachtungsfenster ohne

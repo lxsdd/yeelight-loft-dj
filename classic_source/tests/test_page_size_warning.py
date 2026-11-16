@@ -65,6 +65,24 @@ class PageSizeWarningTests(unittest.TestCase):
         for resource, category in warning.RESOURCES.items():
             self.assertEqual(self.action(xml=ui(message=RESOURCES[resource]))[1], category)
 
+    def test_real_aosp_nested_soft_input_attributes_keep_phone_type(self):
+        for attributes in ('sim={adjust=pan} ty=PHONE',
+                           'sim={state=hidden adjust=resize} ty=2002',
+                           'sim={adjust=nothing} ty=PHONE token=Binder{ab12}'):
+            with self.subTest(attributes=attributes):
+                self.assertEqual(self.action(windows=WINDOWS.replace('ty=PHONE', attributes)),
+                                 ((100, 120), 'ELF_ALIGNMENT'))
+
+    def test_unbalanced_duplicate_and_cross_window_attributes_fail_closed(self):
+        for text in (
+                WINDOWS.replace('ty=PHONE', 'sim={adjust=pan ty=PHONE'),
+                WINDOWS.replace('ty=PHONE', 'sim={adjust=pan} ty=BASE_APPLICATION'),
+                WINDOWS.replace('ty=PHONE', 'sim={ty=PHONE} ty=BASE_APPLICATION'),
+                WINDOWS.replace('    mAttrs=', '    mAttrs={ty=PHONE}\n    mAttrs=', 1),
+                WINDOWS.replace('ty=PHONE', 'x' * 8200 + ' ty=PHONE')):
+            with self.subTest(text=text[:60]):
+                self.assertIsNone(self.action(windows=text))
+
     def test_exact_running_framework_html_and_localized_text(self):
         text = 'Synthetische 16 KB Warnung. Informationen unter '
         resources = dict(RESOURCES, page_size_compat_elf_warning=(
