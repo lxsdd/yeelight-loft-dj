@@ -81,3 +81,28 @@ abgenommen. Loginfreiheit, OEM-Basisfunktionen und Hardware bleiben offen.
 - https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/wm/PageSizeMismatchDialog.java
 - https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/pm/PackageSetting.java
 - https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/om/OverlayManagerShellCommand.java
+# Nachtrag: geschuetzter Lauf 43780547994, 16. November 2026
+
+Der Lauf auf `ae10e7a2456efe74371d0757aad13a748b5218cf` bestand Build,
+Testsignierung einschließlich finaler 16-KiB-ZIP-Prüfung und vollständiger
+Payload-Parität. Die Originalidentität lief im kurzen Beobachtungsfenster ohne
+Zielabsturz, aber weiterhin ohne sichtbare OEM-Oberfläche: 16 Android-Knoten,
+angelegter und ausgelegter DJ-Einstieg ohne Fensterfokus, kein DJ-Tap.
+Clone und reiner Paketnamen-Kontrollbau reproduzierten die Null-Dereferenz.
+Damit ist weder das verdeckende Fenster identifiziert noch die Classic-UI akzeptiert.
+
+Die öffentliche No-OEM-Emulatorprüfung prüft jetzt zusätzlich echte Antworten
+von `getconf`, WindowManager und den vier fest definierten Framework-Ressourcen.
+Sie installiert keine App, signiert nichts und führt keine UI-Aktion aus.
+Ein aus den echten Ressourcen erzeugter synthetischer Hierarchie-Test ist
+ausdrücklich kein Nachweis eines sichtbaren Systemdialogs.
+
+Der private Erkennungspfad nennt bei Ablehnung nun den tatsächlich gescheiterten
+Prüfschritt: Seitengröße, Fokus/Fensterbindung, System-UID/Fenstertyp,
+eindeutige Nachricht/Schaltfläche, exakter Ressourcentext, zusätzliche interaktive
+Elemente oder Geometrie. Es werden nur feste Statuswerte, begrenzte Anzahlen
+und Wahrheitswerte ausgegeben. Rohtexte, OEM-Bezeichner und Hierarchien bleiben
+privat. Die Anforderungen für einen Tap werden nicht gelockert.
+
+---
+

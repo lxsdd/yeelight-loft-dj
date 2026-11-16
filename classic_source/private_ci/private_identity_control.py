@@ -353,6 +353,7 @@ def reveal_after_known_warnings(ui_xml, *, pause=time.sleep):
     for _ in range(2):
         if ui_xml is None:
             break
+        observation = {}
         try:
             surface = classify_private_ui_surface(ui_xml)
             android_only = (surface["android_package_node_count"] == surface["node_count"])
@@ -370,7 +371,10 @@ def reveal_after_known_warnings(ui_xml, *, pause=time.sleep):
             warning_point = legacy_target_warning_ok_point(ui_xml, window_state, display)
             kind = "DEPRECATED_TARGET"
             if warning_point is None:
-                page_warning = read_warning_action(ui_xml, window_state, display, adb)
+                page_evidence = {}
+                observation['page_size_probe'] = page_evidence
+                page_warning = read_warning_action(ui_xml, window_state, display, adb,
+                                                  diagnostic=page_evidence)
                 if page_warning is not None:
                     warning_point, reason = page_warning
                     kind = "PAGE_SIZE"
@@ -407,9 +411,12 @@ def reveal_after_known_warnings(ui_xml, *, pause=time.sleep):
         except (BaselineBlocked, OSError, ValueError, TypeError, AttributeError) as error:
             if isinstance(error, BaselineBlocked) and str(error) == "IDENTITY_UI_TEMP_CLEANUP_FAILED":
                 raise  # Never hide a failure to remove the private UI dump.
-            observations.append({"status": "WARNING_PROBE_UNAVAILABLE_NO_ACTION",
-                                 "acknowledged": False, "permission_granted": False,
-                                 "product_ui_accepted": False})
+            failure = {"status": "WARNING_PROBE_UNAVAILABLE_NO_ACTION",
+                       "acknowledged": False, "permission_granted": False,
+                       "product_ui_accepted": False}
+            if 'page_size_probe' in observation:
+                failure['page_size_probe'] = observation['page_size_probe']
+            observations.append(failure)
             break
     return ui_xml, observations
 
