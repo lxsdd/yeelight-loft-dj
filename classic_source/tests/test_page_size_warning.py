@@ -69,7 +69,7 @@ class PageSizeWarningTests(unittest.TestCase):
         for unverified in ('@0x01040001', '@android:string/page_size_compat_apk_warning',
                            '0x01040001', 'private -> ' + long_text,
                            '@0x01040001 -> @0x01040002',
-                           '@0x01040001 -> ' + long_text + '\\nSECRET',
+                           '@0x01040001 -> ' + long_text + '\nSECRET',
                            'Error: failed to get the resource'):
             with self.subTest(value=unverified[:35]):
                 self.assertIsNone(warning.rendered_resource(unverified))
