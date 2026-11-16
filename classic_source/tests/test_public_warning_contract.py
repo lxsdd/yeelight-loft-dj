@@ -157,6 +157,21 @@ class PublicWarningContractTests(unittest.TestCase):
         self.assertNotIn('SECRET_DETAIL', output.getvalue())
         self.assertEqual(json.loads(output.getvalue())['status'], 'PUBLIC_WARNING_CONTRACT_READ_FAILED')
 
+    def test_public_emulator_contract_does_not_require_root_or_weakens_evidence(self):
+        # A disposable PUBLIC shell-only probe must not fail merely because
+        # a Google API system image rejects or delays adb root. All actual
+        # read-only runtime gates must remain mandatory, and no OEM is used.
+        script = (Path(__file__).resolve().parents[1] /
+                  'private_ci/run_public_android17_emulator_boot.sh').read_text('utf-8')
+        self.assertNotIn('adb" -s emulator-5554 root', script)
+        self.assertNotIn('EMULATOR_ROOT_UNAVAILABLE', script)
+        self.assertIn('public_warning_contract.py --no-oem ||', script)
+        self.assertIn('fail WARNING_RUNTIME_CONTRACT_FAILED', script)
+        self.assertIn('getprop ro.kernel.qemu', script)
+        self.assertIn('getprop ro.build.version.sdk', script)
+        self.assertNotIn('shell input tap', script)
+        self.assertNotIn('pm grant', script)
+
     def test_untrusted_execution_context_never_starts_adb(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(sys, 'argv', ['probe', '--no-oem']), \
                 patch.object(subprocess, 'run') as run, contextlib.redirect_stdout(io.StringIO()):

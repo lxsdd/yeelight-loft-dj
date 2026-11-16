@@ -11,7 +11,7 @@ fail() {
     INVALID_CONTEXT|HOST_SDK_UNAVAILABLE|HOST_KVM_DEVICE_MISSING|\
     HOST_KVM_ACCESS_UNAVAILABLE|SDK_CATALOG_FAILED|SDK_IMAGE_UNLISTED|SDK_LICENSE_NOT_PREAUTHORIZED|\
     SDK_INSTALL_FAILED|AVD_CREATION_FAILED|EMULATOR_EXEC_UNAVAILABLE|\
-    EMULATOR_ACCELERATION_FAILED|EMULATOR_BOOT_FAILED|ACTIVITY_SNAPSHOT_FAILED|ACTIVITY_RESUME_UNVERIFIED|WARNING_RUNTIME_CONTRACT_FAILED|EMULATOR_ROOT_UNAVAILABLE) code="$1";;
+    EMULATOR_ACCELERATION_FAILED|EMULATOR_BOOT_FAILED|ACTIVITY_SNAPSHOT_FAILED|ACTIVITY_RESUME_UNVERIFIED|WARNING_RUNTIME_CONTRACT_FAILED) code="$1";;
     *) code="INTERNAL_ERROR";;
   esac
   printf 'ANDROID17_PUBLIC_EMULATOR_BLOCKED_%s\n' "$code" >&2
@@ -122,12 +122,13 @@ PY
 printf '%s\n' ANDROID17_PUBLIC_GLOBAL_RESUME_GRAMMAR_PROVEN_NO_OEM
 
 # Check actual Android page size, window grammar and resource lookup/rendering.
-# No application fixture is installed, and no UI action or private input occurs.
-# Match the existing protected probe's root debug-shell context on this exact
-# disposable API37 emulator; qemu/API/serial are verified above first.
-"$PLAT/adb" -s emulator-5554 root >"$ROOT/adb-root.log" 2>&1 || fail EMULATOR_ROOT_UNAVAILABLE
-"$PLAT/adb" -s emulator-5554 wait-for-device >/dev/null 2>&1 || fail EMULATOR_ROOT_UNAVAILABLE
-[[ "$("$PLAT/adb" -s emulator-5554 shell id -u 2>/dev/null | tr -d '\r')" == "0" ]] || fail EMULATOR_ROOT_UNAVAILABLE
+# This PUBLIC no-OEM qualification is read-only and must work under Android's
+# ordinary adb shell account. 'adb root' is not a source/CI prerequisite here:
+# Google API emulator images can refuse adbd elevation or be temporarily offline
+# while adbd restarts, without invalidating any of these read-only probes.
+# Protected PRIVATE OEM runtime remains an independently owner-gated workflow.
+# All page-size, window-structure, framework-resource and synthetic refusal
+# checks below still run and fail closed on missing evidence.
 python3 classic_source/private_ci/public_warning_contract.py --no-oem || \
   fail WARNING_RUNTIME_CONTRACT_FAILED
 

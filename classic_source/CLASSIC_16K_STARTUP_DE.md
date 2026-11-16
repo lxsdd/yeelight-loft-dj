@@ -126,3 +126,19 @@ und Wahrheitswerte ausgegeben. Rohtexte, OEM-Bezeichner und Hierarchien bleiben
 privat. Die Anforderungen für einen Tap werden nicht gelockert.
 
 ---
+
+## 2026-11-16 — öffentlicher Emulator: keine Root-Voraussetzung
+
+Der öffentliche API37-Lauf #43851581131 wurde schon vor der reinen
+Warnungsprüfung mit `EMULATOR_ROOT_UNAVAILABLE` abgebrochen. Die temporär
+hinzugefügte `adb root`-Bedingung war für die ausschließlich lesenden
+öffentlichen `getconf`-, `dumpsys`- und `cmd overlay lookup`-Abfragen
+nicht erforderlich. Die öffentliche Prüfung bleibt deshalb bewusst
+**shell-only**, kontrolliert weiterhin QEMU und SDK 37, und erzwingt weiterhin
+den vollständigen Read-only-Runtime-Contract. Die eigenständig geschützte
+private Original-APK-Ausführung bleibt unverändert und eigentümergesteuert.
+
+Die neue ELF32-/ELF64-Zählung aus `private_payload_parity.py` ist eine
+zusätzliche private Aussage über **PT_LOAD-Ausrichtung**, keine ELF-Reparatur,
+keine sichere Aussage zu RELRO und keine Funktionsabnahme. Es werden keine
+Bibliotheksnamen oder Binärdaten exportiert.
