@@ -116,4 +116,3 @@ und Wahrheitswerte ausgegeben. Rohtexte, OEM-Bezeichner und Hierarchien bleiben
 privat. Die Anforderungen für einen Tap werden nicht gelockert.
 
 ---
-

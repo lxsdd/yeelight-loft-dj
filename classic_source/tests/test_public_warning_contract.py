@@ -66,6 +66,18 @@ class PublicWarningContractTests(unittest.TestCase):
             self.assertEqual(result['blocked_at'], 'FRAMEWORK_RESOURCES')
             self.assertNotIn('private detail', json.dumps(result))
 
+    def test_exact_failed_command_stage_is_preserved_without_raw_stderr(self):
+        read = self.reader()
+        def failing(args):
+            if args[:4] == ['shell', 'cmd', 'overlay', 'lookup']:
+                raise subprocess.CalledProcessError(1, args, stderr='Permission denied SECRET')
+            return read(args)
+        result = contract.check_contract(failing)
+        self.assertEqual(result['blocked_at'], 'READ_RESOURCE_APK_ALIGNMENT')
+        self.assertEqual(result['read_failure'], 'PERMISSION_DENIED')
+        self.assertEqual(result['window_parser']['window_type'], 'OTHER')
+        self.assertNotIn('SECRET', json.dumps(result))
+
     def test_read_failure_exposes_only_fixed_status(self):
         env = {'GITHUB_REPOSITORY': 'lxsdd/yeelight-loft-dj', 'GITHUB_ACTOR': 'lxsdd',
                'GITHUB_EVENT_NAME': 'pull_request', 'RUNNER_ENVIRONMENT': 'github-hosted'}

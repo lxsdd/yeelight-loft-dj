@@ -18,13 +18,31 @@ def check_contract(run):
     report = {'status': 'PUBLIC_WARNING_CONTRACT_BLOCKED', 'oem_accessed': False,
               'apk_installed': False, 'ui_action_taken': False,
               'real_warning_ui_tested': False}
-    page = run(['shell', 'getconf', 'PAGE_SIZE']).strip()
+    def read(args, stage):
+        report['blocked_at'] = stage
+        try:
+            return run(args)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            detail = str(getattr(error, 'stderr', '') or '')
+            report['read_failure'] = ('RESOURCE_NOT_FOUND' if 'failed to get the resource' in detail
+                else 'PERMISSION_DENIED' if 'Permission' in detail or 'SecurityException' in detail
+                else 'UNSUPPORTED_COMMAND' if 'Unknown command' in detail
+                else 'COMMAND_FAILED')
+            return None
+    page = read(['shell', 'getconf', 'PAGE_SIZE'], 'READ_PAGE_SIZE')
+    if page is None:
+        return report
+    page = page.strip()
     report['kernel_page_size'] = '16K' if page == '16384' else '4K' if page == '4096' else 'OTHER'
     report['blocked_at'] = 'PAGE_SIZE'
     if page != '16384':
         return report
-    focus = run(['shell', 'dumpsys', 'window', 'displays'])
-    windows = run(['shell', 'dumpsys', 'window', 'windows'])
+    focus = read(['shell', 'dumpsys', 'window', 'displays'], 'READ_FOCUS')
+    if focus is None:
+        return report
+    windows = read(['shell', 'dumpsys', 'window', 'windows'], 'READ_WINDOWS')
+    if windows is None:
+        return report
     evidence = {}
     _system_phone_window(focus, windows, evidence)
     report['window_parser'] = evidence
@@ -35,10 +53,17 @@ def check_contract(run):
         return report
     resources = {}
     report['blocked_at'] = 'FRAMEWORK_RESOURCES'
+    report['framework_resource_reads'] = {}
     for name in (*RESOURCES, 'ok'):
-        value = run(['shell', 'cmd', 'overlay', 'lookup', 'android', 'android:string/' + name])
+        label = RESOURCES.get(name, 'POSITIVE_BUTTON')
+        value = read(['shell', 'cmd', 'overlay', 'lookup', 'android', 'android:string/' + name],
+                     'READ_RESOURCE_' + label)
+        if value is None:
+            return report
         resources[name] = value
+        report['framework_resource_reads'][label] = bool(rendered_resource(value))
         if not rendered_resource(value):
+            report['blocked_at'] = 'FRAMEWORK_RESOURCES'
             return report
     report['framework_resources_readable'] = True
     # Synthetic system dialog fixture with the actual runtime's localized
