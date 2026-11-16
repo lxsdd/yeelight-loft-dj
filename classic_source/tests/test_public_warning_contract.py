@@ -34,6 +34,46 @@ class PublicWarningContractTests(unittest.TestCase):
             return responses[tuple(args)]
         return run
 
+
+    def test_live_resource_refusal_is_fixed_status_without_private_text(self):
+        short_message = 'private-token-SECRET'
+        run = self.reader({
+            ('shell', 'cmd', 'overlay', 'lookup', 'android',
+             'android:string/page_size_compat_apk_warning'): short_message,
+        })
+        result = contract.check_contract(run)
+        self.assertEqual(result['status'], 'PUBLIC_WARNING_CONTRACT_BLOCKED')
+        self.assertEqual(result['blocked_at'], 'RESOURCE_RENDERING')
+        self.assertEqual(result['synthetic_rejection']['warning_variant'],
+                         'APK_ALIGNMENT')
+        self.assertEqual(result['synthetic_rejection']['message_match'], 'NONE')
+        self.assertFalse(
+            result['synthetic_rejection']['minimum_rendered_message_length'])
+        self.assertNotIn('private-token-SECRET', json.dumps(result))
+        self.assertFalse(result['real_warning_ui_tested'])
+        self.assertFalse(result['ui_action_taken'])
+
+    def test_live_html_resource_contract_retains_safe_exact_matching(self):
+        original = self.reader()
+        # Simulate the shape of the current AOSP 16-KB resource, including
+        # HTML markup and multiple paragraphs, but never a private OEM value.
+        long_message = (
+            'This app is not 16 KB compatible. APK alignment check failed. '
+            'It will run in compatibility mode. More information: '
+            '<a href="https://example.invalid/">Documentation</a>')
+        def run(args):
+            if args[-1] == 'android:string/page_size_compat_apk_warning':
+                return long_message
+            if args[-1] in ('android:string/page_size_compat_elf_warning',
+                            'android:string/page_size_compat_apk_and_elf_warning'):
+                raise subprocess.CalledProcessError(1, args)
+            return original(args)
+        result = contract.check_contract(run)
+        self.assertEqual(result['status'], 'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS')
+        self.assertEqual(result['available_warning_variants'], ['APK_ALIGNMENT'])
+        self.assertEqual(result['synthetic_resource_rendering'], 'PASS')
+        self.assertNotIn('https://example.invalid/', json.dumps(result))
+
     def test_real_response_contract_uses_read_only_calls_and_never_claims_ui(self):
         result = contract.check_contract(self.reader())
         self.assertEqual(result['status'], 'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS')

@@ -24,6 +24,55 @@ def zipalign_tool():
 
 
 class NativeZipAlignment(unittest.TestCase):
+
+    def test_readonly_elf_load_census_distinguishes_zip_from_elf_alignment(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from private_payload_parity import (
+            _elf_load_alignment, native_elf_16k_census)
+        def elf64(p_align, offset=0, vaddr=0):
+            blob = bytearray(120)
+            blob[:16] = b'\x7fELF' + bytes([2,1,1]) + bytes(9)
+            struct.pack_into('<Q', blob, 32, 64)
+            struct.pack_into('<HH', blob, 54, 56, 1)
+            struct.pack_into('<IIQQQQQQ', blob, 64,
+                             1, 5, offset, vaddr, 0, 1, 1, p_align)
+            return bytes(blob)
+        self.assertEqual(_elf_load_alignment(elf64(16384)), 'LOAD_16K')
+        self.assertEqual(_elf_load_alignment(elf64(4096)), 'LOAD_NOT_16K')
+        self.assertEqual(_elf_load_alignment(elf64(16384, 4096, 0)), 'LOAD_NOT_16K')
+        self.assertEqual(_elf_load_alignment(b'not an ELF'), 'UNVERIFIED')
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / 'synthetic-native.apk'
+            with zipfile.ZipFile(archive, 'w') as z:
+                z.writestr('lib/x86_64/one.so', elf64(4096))
+                z.writestr('lib/arm64-v8a/two.so', elf64(16384))
+                z.writestr('assets/fake.so', b'not a library')
+            with zipfile.ZipFile(archive) as z:
+                census = native_elf_16k_census(z)
+        self.assertEqual(census['status'], 'NATIVE_ELF_LOAD_16K_INCOMPATIBLE')
+        self.assertEqual(census['native_library_count'], 2)
+        self.assertEqual(census['load_not_16k_count'], 1)
+        self.assertEqual(census['load_16k_count'], 1)
+        self.assertFalse(census['runtime_compatibility_proven'])
+        self.assertNotIn('one.so', str(census))
+        self.assertNotIn('two.so', str(census))
+
+    def test_elf_32bit_big_endian_and_corrupt_segment_bounds_fail_closed(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from private_payload_parity import _elf_load_alignment
+        blob = bytearray(84)
+        blob[:16] = b'\x7fELF' + bytes([1,2,1]) + bytes(9)
+        struct.pack_into('>I', blob, 28, 52)
+        struct.pack_into('>HH', blob, 42, 32, 1)
+        struct.pack_into('>IIIIIIII', blob, 52,
+                         1, 0, 0, 0, 1, 1, 5, 16384)
+        self.assertEqual(_elf_load_alignment(bytes(blob)), 'LOAD_16K')
+        struct.pack_into('>I', blob, 28, 9999999)
+        self.assertEqual(_elf_load_alignment(bytes(blob)), 'UNVERIFIED')
+        self.assertEqual(_elf_load_alignment(None), 'UNVERIFIED')
+
     def test_real_sdk_aligns_16k_and_preserves_every_payload(self):
         tool = zipalign_tool()
         if not tool:

@@ -75,10 +75,25 @@ def check_contract(run):
                                     'class': 'android.widget.Button', 'enabled': 'true',
                                     'clickable': 'true', 'bounds': '[10,10][50,50]'})
         xml = '<?xml version="1.0"?>' + ET.tostring(root, encoding='unicode')
+        reason = {}
         action = warning_action(xml, simulated_focus, simulated_window,
-                                'Physical size: 1080x2400', page, resources)
+                                'Physical size: 1080x2400', page, resources,
+                                diagnostic=reason)
         report['blocked_at'] = 'RESOURCE_RENDERING'
         if action is None or action[1] != RESOURCES[name]:
+            # All fields below are closed-grammar values from our own
+            # validator, not original framework strings, OEM data or UI text.
+            report['synthetic_rejection'] = {
+                'warning_variant': RESOURCES[name],
+                'decision': reason.get('decision', 'UNKNOWN'),
+                'window_check': reason.get('window_check', 'UNKNOWN'),
+                'message_match': reason.get('message_match', 'NOT_CHECKED'),
+                'message_count': reason.get('message_count', 0),
+                'button_count': reason.get('button_count', 0),
+                'positive_text_matches': reason.get('positive_text_matches', False),
+                'minimum_rendered_message_length': (
+                    len(rendered_resource(resources[name]) or '') >= 32),
+            }
             return report
     report['synthetic_resource_rendering'] = 'PASS'
     report['status'] = 'PUBLIC_WARNING_RUNTIME_CONTRACT_PASS'
