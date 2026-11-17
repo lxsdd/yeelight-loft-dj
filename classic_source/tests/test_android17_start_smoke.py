@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "private_ci"))
 from android17_start_smoke import (
     PACKAGE, DJ_ACTIVITY, SmokeBlocked, classify_crash, classify_visible_ui,
     entry_button_coordinates, evaluate_launch_window, evaluate_navigation_window,
-    probe_private_emulator
+    probe_private_emulator, PRIVATE_UI_SNAPSHOT, capture_private_ui_hierarchy
 )
 
 LAUNCHER = PACKAGE + "/com.yeelight.cherry.MainActivity"
@@ -30,6 +30,7 @@ class FakeADB:
     def __init__(self):
         self.calls = []
         self.ui_count = 0
+        self._dump_pending = None
         self.overrides = {}
 
     def __call__(self, args, *, serial):
@@ -59,9 +60,15 @@ class FakeADB:
             return "Status: ok\nActivity: " + LAUNCHER + "\nComplete\n"
         if key == ("shell", "dumpsys", "activity", "activities"):
             return ACTIVITY % (DJ if self.ui_count else LAUNCHER)
-        if key == ("shell", "uiautomator", "dump", "/dev/tty"):
+        if key == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT):
+            self._dump_pending = None
+            return ""
+        if key == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
             self.ui_count += 1
-            return ENTRY if self.ui_count == 1 else DJ_UI
+            self._dump_pending = ENTRY if self.ui_count == 1 else DJ_UI
+            return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+        if key == ("shell", "cat", PRIVATE_UI_SNAPSHOT):
+            return self._dump_pending or ""
         if key == ("shell", "wm", "size"):
             return "Physical size: 1080x2400"
         if key in (("logcat", "-b", "crash", "-c"),
@@ -97,6 +104,55 @@ class Android17StartupTest(unittest.TestCase):
         self.assertEqual(sum(c[:3] == ("shell", "am", "start") for c in a.calls), 1)
         self.assertFalse(result["physical_device_tested"])
         self.assertFalse(result["app_functionally_accepted"])
+
+    def test_private_capture_reads_file_contents_not_dump_stdout(self):
+        a = FakeADB()
+        result = a.run()
+        self.assertEqual(result["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        self.assertEqual(sum(x == ("shell", "cat", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 4)
+        self.assertFalse(any("/dev/tty" in x for x in a.calls))
+
+    def test_private_capture_empty_xml_fails_closed_and_cleans_up(self):
+        a = FakeADB()
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = "UI hierarchy dumped to a file"
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_XML_MISSING"):
+            a.run()
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
+        self.assertFalse(any(x[:3] == ("shell", "input", "tap") for x in a.calls))
+
+    def test_private_capture_rejects_stale_hierarchy_file(self):
+        a = FakeADB()
+        a._dump_pending = ENTRY
+        a.overrides[("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT)] = "no new UI"
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_XML_MISSING"):
+            a.run()
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
+
+    def test_private_capture_cleanup_failure_is_an_explicit_block(self):
+        a = FakeADB()
+        n = [0]
+        def run(args):
+            if args == ["shell", "rm", "-f", PRIVATE_UI_SNAPSHOT]:
+                n[0] += 1
+                if n[0] == 2:
+                    raise SmokeBlocked("SMOKE_ADB_COMMAND_FAILED")
+                return ""
+            if args == ["shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT]:
+                return "UI hierarchy dumped"
+            if args == ["shell", "cat", PRIVATE_UI_SNAPSHOT]:
+                return ENTRY
+            raise AssertionError("unexpected command")
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_TEMP_CLEANUP_FAILED"):
+            capture_private_ui_hierarchy(run)
+        self.assertEqual(n[0], 2)
+
+    def test_private_capture_preserves_unsafe_xml_rejection(self):
+        a = FakeADB()
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = '<!DOCTYPE test>' + ENTRY
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UNSAFE_UI_XML"):
+            a.run()
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
 
     def test_absent_explicit_owner_approval_blocks_before_adb(self):
         a = FakeADB()
@@ -143,7 +199,7 @@ class Android17StartupTest(unittest.TestCase):
 
     def test_fail_closed_for_missing_clickable_native_entry(self):
         a = FakeADB()
-        a.overrides[("shell", "uiautomator", "dump", "/dev/tty")] = DJ_UI
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = DJ_UI
         result = a.run()
         self.assertEqual(result["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
         self.assertFalse(result["native_entry_navigation_tested"])

@@ -618,6 +618,34 @@ def _adb(args, *, serial, timeout=18):
     return _bounded(result.stdout, "SMOKE_ADB_OUTPUT_TOO_LARGE")
 
 
+# APK remains private on an owner-approved disposable offline emulator.
+# Android 17 UiAutomator can report only the destination on /dev/tty stdout.
+# The identity-control path already uses an ephemeral file; use the same
+# capture contract for BOTH clone UI stages without publishing its contents.
+PRIVATE_UI_SNAPSHOT = "/data/local/tmp/classic-dj-owner-only-smoke.xml"
+
+
+def capture_private_ui_hierarchy(run):
+    """Read actual XML bytes, never infer UI visibility from a dump success.
+
+    The runner must be an already owner-gated isolated emulator. No shell
+    interpolation or arbitrary output, and cleanup is mandatory on ALL paths.
+    """
+    try:
+        run(["shell", "rm", "-f", PRIVATE_UI_SNAPSHOT])
+        run(["shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT])
+        xml = run(["shell", "cat", PRIVATE_UI_SNAPSHOT])
+        _bounded(xml, "SMOKE_BAD_UI_DUMP")
+        if "<?xml" not in xml or "</hierarchy>" not in xml:
+            raise SmokeBlocked("SMOKE_UI_XML_MISSING")
+        return xml
+    finally:
+        try:
+            run(["shell", "rm", "-f", PRIVATE_UI_SNAPSHOT])
+        except (SmokeBlocked, OSError, ValueError, TypeError):
+            raise SmokeBlocked("SMOKE_UI_TEMP_CLEANUP_FAILED") from None
+
+
 def probe_private_emulator(serial, *, owner_approved, launcher_component,
                            expected_installed_apk_sha256, dwell_ms=3000,
                            adb=_adb, pause=time.sleep, candidate_graph=None):
@@ -686,7 +714,7 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                                   installed_apk_path=installed_path)
     ui_data = None
     if home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
-        ui_data = run(["shell", "uiautomator", "dump", "/dev/tty"])
+        ui_data = capture_private_ui_hierarchy(run)
         home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
         if home["ui"]["expected_native_ui_observed"] is False:
             home["status"] = "BLOCKED_REQUIRED_UI_NOT_VISIBLE"
@@ -708,7 +736,7 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     pause(dwell_ms / 1000.0)
     dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
     dj_crashes = run(["logcat", "-b", "crash", "-d"])
-    dj_ui = run(["shell", "uiautomator", "dump", "/dev/tty"])
+    dj_ui = capture_private_ui_hierarchy(run)
     dj = evaluate_navigation_window(component=PACKAGE + "/" + DJ_ACTIVITY,
                                     activity_snapshot=dj_snapshot,
                                     crash_log=dj_crashes, ui_dump=dj_ui,
