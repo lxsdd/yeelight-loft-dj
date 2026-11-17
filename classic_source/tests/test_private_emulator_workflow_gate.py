@@ -49,6 +49,9 @@ def verify_private_shell(value):
         'resolve-activity --components --user 0',
         'android17_start_smoke.py', 'classloader_linkage_forensics.py',
         'private_original_baseline.py',
+        'PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB',
+        'shell pm path io.lxsdd.yeelightdj',
+        '[[ -z "$CLONE_INSTALLED_PATH" ]] || fail',
         '--explicit-owner-approved-private-emulator || fail',
         '--expected-installed-apk-sha256',
         '--explicit-owner-approved-private-emulator',
@@ -139,6 +142,25 @@ class PrivateEmulatorWorkflowContract(unittest.TestCase):
             verify_private_shell(text.replace(
                 "--explicit-owner-approved-private-emulator || fail",
                 "--skip-guard || fail"))
+
+    def test_nonfatal_ui_failure_does_not_start_invalid_identity_control(self):
+        value = SHELL.read_text("utf-8")
+        self.assertIn('shell pm path io.lxsdd.yeelightdj', value)
+        self.assertIn('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB', value)
+        self.assertLess(value.index('private_original_baseline.py'),
+                        value.index('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB'))
+        self.assertLess(value.index('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB'),
+                        value.index('private_identity_control.py'))
+        self.assertIn('[[ -z "$CLONE_INSTALLED_PATH" ]] || fail', value)
+
+    def test_removing_nonfatal_ui_identity_boundary_is_rejected(self):
+        value = SHELL.read_text("utf-8")
+        for bad in (
+            value.replace('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB', 'UNSAFE'),
+            value.replace('shell pm path io.lxsdd.yeelightdj', 'shell pm path com.other'),
+        ):
+            with self.subTest(bad=bad[:100]), self.assertRaises(AssertionError):
+                verify_private_shell(bad)
 
     def test_probe_never_directly_exports_private_dj_activity(self):
         value = PROBE.read_text("utf-8")

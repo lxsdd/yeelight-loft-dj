@@ -138,6 +138,18 @@ else
     --candidate "$APK" \
     --serial emulator-5554 \
     --explicit-owner-approved-private-emulator || fail
+  # On a nonfatal UI-hierarchy failure the original differential intentionally
+  # returns NOT_APPLICABLE without uninstalling the cloned app. Running the
+  # original-identity A/B on top of an installed clone would violate its own
+  # package-isolation gate and produce the misleading generic identity error.
+  # Never uninstall it here, never run a different comparison, and never
+  # reinterpret inaccessible UI as an app-crash success.
+  CLONE_INSTALLED_PATH="$(adb -s emulator-5554 shell pm path io.lxsdd.yeelightdj 2>/dev/null)" || fail
+  if [[ "$CLONE_INSTALLED_PATH" == package:* ]]; then
+    printf 'PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB\n'
+    fail
+  fi
+  [[ -z "$CLONE_INSTALLED_PATH" ]] || fail
   # After the real clone FAIL and the unmodified stock comparison, run one
   # strictly private *identity-preserving* control with a real DJ bridge.
   # This is a diagnostic A/B bundle, not an OEM source export or acceptance.
