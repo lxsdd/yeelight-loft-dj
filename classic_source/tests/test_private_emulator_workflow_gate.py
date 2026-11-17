@@ -50,8 +50,8 @@ def verify_private_shell(value):
         'android17_start_smoke.py', 'classloader_linkage_forensics.py',
         'private_original_baseline.py',
         'PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB',
-        'shell pm path io.lxsdd.yeelightdj',
-        '[[ -z "$CLONE_INSTALLED_PATH" ]] || fail',
+        'shell pm list packages --user 0 io.lxsdd.yeelightdj',
+        '[[ -z "$CLONE_INSTALLED_MATCH" ]] || fail',
         '--explicit-owner-approved-private-emulator || fail',
         '--expected-installed-apk-sha256',
         '--explicit-owner-approved-private-emulator',
@@ -145,19 +145,19 @@ class PrivateEmulatorWorkflowContract(unittest.TestCase):
 
     def test_nonfatal_ui_failure_does_not_start_invalid_identity_control(self):
         value = SHELL.read_text("utf-8")
-        self.assertIn('shell pm path io.lxsdd.yeelightdj', value)
+        self.assertIn('shell pm list packages --user 0 io.lxsdd.yeelightdj', value)
         self.assertIn('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB', value)
         self.assertLess(value.index('private_original_baseline.py'),
                         value.index('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB'))
         self.assertLess(value.index('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB'),
                         value.index('private_identity_control.py'))
-        self.assertIn('[[ -z "$CLONE_INSTALLED_PATH" ]] || fail', value)
+        self.assertIn('[[ -z "$CLONE_INSTALLED_MATCH" ]] || fail', value)
 
     def test_removing_nonfatal_ui_identity_boundary_is_rejected(self):
         value = SHELL.read_text("utf-8")
         for bad in (
             value.replace('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB', 'UNSAFE'),
-            value.replace('shell pm path io.lxsdd.yeelightdj', 'shell pm path com.other'),
+            value.replace('shell pm list packages --user 0 io.lxsdd.yeelightdj', 'shell pm path com.other'),
         ):
             with self.subTest(bad=bad[:100]), self.assertRaises(AssertionError):
                 verify_private_shell(bad)
