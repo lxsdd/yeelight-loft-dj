@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
+from page_size_warning import read_warning_action
 
 PACKAGE = "io.lxsdd.yeelightdj"
 ORIGINAL_PACKAGE = "com.yeelight.cherry"  # private identity-only offline A/B control
@@ -672,6 +673,87 @@ def capture_private_ui_hierarchy(run):
             raise SmokeBlocked("SMOKE_UI_TEMP_CLEANUP_FAILED") from None
 
 
+def _focused_system_window(run):
+    """Read first-frame focus without exposing any Android or OEM window text."""
+    for section in ("displays", "windows"):
+        raw = run(["shell", "dumpsys", "window", section])
+        _bounded(raw, "SMOKE_BAD_WINDOW_SNAPSHOT")
+        matches = re.findall(r"(?m)^[ \t]*mCurrentFocus=[^\r\n]{1,512}$", raw)
+        if matches:
+            return (raw if len(matches) == 1 else "",
+                    "DISPLAY_FOCUS_DECLARED" if section == "displays" and len(matches) == 1
+                    else "LEGACY_FOCUS_DECLARED" if len(matches) == 1
+                    else "FOCUS_AMBIGUOUS_NO_ACTION")
+    return "", "FOCUS_NOT_DECLARED_NO_ACTION"
+
+
+def _warning_focus_tokens(snapshot):
+    return tuple(re.findall(
+        r"(?m)^[ \t]*m(?:CurrentFocus|FocusedApp)=[^\r\n]{1,512}$",
+        snapshot))
+
+
+def _single_known_16k_warning(ui_xml, *, run, pause):
+    """At most one exact AOSP 16K acknowledgment per Activity transition.
+
+    Unknown, login, permission, ANR and unrelated Android dialogs are NEVER
+    clicked. This path is reachable only after the owner-gated offline
+    emulator, installed-hash and original-Activity launch checks.
+    """
+    observation = {
+        "status": "SYSTEM_UI_NOT_RECOGNIZED_NO_ACTION",
+        "acknowledged": False,
+        "permission_granted": False,
+        "native_entry_accepted": False,
+        "raw_ui_or_window_logged": False,
+    }
+    try:
+        focus, state = _focused_system_window(run)
+        observation["focus_source"] = state
+        if not focus:
+            return ui_xml, observation
+        display = run(["shell", "wm", "size"])
+        evidence = {}
+        warning = read_warning_action(
+            ui_xml, focus, display, run, evidence, target_package=PACKAGE)
+        observation["page_size_probe"] = evidence
+        if warning is None:
+            return ui_xml, observation
+        next_focus, next_state = _focused_system_window(run)
+        current_tokens = _warning_focus_tokens(focus)
+        if (not next_focus or next_state != state
+                or len(current_tokens) != 2
+                or current_tokens != _warning_focus_tokens(next_focus)):
+            observation["status"] = "WARNING_FOCUS_CHANGED_NO_ACTION"
+            return ui_xml, observation
+        # Re-establish full offline isolation immediately before touching a
+        # *verified system compatibility button*, never user app controls.
+        if (run(["shell", "getprop", "ro.kernel.qemu"]) != "1"
+                or run(["shell", "settings", "get", "global", "airplane_mode_on"]) != "1"
+                or run(["shell", "settings", "get", "global", "wifi_on"]) != "0"
+                or run(["shell", "settings", "get", "global", "mobile_data"]) != "0"):
+            observation["status"] = "WARNING_OFFLINE_STATE_CHANGED_NO_ACTION"
+            return ui_xml, observation
+        for version in ("-4", "-6"):
+            routes = run(["shell", "ip", version, "route", "show"])
+            if routes and any(" dev lo" not in line for line in routes.splitlines()):
+                observation["status"] = "WARNING_NETWORK_ROUTE_CHANGED_NO_ACTION"
+                return ui_xml, observation
+        (x, y), kind = warning
+        run(["shell", "input", "tap", str(x), str(y)])
+        observation["status"] = "EXACT_AOSP_PAGE_SIZE_WARNING_ACKNOWLEDGED"
+        observation["page_size_warning_kind"] = kind
+        observation["acknowledged"] = True
+        pause(1)
+        return capture_private_ui_hierarchy(run), observation
+    except SmokeBlocked as exc:
+        # Do not swallow an incomplete private screenshot cleanup.
+        if str(exc) == "SMOKE_UI_TEMP_CLEANUP_FAILED":
+            raise
+        observation["status"] = "WARNING_PROBE_UNAVAILABLE_NO_ACTION"
+        return ui_xml, observation
+
+
 def probe_private_emulator(serial, *, owner_approved, launcher_component,
                            expected_installed_apk_sha256, dwell_ms=3000,
                            adb=_adb, pause=time.sleep, candidate_graph=None):
@@ -742,6 +824,24 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     if home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
         ui_data = capture_private_ui_hierarchy(run)
         home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
+        if (not home["ui"]["expected_native_ui_observed"] and
+                home["ui"]["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY"):
+            ui_data, warning = _single_known_16k_warning(
+                ui_data, run=run, pause=pause)
+            home["system_warning"] = warning
+            if warning["acknowledged"]:
+                # A compatibility confirmation is NOT OEM init or a native
+                # entry PASS. Re-check Activity/crashes after its dismissal.
+                fresh = evaluate_launch_window(
+                    component=launcher_component, launch_output=am_output,
+                    activity_snapshot=run(["shell", "dumpsys", "activity", "activities"]),
+                    crash_log=run(["logcat", "-b", "crash", "-d"]),
+                    observed_ms=dwell_ms, candidate_graph=candidate_graph,
+                    installed_apk_path=installed_path)
+                home.update({k: fresh[k] for k in (
+                    "status", "resumed_activity_observed", "foreground_category",
+                    "crash")})
+                home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
         # Initial OEM welcome/login or a platform dialog need not inflate
         # activity_main_new.xml, where the normal clone's entry is attached.
         # Preserve independent startup evidence, but do not tap, infer an
@@ -749,7 +849,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
         home["oem_main_initialization"] = "NOT_ATTESTED"
         home["miot_binding"] = "NOT_ATTESTED"
         home["cloud_login"] = "NOT_TESTED"
-        if home["ui"]["expected_native_ui_observed"] is False:
+        if (home["ui"]["expected_native_ui_observed"] is False and
+                home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED"):
             home["status"] = "BLOCKED_REQUIRED_UI_NOT_VISIBLE"
     reports.append(home)
     if home["status"] != "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
@@ -770,12 +871,23 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
     dj_crashes = run(["logcat", "-b", "crash", "-d"])
     dj_ui = capture_private_ui_hierarchy(run)
+    dj_classification = classify_visible_ui(dj_ui, stage="native_dj")
+    dj_warning = None
+    if (not dj_classification["expected_native_ui_observed"] and
+            dj_classification["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY"):
+        dj_ui, dj_warning = _single_known_16k_warning(
+            dj_ui, run=run, pause=pause)
+        if dj_warning["acknowledged"]:
+            dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
+            dj_crashes = run(["logcat", "-b", "crash", "-d"])
     dj = evaluate_navigation_window(component=PACKAGE + "/" + DJ_ACTIVITY,
                                     activity_snapshot=dj_snapshot,
                                     crash_log=dj_crashes, ui_dump=dj_ui,
                                     observed_ms=dwell_ms,
                                     candidate_graph=candidate_graph,
                                     installed_apk_path=installed_path)
+    if dj_warning is not None:
+        dj["system_warning"] = dj_warning
     reports.append(dj)
     success = dj["status"] == "EMULATOR_NATIVE_DJ_NAVIGATION_OBSERVED"
     return {

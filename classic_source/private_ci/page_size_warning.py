@@ -18,6 +18,8 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 ORIGINAL = "com.yeelight.cherry"
+CLONE = "io.lxsdd.yeelightdj"
+ALLOWED_TARGETS = frozenset((ORIGINAL, CLONE))
 RESOURCES = {
     "page_size_compat_apk_warning": "APK_ALIGNMENT",
     "page_size_compat_elf_warning": "ELF_ALIGNMENT",
@@ -126,9 +128,11 @@ def _window_attributes(body):
     return None
 
 
-def _system_phone_window(focus, windows, diagnostic=None):
+def _system_phone_window(focus, windows, diagnostic=None, *, target_package=ORIGINAL):
     evidence = diagnostic if type(diagnostic) is dict else {}
     evidence['window_check'] = 'INPUT_INVALID'
+    if type(target_package) is not str or target_package not in ALLOWED_TARGETS:
+        return False
     if any(type(x) is not str or len(x) > MAX_TEXT for x in (focus, windows)):
         return False
     current = re.findall(r"(?m)^[ \t]*mCurrentFocus=(Window\{[^\r\n]{1,300}\})[ \t]*$", focus)
@@ -137,7 +141,8 @@ def _system_phone_window(focus, windows, diagnostic=None):
         return False
     selected = re.findall(r"(?m)^[ \t]*mFocusedApp=([^\r\n]{1,512})[ \t]*$", focus)
     classic = len(selected) == 1 and bool(re.search(
-        r"(?<![A-Za-z0-9_.])com\.yeelight\.cherry/[^\s}]+", selected[0]))
+        r"(?<![A-Za-z0-9_.])" + re.escape(target_package) + r"/[^\s}]+",
+        selected[0]))
     evidence['focused_app'] = 'CLASSIC' if classic else 'OTHER_OR_UNRESOLVED'
     # Bind owner/type to THIS focused Window token, not a different window
     # somewhere in a large dump. Duplicates and incomplete dumps fail closed.
@@ -165,14 +170,17 @@ def _system_phone_window(focus, windows, diagnostic=None):
     return classic and owner and phone
 
 
-def warning_action(xml, focus, windows, display, page_size, resources, diagnostic=None):
+def warning_action(xml, focus, windows, display, page_size, resources,
+                   diagnostic=None, *, target_package=ORIGINAL):
     """Return (point, fixed reason) only for the exact verified system warning."""
     evidence = diagnostic if type(diagnostic) is dict else {}
     evidence['decision'] = 'INPUT_OR_WINDOW_NOT_VERIFIED'
-    if (type(xml) is not str or not 0 < len(xml) <= MAX_TEXT
+    if (type(target_package) is not str or target_package not in ALLOWED_TARGETS
+            or type(xml) is not str or not 0 < len(xml) <= MAX_TEXT
             or type(display) is not str or len(display) > 10000
             or page_size != "16384" or type(resources) is not dict
-            or not _system_phone_window(focus, windows, evidence)):
+            or not _system_phone_window(focus, windows, evidence,
+                                         target_package=target_package)):
         return None
     evidence['decision'] = 'HIERARCHY_NOT_VERIFIED'
     if "<!DOCTYPE" in xml.upper() or "<!ENTITY" in xml.upper():
@@ -231,11 +239,13 @@ def warning_action(xml, focus, windows, display, page_size, resources, diagnosti
     return ((x1 + x2) // 2, (y1 + y2) // 2), matched[0]
 
 
-def read_warning_action(xml, focus, display, run, diagnostic=None):
+def read_warning_action(xml, focus, display, run, diagnostic=None,
+                        *, target_package=ORIGINAL):
     """Read-only Android shell probes. Failures are handled by the guarded caller."""
     evidence = diagnostic if type(diagnostic) is dict else {}
     evidence['decision'] = 'INPUT_INVALID'
-    if type(xml) is not str or len(xml) > MAX_TEXT:
+    if (type(target_package) is not str or target_package not in ALLOWED_TARGETS
+            or type(xml) is not str or len(xml) > MAX_TEXT):
         return None
     evidence['decision'] = 'PAGE_SIZE_READ_FAILED'
     page_size = run(["shell", "getconf", "PAGE_SIZE"]).strip()
@@ -246,7 +256,8 @@ def read_warning_action(xml, focus, display, run, diagnostic=None):
         return None
     windows = run(["shell", "dumpsys", "window", "windows"])
     evidence['decision'] = 'WINDOW_NOT_VERIFIED'
-    if not _system_phone_window(focus, windows, evidence):
+    if not _system_phone_window(focus, windows, evidence,
+                                 target_package=target_package):
         return None
     evidence['decision'] = 'FRAMEWORK_RESOURCE_READ_FAILED'
     resources = read_framework_resources(run, evidence)
@@ -255,4 +266,5 @@ def read_warning_action(xml, focus, display, run, diagnostic=None):
     if not evidence['required_framework_resources_readable']:
         evidence['decision'] = 'FRAMEWORK_RESOURCES_UNAVAILABLE'
         return None
-    return warning_action(xml, focus, windows, display, page_size, resources, evidence)
+    return warning_action(xml, focus, windows, display, page_size, resources,
+                          evidence, target_package=target_package)

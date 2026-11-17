@@ -153,6 +153,38 @@ class PageSizeWarningTests(unittest.TestCase):
             with self.subTest(xml=xml[:60]):
                 self.assertIsNone(self.action(xml=xml))
 
+    def test_clone_package_must_be_explicit_and_focused_for_page_size_action(self):
+        clone = warning.CLONE
+        focus = FOCUS.replace('com.yeelight.cherry/', clone + '/')
+        self.assertIsNone(self.action(focus=focus))
+        self.assertEqual(self.action(focus=focus, target_package=clone),
+                         ((100, 120), 'ELF_ALIGNMENT'))
+        self.assertIsNone(self.action(target_package=clone))
+        for bad in (clone + '.evil', 'com.other.app', '', None, 7):
+            with self.subTest(bad=bad):
+                self.assertIsNone(self.action(
+                    focus=focus, target_package=bad))
+        self.assertIsNone(self.action(focus=focus.replace(
+            clone + '/', 'prefix.' + clone + '/'), target_package=clone))
+
+    def test_clone_read_action_uses_same_exact_focus_and_resources(self):
+        clone = warning.CLONE
+        focus = FOCUS.replace('com.yeelight.cherry/', clone + '/')
+        calls = []
+        def run(args):
+            calls.append(tuple(args))
+            if args == ['shell', 'getconf', 'PAGE_SIZE']: return '16384'
+            if args == ['shell', 'dumpsys', 'window', 'windows']: return WINDOWS
+            if args[:4] == ['shell', 'cmd', 'overlay', 'lookup']:
+                return RESOURCES[args[-1].split('/')[-1]]
+            raise AssertionError(args)
+        self.assertEqual(warning.read_warning_action(
+            ui(), focus, DISPLAY, run, target_package=clone),
+            ((100, 120), 'ELF_ALIGNMENT'))
+        self.assertIsNone(warning.read_warning_action(
+            ui(), FOCUS, DISPLAY, run, target_package=clone))
+        self.assertFalse(any('input' in c or 'grant' in c for c in calls))
+
     def test_malformed_oversized_and_non_16k_inputs_fail_closed(self):
         for xml in (None, '', '<malformed>', '<!DOCTYPE x>' + ui(), ui() * 20000):
             self.assertIsNone(self.action(xml=xml))

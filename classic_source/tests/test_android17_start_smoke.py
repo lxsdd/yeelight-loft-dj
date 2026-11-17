@@ -52,6 +52,9 @@ class FakeADB:
         if key in (("shell", "ip", "-4", "route", "show"),
                    ("shell", "ip", "-6", "route", "show")):
             return ""
+        if key in (("shell", "dumpsys", "window", "displays"),
+                   ("shell", "dumpsys", "window", "windows")):
+            return ""
         if key == ("shell", "pm", "path", PACKAGE):
             return "package:" + APK
         if key == ("shell", "sha256sum", APK):
@@ -234,6 +237,107 @@ class Android17StartupTest(unittest.TestCase):
                 with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_PACKAGE_NOT_AUTHORIZED"):
                     entry_button_coordinates(ENTRY, "Physical size: 1080x2400",
                                               expected_package=value)
+
+    def test_known_16k_warning_only_acknowledged_inside_exact_clone_focus(self):
+        from page_size_warning import CLONE
+        class WarningADB(FakeADB):
+            def __init__(self, *, focused=CLONE, page_size="16384",
+                         warning_text="Synthetic 16 KB ELF alignment warning. Run using page size compatible mode.",
+                         warn_on_dj=False, flip_focus_after_read=False):
+                super().__init__()
+                self.focused = focused
+                self.page_size = page_size
+                self.warning_text = warning_text
+                self.warn_on_dj = warn_on_dj
+                self.flip_focus_after_read = flip_focus_after_read
+                self.focus_reads = 0
+                self.taps = []
+                self.stage = 0
+                self.focus_changed = False
+            def __call__(self, args, *, serial):
+                key = tuple(args)
+                if key == ("shell", "dumpsys", "activity", "activities"):
+                    return ACTIVITY % (DJ if self.stage >= 2 else LAUNCHER)
+                if key == ("shell", "dumpsys", "window", "displays"):
+                    self.focus_reads += 1
+                    changed = self.focus_changed or (
+                        self.flip_focus_after_read and self.focus_reads >= 2)
+                    current = ("Window{a2 u0 Other warning}" if changed
+                               else "Window{a1 u0 Synthetic warning}")
+                    return ("mCurrentFocus=" + current + "\n" +
+                            "mFocusedApp=ActivityRecord{c1 u0 " + self.focused +
+                            "/com.yeelight.cherry.MainActivity t7}\n")
+                if key == ("shell", "dumpsys", "window", "windows"):
+                    return ('Window #0 Window{a1 u0 Synthetic warning}:\n'
+                            'mOwnerUid=1000 showForAllUsers=false package=android\n'
+                            'mAttrs={(0,0)(wrapxwrap) ty=PHONE fmt=TRANSLUCENT}\n')
+                if key == ("shell", "getconf", "PAGE_SIZE"): return self.page_size
+                if args[:4] == ["shell", "cmd", "overlay", "lookup"]:
+                    resource = args[-1].rsplit('/', 1)[-1]
+                    return {"page_size_compat_elf_warning":
+                              "Synthetic 16 KB ELF alignment warning. Run using page size compatible mode.",
+                            "page_size_compat_apk_warning":
+                              "Synthetic 16 KB APK alignment warning. Compatible mode applies.",
+                            "page_size_compat_apk_and_elf_warning":
+                              "Synthetic 16 KB APK and ELF alignment warning. Compatible mode applies.",
+                            "ok": "OK"}[resource]
+                if key == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
+                    self.ui_count += 1
+                    if self.stage == 0 or (self.stage == 2 and self.warn_on_dj):
+                        self._dump_pending = ('<?xml version="1.0"?><hierarchy>'
+                          '<node package="android"/>'
+                          '<node package="android" resource-id="android:id/message" text="' +
+                          self.warning_text + '"/>'
+                          '<node package="android" resource-id="android:id/button1" '
+                          'text="OK" class="android.widget.Button" clickable="true" '
+                          'enabled="true" bounds="[50,100][150,140]"/></hierarchy>')
+                    else:
+                        self._dump_pending = ENTRY if self.stage == 1 else DJ_UI
+                    return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+                if args[:3] == ["shell", "input", "tap"]:
+                    self.taps.append(tuple(args))
+                    self.stage += 1
+                    return ""
+                return super().__call__(args, serial=serial)
+        good = WarningADB()
+        result = good.run()
+        self.assertEqual(result["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        self.assertEqual(result["entrypoint_observations"][0]["system_warning"]["status"],
+                         "EXACT_AOSP_PAGE_SIZE_WARNING_ACKNOWLEDGED")
+        self.assertEqual(good.taps, [
+            ("shell", "input", "tap", "100", "120"),
+            ("shell", "input", "tap", "110", "60")])
+        self.assertFalse(result["app_functionally_accepted"])
+        double = WarningADB(warn_on_dj=True)
+        double_result = double.run()
+        self.assertEqual(double_result["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        self.assertEqual(double_result["entrypoint_observations"][1]["system_warning"]["status"],
+                         "EXACT_AOSP_PAGE_SIZE_WARNING_ACKNOWLEDGED")
+        self.assertEqual(double.taps, [
+            ("shell", "input", "tap", "100", "120"),
+            ("shell", "input", "tap", "110", "60"),
+            ("shell", "input", "tap", "100", "120")])
+        for kwargs in ({"focused": "com.other.app"}, {"page_size": "4096"},
+                       {"warning_text": "Allow access to your private files?"}):
+            with self.subTest(kwargs=kwargs):
+                blocked = WarningADB(**kwargs)
+                report = blocked.run()
+                self.assertEqual(report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+                self.assertFalse(blocked.taps)
+                self.assertFalse(report["native_entry_navigation_tested"])
+        # In a real window-focus race, no stale verified compatibility tap.
+        changed = WarningADB()
+        changed.focus_changed = True
+        report = changed.run()
+        self.assertEqual(report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertFalse(changed.taps)
+        raced = WarningADB(flip_focus_after_read=True)
+        raced_report = raced.run()
+        self.assertEqual(raced_report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertFalse(raced.taps)
+        self.assertEqual(
+            raced_report["entrypoint_observations"][0]["system_warning"]["status"],
+            "WARNING_FOCUS_CHANGED_NO_ACTION")
 
     def test_first_run_oem_surface_does_not_imply_failed_app_or_login(self):
         a = FakeADB()

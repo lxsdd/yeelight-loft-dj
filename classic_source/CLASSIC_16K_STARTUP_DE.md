@@ -177,3 +177,25 @@ package to UI classification and coordinate selection; the default clone
 probe continues to require `io.lxsdd.yeelightdj`. Foreign package strings
 are never accepted, and A/B observations remain non-qualifying for product
 acceptance.
+
+
+## 17.11.2026 – Strict original/clone 16-KiB system-warning transition
+
+Protected run #44124269057, candidate `f3e4c4c1b6ea01a4898bc3f55f7ea51cf01778c9`, has valid
+private OEM build, DEX graph and test-signing parity, but the original
+Classic Activity is only resumed behind an `ANDROID_SYSTEM_ONLY` first UI
+hierarchy; no target process fatal, MiOT/login or DJ entry has been proven.
+The next source-only candidate reuses the already-qualified AOSP 16-KiB
+warning matcher for the clone with an explicitly selected, exact app ID.
+Only a unique, focused UID1000 `android` TYPE_PHONE warning, 16-KiB kernel,
+exact device framework message/positive button and verified bounds can trigger
+one compatibility acknowledgment per Activity. Focus and air-gapped network
+state are rechecked before a tap; screenshots stay ephemeral. All unknown,
+permission, account, ANR and other UI states remain blocked without action.
+Acknowledgment cannot itself qualify Classic startup or the native DJ entry.
+The identity-control original package remains the legacy default; no
+physical Android, LAN, firmware, signing, account or user data are touched
+by source-only development. New synthetic positive/negative tests cover
+clone vs original package, resources, focus, system warning, permission,
+page size, and absence of blind taps. Private runtime requires a separately
+owner-dispatched exact-SHA workflow.
