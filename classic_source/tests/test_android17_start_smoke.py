@@ -15,12 +15,12 @@ DJ = PACKAGE + "/" + DJ_ACTIVITY
 PIN = "a" * 64
 APK = "/data/app/~~valid/io.lxsdd.yeelightdj-abc==/base.apk"
 ENTRY = ('<?xml version="1.0"?><hierarchy>'
-         '<node text="Loft DJ" clickable="true" bounds="[10,20][210,100]"/>'
+         '<node package="' + PACKAGE + '" text="Loft DJ" clickable="true" enabled="true" bounds="[10,20][210,100]"/>'
          '</hierarchy>')
 DJ_UI = ('<?xml version="1.0"?><hierarchy>'
-         '<node text="Loft DJ · Yeelight Classic" clickable="false"/>'
-         '<node text="Mikrofon starten" clickable="true"/>'
-         '<node text="DJ stoppen" clickable="true"/>'
+         '<node package="' + PACKAGE + '" text="Loft DJ · Yeelight Classic" clickable="false" enabled="true"/>'
+         '<node package="' + PACKAGE + '" text="Mikrofon starten" clickable="true" enabled="true"/>'
+         '<node package="' + PACKAGE + '" text="DJ stoppen" clickable="true" enabled="true"/>'
          '</hierarchy>')
 ACTIVITY = "ResumedActivity: ActivityRecord{123 u0 %s t1}"
 
@@ -203,6 +203,73 @@ class Android17StartupTest(unittest.TestCase):
         result = a.run()
         self.assertEqual(result["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
         self.assertFalse(result["native_entry_navigation_tested"])
+
+    def test_first_run_oem_surface_does_not_imply_failed_app_or_login(self):
+        a = FakeADB()
+        welcome = ('<?xml version="1.0"?><hierarchy>'
+                   '<node package="' + PACKAGE +
+                   '" text="SensitiveOEMWelcome" enabled="true"/>'
+                   '</hierarchy>')
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = welcome
+        result = a.run()
+        home = result["entrypoint_observations"][0]
+        self.assertEqual(home["status"], "BLOCKED_REQUIRED_UI_NOT_VISIBLE")
+        self.assertEqual(home["ui"]["ui_node_origin_category"], "CLONE_ONLY")
+        self.assertEqual(home["oem_main_initialization"], "NOT_ATTESTED")
+        self.assertEqual(home["miot_binding"], "NOT_ATTESTED")
+        self.assertEqual(home["cloud_login"], "NOT_TESTED")
+        self.assertFalse(home["crash"]["target_crash"])
+        self.assertFalse(result["native_entry_navigation_tested"])
+        self.assertNotIn("SensitiveOEMWelcome", str(result))
+        self.assertFalse(any(c[:3] == ("shell", "input", "tap") for c in a.calls))
+
+    def test_android_system_only_and_unattributed_first_run_are_not_native(self):
+        for pkg in ("android", "com.android.systemui", "com.other.app", None):
+            with self.subTest(pkg=pkg):
+                a = FakeADB()
+                package = (' package="' + pkg + '"' if pkg else "")
+                a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = (
+                    '<?xml version="1.0"?><hierarchy><node' + package +
+                    ' text="Loft DJ" clickable="true" enabled="true" '
+                    'bounds="[10,20][210,100]"/></hierarchy>')
+                result = a.run()
+                home = result["entrypoint_observations"][0]
+                expected = ("ANDROID_SYSTEM_ONLY" if pkg in ("android", "com.android.systemui")
+                            else "OTHER_OR_UNVERIFIED" if pkg else "UNATTRIBUTED")
+                self.assertEqual(home["ui"]["ui_node_origin_category"], expected)
+                self.assertFalse(home["ui"]["expected_native_ui_observed"])
+                self.assertFalse(result["native_entry_navigation_tested"])
+                self.assertFalse(any(c[:3] == ("shell", "input", "tap") for c in a.calls))
+
+    def test_spoofed_foreign_button_cannot_create_native_entry_or_coordinates(self):
+        foreign = ENTRY.replace('package="' + PACKAGE + '"',
+                                'package="com.android.systemui"')
+        self.assertFalse(classify_visible_ui(foreign, stage="classic_entry")
+                         ["expected_native_ui_observed"])
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_CLASSIC_ENTRY_NOT_VISIBLE"):
+            entry_button_coordinates(foreign, "Physical size: 1080x2400")
+
+    def test_mixed_ui_keeps_origin_category_but_requires_real_app_controls(self):
+        mixed = ENTRY.replace(
+            '</hierarchy>',
+            '<node package="android" text="OEM-secret"/>'
+            '</hierarchy>')
+        result = classify_visible_ui(mixed, stage="classic_entry")
+        self.assertEqual(result["ui_node_origin_category"], "CLONE_AND_OTHER")
+        self.assertTrue(result["expected_native_ui_observed"])
+        self.assertNotIn("OEM-secret", str(result))
+        self.assertFalse(classify_visible_ui(
+            DJ_UI.replace('package="' + PACKAGE + '"',
+                          'package="com.android.systemui"'),
+            stage="native_dj")["expected_native_ui_observed"])
+
+    def test_disabled_entry_is_not_clickable_or_tapped(self):
+        a = FakeADB()
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = (
+            ENTRY.replace('enabled="true"', 'enabled="false"'))
+        result = a.run()
+        self.assertEqual(result["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertFalse(any(c[:3] == ("shell", "input", "tap") for c in a.calls))
 
     def test_ui_metadata_is_not_implicitly_a_real_click(self):
         self.assertTrue(classify_visible_ui(ENTRY, stage="classic_entry")["expected_native_ui_observed"])

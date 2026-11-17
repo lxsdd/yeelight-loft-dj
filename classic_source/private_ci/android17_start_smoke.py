@@ -526,17 +526,37 @@ def classify_visible_ui(dump, *, stage):
     if root.tag != "hierarchy":
         raise SmokeBlocked("SMOKE_UI_ROOT_INVALID")
     nodes = [x.attrib for x in root.iter("node")]
-    if stage == "classic_entry":
-        ok = any(x.get("text") == "Loft DJ" and x.get("clickable") == "true"
-                 for x in nodes)
+    # UIAutomator's node package attribution is the only evidence used here.
+    # A pre-login OEM Activity or Android compatibility dialog can occupy the
+    # first frame; never mislabel it as a failed Music screen or bypass login.
+    # Return a fixed category, never package names, OEM labels or raw UI text.
+    packages = {x["package"] for x in nodes if x.get("package")}
+    system_packages = {"android", "com.android.systemui",
+                       "com.google.android.permissioncontroller",
+                       "com.android.permissioncontroller"}
+    if PACKAGE in packages:
+        origin = ("CLONE_ONLY" if packages == {PACKAGE}
+                  else "CLONE_AND_OTHER")
+    elif packages and packages <= system_packages:
+        origin = "ANDROID_SYSTEM_ONLY"
+    elif packages:
+        origin = "OTHER_OR_UNVERIFIED"
     else:
-        title = any(x.get("text") == "Loft DJ · Yeelight Classic" for x in nodes)
-        start = any(x.get("text") == "Mikrofon starten" and x.get("clickable") == "true"
-                    for x in nodes)
-        stop = any(x.get("text") == "DJ stoppen" and x.get("clickable") == "true"
-                   for x in nodes)
+        origin = "UNATTRIBUTED"
+    def own_control(node, label, clickable=None):
+        return (node.get("package") == PACKAGE and
+                node.get("text") == label and
+                node.get("enabled") != "false" and
+                (clickable is None or node.get("clickable") == clickable))
+    if stage == "classic_entry":
+        ok = any(own_control(x, "Loft DJ", "true") for x in nodes)
+    else:
+        title = any(own_control(x, "Loft DJ · Yeelight Classic") for x in nodes)
+        start = any(own_control(x, "Mikrofon starten", "true") for x in nodes)
+        stop = any(own_control(x, "DJ stoppen", "true") for x in nodes)
         ok = title and start and stop
     return {"expected_native_ui_observed": bool(ok),
+            "ui_node_origin_category": origin,
             "ui_stage": stage, "ui_interaction_tested": False}
 
 
@@ -561,7 +581,9 @@ def entry_button_coordinates(dump, display):
     except ET.ParseError:
         raise SmokeBlocked("SMOKE_UI_XML_INVALID") from None
     buttons = [n.attrib for n in tree.iter("node")
-               if n.get("text") == "Loft DJ" and n.get("clickable") == "true"]
+               if n.get("package") == PACKAGE and
+               n.get("text") == "Loft DJ" and
+               n.get("clickable") == "true" and n.get("enabled") != "false"]
     if len(buttons) != 1:
         raise SmokeBlocked("SMOKE_CLASSIC_ENTRY_AMBIGUOUS")
     bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
@@ -716,6 +738,13 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     if home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
         ui_data = capture_private_ui_hierarchy(run)
         home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
+        # Initial OEM welcome/login or a platform dialog need not inflate
+        # activity_main_new.xml, where the normal clone's entry is attached.
+        # Preserve independent startup evidence, but do not tap, infer an
+        # account state, or count a missing entry as native UI acceptance.
+        home["oem_main_initialization"] = "NOT_ATTESTED"
+        home["miot_binding"] = "NOT_ATTESTED"
+        home["cloud_login"] = "NOT_TESTED"
         if home["ui"]["expected_native_ui_observed"] is False:
             home["status"] = "BLOCKED_REQUIRED_UI_NOT_VISIBLE"
     reports.append(home)

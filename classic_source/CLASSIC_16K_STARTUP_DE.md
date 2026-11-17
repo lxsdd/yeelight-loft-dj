@@ -150,3 +150,23 @@ Die [AOSP-Implementierung von `cmd overlay lookup`](https://android.googlesource
 Die Ressourcenbehandlung akzeptiert nur eindeutig aufgelöste AOSP-Referenzen `@0x........ -> TEXT` beziehungsweise `@android:string/NAME -> TEXT`. Ein nacktes `@...`, unaufgelöste Alias-Ketten oder beliebige ` -> `-Zeichen bleiben unverifiziert und **können keinen Tap autorisieren**. Die ursprünglichen strengen Regeln über UID, fokussiertes Fenster, Nachrichtenlänge, echte UI-Hierarchie, Original-App, exakte Schaltfläche und Fokusrennen bleiben bestehen.
 
 Wenn nur eine unaufgelöste oder kurze Framework-Ressource vorhanden ist, aber die echte QEMU-/SDK-/16-KiB-/WindowManager-Prüfung erfolgreich war, kann der **rein öffentliche Boot-/Parserlauf** den explizit eingeschränkten Status `PUBLIC_WARNING_SHELL_PROBE_SAFE_UNVERIFIED` mit nachgewiesener negativer Nicht-Aktionsprüfung erreichen. Dies ist **keine** Qualifikation der Dialogerkennung, keine private UI-Abnahme und kein Hardware-/OEM-Test. Wenn sämtliche Warnressourcen fehlen, die OK-Ressource fehlt oder die echten Fenster-/Seitengrößenprüfungen nicht bestehen, bleibt der öffentliche Lauf rot. Aus fehlender Laufzeit-Auflösung wird niemals eine feste Ersatz-Übersetzung oder ein automatisches OK konstruiert.
+
+
+## 17.11.2026 – First-run UI attribution (source-only follow-up)
+
+The owner-only Android17 candidate can resume its OEM Classic Activity without a
+confirmed target-process fatal yet display no native entry on the first offline
+frame. The normal clone only places the entry inside `activity_main_new.xml`;
+this does not establish that the first resumed OEM Activity inflated that view.
+The isolated UIAutomator classifier now records only allowlisted node-origin
+categories (`CLONE_ONLY`, `CLONE_AND_OTHER`, `ANDROID_SYSTEM_ONLY`,
+`OTHER_OR_UNVERIFIED`, `UNATTRIBUTED`), without exporting OEM strings,
+package identities or XML. Positive entry/navigation recognition requires
+controls attributed to the exact installed clone package and not disabled.
+An absent entry remains blocked, no blind taps or new launches occur, and
+OEM main initialization, MiOT binding, account/login and functional Classic
+Music integration remain unverified. Synthetic positive/negative tests cover
+OEM welcome, Android system UI, spoofed text, mixed surfaces and disabled
+buttons. This source change cannot itself classify a page as a login screen,
+fix 16-KiB OEM ELF compatibility or qualify the original Music UI. A fresh
+owner-scoped offline emulator observation remains separately gated.
