@@ -61,8 +61,10 @@ class ChromaFakeDevice(
         val method = packet.optString("method")
         if (id <= mostRecentId || id <= 0 || packet.opt("params") !is JSONArray) return null
         if (method != handshakeName && method != keepAliveName && method != "set_scene") return null
-        // Do not let malformed or forged frames consume the fake's sequence ID.
-        // The error injector is deliberately synthetic and bypasses validation.
+        // Validate token, exact parameter types and semantics BEFORE the
+        // synthetic error injector. Invalid high-ID frames must not consume a
+        // sequence number or a one-shot simulated firmware rejection.
+        if (!validCommand(packet, method)) return null
         if (rejectNextCommand) {
             mostRecentId = id
             rejectNextCommand = false
@@ -73,34 +75,41 @@ class ChromaFakeDevice(
 
         return when (method) {
             handshakeName -> {
-                if (active || packet.getJSONArray("params").length() != 0) return null
                 active = true
                 mostRecentId = id
                 emit(id, tokenReply(id))
             }
             keepAliveName -> {
-                if (!active || !validToken(packet)) return null
-                val params = packet.getJSONArray("params")
-                if (params.length() != 2 ||
-                    params.optString(0) != "keeplive_interval" ||
-                    params.optString(1) != "10") return null
                 acceptedKeepAlives++
                 mostRecentId = id
                 emit(id, tokenReply(id))
             }
             "set_scene" -> {
-                if (!active || !validToken(packet)) return null
-                val p = packet.getJSONArray("params")
-                if (p.length() != 5 || p.optString(0) != "color" ||
-                    p.optInt(1, -1) !in 0..0xFFFFFF ||
-                    p.optInt(2, -1) !in 1..100 ||
-                    p.optInt(3, -1) != 0 || p.optString(4) != "sudden") return null
                 acceptedColorFrames++
                 mostRecentId = id
                 // The sample's color path does not wait for per-frame ACK.
                 null
             }
             else -> null
+        }
+    }
+
+    private fun validCommand(packet: JSONObject, method: String): Boolean {
+        val p = packet.getJSONArray("params")
+        return when (method) {
+            handshakeName -> !active && p.length() == 0
+            keepAliveName -> active && validToken(packet) && p.length() == 2 &&
+                p.opt(0) == "keeplive_interval" && p.opt(1) == "10"
+            "set_scene" -> {
+                val rgb = p.opt(1) as? Int
+                val brightness = p.opt(2) as? Int
+                val duration = p.opt(3) as? Int
+                active && validToken(packet) && p.length() == 5 &&
+                    p.opt(0) == "color" && rgb != null && rgb in 0..0xFFFFFF &&
+                    brightness != null && brightness in 1..100 &&
+                    duration == 0 && p.opt(4) == "sudden"
+            }
+            else -> false
         }
     }
 

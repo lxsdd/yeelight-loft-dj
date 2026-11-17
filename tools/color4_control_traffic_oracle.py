@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Offline Color4 high-frequency-control scheduling oracle (NO device I/O).
 
-It compares UI slider events against a conservative classic LAN envelope:
+It compares UI slider events against a conservative classic LAN envelope.
+Commands are proposed ONLY at observed UI-event timestamps; a pending tail
+never creates an implicit future timer, write or command queue:
 24 attempted requests/rolling 60s and at least 1.5s between writes, matching
 the separately developed *proposed* app policy in draft PR #31. These are
 client-side safety assumptions, NOT reverse engineered firmware capacities.
@@ -14,6 +16,8 @@ from collections import deque
 from dataclasses import dataclass
 import argparse
 import json
+
+MAX_CLOCK_MS=(1 << 63)-1
 
 CLASSIC_BUDGET=24
 WINDOW_MS=60_000
@@ -35,9 +39,10 @@ def validate(events:list[Event]):
         raise ValueError("invalid sequence length")
     last=-1
     for e in events:
-        if not isinstance(e,Event) or not isinstance(e.at_ms,int) or e.at_ms<last or e.at_ms<0:
+        if (not isinstance(e,Event) or type(e.at_ms) is not int or
+                not 0<=e.at_ms<=MAX_CLOCK_MS or e.at_ms<last):
             raise ValueError("events must be monotonic")
-        if e.kind not in TYPES or not isinstance(e.value,int) or (
+        if e.kind not in TYPES or type(e.value) is not int or (
                 e.kind=="rgb" and not 0<=e.value<=0xffffff) or (
                 e.kind=="bright" and not 1<=e.value<=100):
             raise ValueError("unsupported or invalid command")
@@ -49,10 +54,9 @@ def plan_classic_slider(
         firmware_quota_rejection_at_ms:int|None=None,
         ambiguous_timeout_at_ms:int|None=None):
     validate(events)
-    if firmware_quota_rejection_at_ms is not None and firmware_quota_rejection_at_ms<0:
-        raise ValueError("invalid rejection timestamp")
-    if ambiguous_timeout_at_ms is not None and ambiguous_timeout_at_ms<0:
-        raise ValueError("invalid timeout timestamp")
+    for stamp in (firmware_quota_rejection_at_ms, ambiguous_timeout_at_ms):
+        if stamp is not None and (type(stamp) is not int or not 0<=stamp<=MAX_CLOCK_MS):
+            raise ValueError("invalid injected event timestamp")
     pending:dict[str,Event]={}
     attempted:deque[int]=deque()
     sends=[]
@@ -65,12 +69,12 @@ def plan_classic_slider(
     def emit(candidate:Event, now:int):
         nonlocal next_send,state,dropped_by_local_budget
         if state!="READY":
-            return
+            return False
         while attempted and attempted[0]<=now-WINDOW_MS:
             attempted.popleft()
         if len(attempted)>=CLASSIC_BUDGET:
             dropped_by_local_budget+=1
-            return
+            return False
         # A command is counted as an ATTEMPT before network outcome.
         attempted.append(now)
         sends.append((now,candidate))
@@ -81,30 +85,28 @@ def plan_classic_slider(
         elif ambiguous_timeout_at_ms is not None and now>=ambiguous_timeout_at_ms:
             state="UNCERTAIN_TRANSPORT_STOP"
             outcomes.append("ambiguous_send_not_replayed")
+        return True
 
     for event in events:
         if state!="READY":
             break
-        # Bounded work: at most one pending event for each UI control.
-        while pending and next_send<=event.at_ms and state=="READY":
-            pick=min(pending.values(),key=lambda e:e.at_ms)
-            pending.pop(pick.kind)
-            emit(pick,max(next_send,pick.at_ms))
-        if state!="READY":
-            break
-        if not sends and not pending:
-            emit(event,event.at_ms)
-        else:
-            if event.kind in pending:
-                coalesced_updates+=1
-            pending[event.kind]=event
+        # Mirror offer(kind, value) followed by takeOnExplicitUiEvent(kind):
+        # replace the same control's stale value BEFORE selecting it. A new
+        # RGB action must never drain a pending brightness request (or vice versa).
+        if event.kind in pending:
+            coalesced_updates+=1
+        pending[event.kind]=event
         most_recent[event.kind]=event.value
-    # A UI plan can suggest a delayed final frame, but this is NOT a queued
-    # background task or permission to issue a future network request.
-    while pending and state=="READY":
-        pick=min(pending.values(),key=lambda e:e.at_ms)
-        pending.pop(pick.kind)
-        emit(pick,max(next_send,pick.at_ms))
+        if next_send<=event.at_ms:
+            # Admission retains the current kind on a denied local budget.
+            # A later explicit event may supersede it; no timer may drain it.
+            pick=pending[event.kind]
+            if emit(pick,event.at_ms):
+                pending.pop(event.kind)
+    # Pending updates are diagnostic only: without a new explicit input or
+    # separately approved timer there is NO future send. Discard the tail;
+    # the next independent call must not inherit stale RGB/brightness.
+    unsent_tail=sorted(pending)
     last_sent={e.kind:e.value for _,e in sends}
     return {
         "mode":"CLASSIC_LAN_SYNTHETIC",
@@ -112,6 +114,8 @@ def plan_classic_slider(
         "attempted_classic_commands":len(sends),
         "coalesced_updates":coalesced_updates,
         "dropped_when_local_budget_exhausted":dropped_by_local_budget,
+        "unsent_tail_control_kinds":unsent_tail,
+        "no_implicit_background_dispatch":True,
         "state":state,
         "outcomes":outcomes,
         "max_planned_command_delay_ms":max(
@@ -126,6 +130,8 @@ def plan_classic_slider(
 
 def plan_music_frames(events:list[Event], *, confirmed_support:bool):
     validate(events)
+    if type(confirmed_support) is not bool:
+        raise ValueError("explicit boolean SUPPORT evidence required")
     if not confirmed_support:
         return {
             "mode":"REFUSED_UNVERIFIED_MUSIC",

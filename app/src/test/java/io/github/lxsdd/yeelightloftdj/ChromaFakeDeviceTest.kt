@@ -172,6 +172,87 @@ class ChromaFakeDeviceTest {
         }
     }
 
+    @Test fun colorNumericTypesMustBeExactAndMalformedHighIdsMustNotAdvance() {
+        for (version in 1..2) {
+            val session = ChromaUdpOfflineSession(lamp, support(version))
+            val fake = ChromaFakeDevice(client, version)
+            val hello = deliver(fake, session.begin(0))!!
+            assertEquals(ChromaPreviewEvent.ACCEPTED_TOKEN,
+                session.acceptReply(hello.senderIp, hello.senderPort, hello.payload, 10))
+            val valid = session.previewColor(0x102030, 70, 20)!!
+            val packet = JSONObject(valid.forSimulatorOnly())
+            val invalidParams = listOf(
+                org.json.JSONArray().put("color").put("1056816").put(70).put(0).put("sudden"),
+                org.json.JSONArray().put("color").put(0x102030).put("70").put(0).put("sudden"),
+                org.json.JSONArray().put("color").put(0x102030).put(70).put("0").put("sudden"),
+                org.json.JSONArray().put("color").put(0x102030).put(true).put(0).put("sudden"),
+                org.json.JSONArray().put("color").put(0x1000000).put(70).put(0).put("sudden"),
+                org.json.JSONArray().put("color").put(0x102030).put(0).put(0).put("sudden")
+            )
+            invalidParams.forEachIndexed { n, params ->
+                val forged = JSONObject(packet.toString()).put("id", 1000 + n)
+                    .put("params", params)
+                assertNull(fake.process(ChromaFakeDatagram(
+                    client, 50000, forged.toString())))
+            }
+            assertNull(deliver(fake, valid))
+            assertEquals(1, fake.acceptedColorFrames)
+        }
+    }
+
+    @Test fun malformedFramesMustNotConsumePendingSyntheticDeviceRejection() {
+        for (version in 1..2) {
+            val session = ChromaUdpOfflineSession(lamp, support(version))
+            val fake = ChromaFakeDevice(client, version)
+            val hello = deliver(fake, session.begin(0))!!
+            assertEquals(ChromaPreviewEvent.ACCEPTED_TOKEN,
+                session.acceptReply(hello.senderIp, hello.senderPort, hello.payload, 10))
+            fake.rejectNextCommand = true
+            val valid = session.previewColor(0x112233, 60, 20)!!
+            val forged = JSONObject(valid.forSimulatorOnly()).put("id", 10000)
+                .put("params", org.json.JSONArray().put("color").put("1122867")
+                    .put(60).put(0).put("sudden"))
+            assertNull(fake.process(ChromaFakeDatagram(client, 50000, forged.toString())))
+            assertTrue(fake.rejectNextCommand)
+            val error = deliver(fake, valid)!!
+            assertEquals(ChromaPreviewEvent.CLOSED_ON_DEVICE_ERROR,
+                session.acceptReply(error.senderIp, error.senderPort, error.payload, 30))
+            assertFalse(fake.rejectNextCommand)
+            assertEquals(0, fake.acceptedColorFrames)
+        }
+    }
+
+    @Test fun numericKeepAliveStringCoercionMustNotConsumeSequence() {
+        val session = ChromaUdpOfflineSession(lamp, support(2))
+        val fake = ChromaFakeDevice(client, 2)
+        val hello = deliver(fake, session.begin(0))!!
+        assertEquals(ChromaPreviewEvent.ACCEPTED_TOKEN,
+            session.acceptReply(hello.senderIp, hello.senderPort, hello.payload, 10))
+        val valid = session.keepAlive(10010)!!
+        val forged = JSONObject(valid.forSimulatorOnly()).put("id", 6000)
+            .put("params", org.json.JSONArray()
+                .put("keeplive_interval").put(10))
+        assertNull(fake.process(ChromaFakeDatagram(client, 50000, forged.toString())))
+        val actual = deliver(fake, valid)!!
+        assertEquals(ChromaPreviewEvent.ACCEPTED_KEEPALIVE,
+            session.acceptReply(actual.senderIp, actual.senderPort, actual.payload, 10020))
+        assertEquals(1, fake.acceptedKeepAlives)
+    }
+
+    @Test fun malformedHandshakeDoesNotConsumeOneShotErrorInjection() {
+        val fake = ChromaFakeDevice(client, 2)
+        val session = ChromaUdpOfflineSession(lamp, support(2))
+        fake.rejectNextCommand = true
+        val forged = JSONObject().put("id", 90000).put("method", "udp_sess_new")
+            .put("params", org.json.JSONArray().put("unexpected"))
+        assertNull(fake.process(ChromaFakeDatagram(client, 50000, forged.toString())))
+        assertTrue(fake.rejectNextCommand)
+        val error = deliver(fake, session.begin(0))!!
+        assertEquals(ChromaPreviewEvent.CLOSED_ON_DEVICE_ERROR,
+            session.acceptReply(error.senderIp, error.senderPort, error.payload, 10))
+        assertEquals(0, fake.acceptedColorFrames)
+    }
+
     @Test fun fakeMustNeverProduceRealNetworkTransport() {
         val cls = ChromaFakeDevice::class.java.declaredMethods.map { it.name }
         assertFalse(cls.any { it.contains("Socket", ignoreCase = true) })
