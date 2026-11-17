@@ -25,3 +25,66 @@ Die Statuswerte `MODELED_*` sind Annahmen des Gegenmodells und **keine** realen 
 ## Entscheidung fuer die naechste Forschungsphase
 
 Erst eine privat zugreifbare, SHA-256-verifizierte Originalfirmware kann den OEM-Fehlervektor an konkrete Xtensa-Callsites und die Refill-Zustandsmaschine anbinden. Alternativ wuerde ein spaeter einzeln genehmigter, minimaler LAN-Beobachtungsversuch die konkurrierenden Ursachen anhand zeitlicher Reaktion und authentischer Fehler-IDs eingrenzen. Bis dahin bleiben der Quota-Root-Cause und die echte Hardwareperformance offen. Der produktive PR #31 und alle Musik-/UX-Zweige sind unveraendert.
+
+
+## Nachtrag: Dreifach-LAN-Lockout als getrenntes Offline-Gegenmodell
+
+Ein injizierter geraeteinterner LAN-Dienst-Ausfall wird mit
+inject_lan_service_stall() simuliert und **nicht** aus niedrigem oder hohem
+Befehlszaehler behauptet. modeled_cloud_path() bleibt davon unabhaengig:
+Cloud/Google-Home/Voice-Erfolg war beim echten Vorfall schon bekannt, waehrend
+Yeelight Classic die drei Esstischlampen nicht steuern konnte.
+simulate_app_force_stop() entfernt nur modellierte lokale App-Sitzungen und
+heilt keinen eingeschlossenen Firmwarezustand.
+simulate_power_cycle() loescht nur volatile modellierte Geraetezustaende;
+eine bereits bestehende App-Quarantaene darf dadurch nicht automatisch
+verschwinden. Eine gueltige gerätespezifische Recovery-Antwort bleibt Pflicht.
+
+Die neuen fuenf-Lampen-/14-Lampen-Regressionen stellen drei simulierte
+LAN-Ausfaelle, zwei gesunde Kontrolllampen, weiterhin unabhaengigen
+Cloud-Zugriff, erfolglosen App-Stopp und die drei einzelnen
+Power-Cycle-Wiederherstellungen nebeneinander. Es werden weder
+Netzwerkpakete gesendet noch echte Lampen angesprochen.
+**Diese Simulation identifiziert keine reale OEM-Quota-Root-Cause:**
+Die gesehenen 8502/1707/8502 Betriebsstunden belegen insbesondere
+keinen gemeinsamen Firmware-Timerfehler.
+
+Das separate klassische Steuerlast-Oracle weist nun booleansche,
+nichtganzzahlige und ausserhalb 64-bit liegende
+Zeit-/Farbeingaben sowie nichtbooleansche SUPPORT-Gates ab.
+Kein Quota-Bypass, Release, Firmware-Patch, Live-Chroma- oder LAN-Test.
+
+
+## Folgekorrektur: nur explizite UI-Ereignisse erzeugen Steuerungsversuche
+
+Das klassische Steuerlast-Oracle hatte bislang nach dem letzten UI-Ereignis noch
+die offenen Farb-/Helligkeitswerte bei einem *zukuenftigen* Zeitpunkt als
+gesendete synthetische Befehle gezaehlt. Bei groesseren Zeitluecken wurden
+historische Sendezeitpunkte erfunden, obwohl es dort keinen simulierten
+Dispatch-/Timer-Aufruf gab. Das widersprach den geforderten Eigenschaften
+kein unsichtbarer Timer, kein Retry und keine nachlaufende Farbsteuerung.
+
+Jetzt wird hoechstens **ein** versuchter klassischer LAN-Befehl pro
+ausdruecklich vorhandenem UI-Ereignis mit dessen **tatsaechlichem Zeitstempel**
+vorgeschlagen. Der Rest am Ende ist keine Sendequeue:
+unsent_tail_control_kinds meldet nur die Typen ungesendeter Werte;
+last_value_forwarded_by_kind ist in diesem Fall false.
+Die Daten werden nicht automatisch nach einem Idle-Intervall ausgesendet.
+Vier neue Regressionen pruefen Stille nach dem letzten Input, grosse
+Zeitluecken, gemeinsam anstehende RGB-/Helligkeitswerte und
+no-implicit-background-dispatch. Dies ist weiterhin nur eine
+synthetische Produktanforderung, noch keine Android-Hardwareabnahme.
+
+## Konsolidierte Offline-Integration, 17.11.2026
+
+Spender PR53: `9118939602147350e116d572ac9b12ba8e4d8b12`; Ziel ist der
+bestehende Offline-PR54. Beide Oracle-Korrekturen sind portiert. Beim Abgleich
+mit `Color4OfflineCoordinator.offer` / `takeOnExplicitUiEvent` wurde zusätzlich
+korrigiert: Das aktuelle UI-Ereignis ersetzt zuerst den ausstehenden Wert
+seiner Art. Ein RGB-Ereignis darf weder einen alten RGB-Wert noch einen
+wartenden Helligkeitswert versenden. Python- und Kotlin-Regressionen prüfen
+diese gleiche Folge; ausstehende Werte erzeugen weiterhin keine Timer-Sends.
+LAN-Stall, App-Stop und modellierter Power-Cycle sind ausschließlich
+synthetische Ereignisse; Quarantäne bleibt vom Modell-Neustart unabhängig.
+Kein Hardware-/Firmware-Befund, keine Classic-Änderung, kein LAN-Zugriff.
+Gemeinsame Android-CI auf dem neuen SHA bleibt bis zum Ergebnis offen.

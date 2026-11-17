@@ -11,6 +11,28 @@ class Color4OfflineCoordinatorTest {
     private val rgb = Color4UiAdmission.Kind.RGB
     private val brightness = Color4UiAdmission.Kind.BRIGHTNESS
 
+    @Test fun currentExplicitKindAndLatestValueMatchOfflineOracle() {
+        val c = Color4OfflineCoordinator()
+        val session = c.openSession("one", true)!!
+        assertTrue(c.offer("one", rgb, 10, true))
+        assertEquals(10, c.takeOnExplicitUiEvent("one", rgb, 0, true, session, 1)!!.value)
+        assertTrue(c.onReply("one", session, 1, true, false))
+        assertTrue(c.offer("one", brightness, 55, true))
+        assertTrue(c.offer("one", rgb, 20, true))
+        assertNull(c.takeOnExplicitUiEvent("one", rgb, 10, true, session, 2))
+        assertTrue(c.offer("one", rgb, 30, true))
+        val next = c.takeOnExplicitUiEvent("one", rgb, 1500, true, session, 2)!!
+        assertEquals(rgb, next.kind)
+        assertEquals(30, next.value)
+        assertTrue(c.onReply("one", session, 2, true, false))
+        // The old brightness intent is not sent by the RGB action or its ACK.
+        assertTrue(c.offer("one", brightness, 66, true))
+        val bright = c.takeOnExplicitUiEvent("one", brightness, 3000, true, session, 3)!!
+        assertEquals(brightness, bright.kind)
+        assertEquals(66, bright.value)
+        assertTrue(c.onReply("one", session, 3, true, false))
+    }
+
     @Test fun preSessionIntentsCannotBeReplayedByFreshExplicitUiEvent() {
         val c = Color4OfflineCoordinator()
         assertFalse(c.offer("one", rgb, 0x123456, true))

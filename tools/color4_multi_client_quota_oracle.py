@@ -78,6 +78,37 @@ class Color4MultiClientQuotaOracle:
         self._local: deque[int] = deque()
         self._last_local: int | None = None
         self._local_stop: str | None = None
+        # Injected hypothetical device fault. Never infer this from quota
+        # counters, power-on hours or actual traffic.
+        self._injected_lan_stall = False
+
+    def inject_lan_service_stall(self, at_ms: int) -> None:
+        """Simulated sticky LAN-service outage; not a firmware diagnosis."""
+        self._advance(at_ms)
+        self._injected_lan_stall = True
+
+    def simulate_app_force_stop(self, at_ms: int) -> int:
+        """Closes model local app sockets, preserving device firmware state."""
+        self._advance(at_ms)
+        owned = [name for name, c in self._connections.items()
+                 if c.owner == "local"]
+        for name in owned:
+            del self._connections[name]
+        return len(owned)
+
+    def simulate_power_cycle(self, at_ms: int) -> None:
+        """Clears volatile model device state; host quarantine survives."""
+        self._advance(at_ms)
+        self._connections.clear()
+        self._global.clear()
+        self._injected_lan_stall = False
+        # The host journal, last attempt and rolling budget deliberately
+        # survive; no automatic local unlock or probe is simulated.
+
+    def modeled_cloud_path(self, at_ms: int) -> str:
+        """Assumed independent cloud route, never an actual device response."""
+        self._advance(at_ms)
+        return "MODELED_CLOUD_ROUTE_INDEPENDENT_OF_LAN"
 
     def _advance(self, at_ms: int) -> None:
         _time(at_ms)
@@ -150,6 +181,12 @@ class Color4MultiClientQuotaOracle:
             self._local.append(at_ms)
             self._last_local = at_ms
 
+        if self._injected_lan_stall:
+            # Do NOT fabricate a real client quota exceeded error. Several
+            # device-side causes could look identical to Yeelight Classic.
+            if conn.owner == "local":
+                self._local_stop = "INJECTED_UNRESPONSIVE_DEVICE"
+            return result("INJECTED_LAN_SERVICE_UNAVAILABLE")
         if len(conn.attempts) >= MODEL_PER_CONNECTION:
             if conn.owner == "local":
                 self._local_stop = "MODEL_LIMIT"
@@ -180,6 +217,7 @@ class Color4MultiClientQuotaOracle:
             "modeled_global_attempts": len(self._global),
             "host_attempts": len(self._local),
             "host_terminal": self._local_stop is not None,
+            "injected_lan_service_stalled": self._injected_lan_stall,
             "hardware_qualified": False,
             "firmware_root_cause_proven": False,
         }
