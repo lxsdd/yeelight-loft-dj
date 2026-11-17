@@ -42,6 +42,26 @@ class Color4TrafficOracleTests(unittest.TestCase):
         self.assertTrue(p["last_value_forwarded_by_kind"]["bright"])
         self.assertEqual(p["attempted_classic_commands"],3)
 
+    def test_budget_rejection_retains_pending_kind_without_background_send(self):
+        # 24 attempts in the rolling minute, with a 25th explicit event
+        # rejected despite satisfying spacing. The unsent value is retained.
+        events=[Event(i*1500,"rgb",i) for i in range(25)]
+        p=plan_classic_slider(events)
+        self.assertEqual(p["attempted_classic_commands"],24)
+        self.assertEqual(p["dropped_when_local_budget_exhausted"],1)
+        self.assertEqual(p["unsent_tail_control_kinds"],["rgb"])
+        self.assertFalse(p["last_value_forwarded_by_kind"]["rgb"])
+        self.assertEqual(p["attempt_timestamps_ms"][-1],34500)
+
+    def test_budget_rejection_can_be_superseded_only_by_fresh_ui_event(self):
+        events=[Event(i*1500,"rgb",i) for i in range(25)]
+        p=plan_classic_slider(events+[Event(60000,"rgb",99)])
+        self.assertEqual(p["attempted_classic_commands"],25)
+        self.assertEqual(p["attempt_timestamps_ms"][-1],60000)
+        self.assertEqual(p["unsent_tail_control_kinds"],[])
+        self.assertTrue(p["last_value_forwarded_by_kind"]["rgb"])
+        self.assertTrue(p["no_implicit_background_dispatch"])
+
     def test_timestamps_never_jump_backwards(self):
         with self.assertRaises(ValueError):
             plan_classic_slider([Event(100,"rgb",1),Event(99,"rgb",2)])

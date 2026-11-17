@@ -69,12 +69,12 @@ def plan_classic_slider(
     def emit(candidate:Event, now:int):
         nonlocal next_send,state,dropped_by_local_budget
         if state!="READY":
-            return
+            return False
         while attempted and attempted[0]<=now-WINDOW_MS:
             attempted.popleft()
         if len(attempted)>=CLASSIC_BUDGET:
             dropped_by_local_budget+=1
-            return
+            return False
         # A command is counted as an ATTEMPT before network outcome.
         attempted.append(now)
         sends.append((now,candidate))
@@ -85,6 +85,7 @@ def plan_classic_slider(
         elif ambiguous_timeout_at_ms is not None and now>=ambiguous_timeout_at_ms:
             state="UNCERTAIN_TRANSPORT_STOP"
             outcomes.append("ambiguous_send_not_replayed")
+        return True
 
     for event in events:
         if state!="READY":
@@ -97,8 +98,11 @@ def plan_classic_slider(
         pending[event.kind]=event
         most_recent[event.kind]=event.value
         if next_send<=event.at_ms:
-            pick=pending.pop(event.kind)
-            emit(pick,event.at_ms)
+            # Admission retains the current kind on a denied local budget.
+            # A later explicit event may supersede it; no timer may drain it.
+            pick=pending[event.kind]
+            if emit(pick,event.at_ms):
+                pending.pop(event.kind)
     # Pending updates are diagnostic only: without a new explicit input or
     # separately approved timer there is NO future send. Discard the tail;
     # the next independent call must not inherit stale RGB/brightness.

@@ -88,3 +88,8 @@ LAN-Stall, App-Stop und modellierter Power-Cycle sind ausschließlich
 synthetische Ereignisse; Quarantäne bleibt vom Modell-Neustart unabhängig.
 Kein Hardware-/Firmware-Befund, keine Classic-Änderung, kein LAN-Zugriff.
 Gemeinsame Android-CI auf dem neuen SHA bleibt bis zum Ergebnis offen.
+
+
+## Offline-Regression: Budgetablehnung bewahrt den aktuellen UI-Wert
+
+Das Python-Steuerlast-Oracle entfernte den aktuellen RGB-/Helligkeitswert bereits vor der lokalen Budgetentscheidung. Bei einem abgelehnten 25. Versuch fehlte deshalb der ungesendete Restwert, obwohl die Kotlin-Produktionsmodellgrenze `Color4UiAdmission.takeOnUiEvent` ihn bis zu einer neuen expliziten UI-Aktion beibehält. Der korrigierte Oracle-Dispatch entfernt den Wert erst nach tatsächlich verbuchtem Versuch. Die positive und negative Regression prüfen 24 Versuche, die abgewiesene 25. Aktion und einen erneuten ausdrücklich ausgelösten Versuch nach Fensterablauf. Es entsteht weder ein Timer noch eine automatische Wiederholung; dies sind modellierte Budgetwerte, keine Color4-Firmwaremessung.
