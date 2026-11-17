@@ -14,6 +14,7 @@ from zipfile import ZipFile
 
 from classic_first import GateFailure
 from dex_authority_remap import _entries, _replacement
+from clone_main_process_guard import patch_staged_clone
 
 DEX_DIRS = (("classes.dex", "smali"), ("classes2.dex", "smali_classes2"))
 QUOTED = re.compile(r'"(?:\\.|[^"\\])*"')
@@ -79,6 +80,9 @@ def stage_reassembled_oem(original: Path, codeonly: Path, staged: Path):
             if not count or found != original_literals:
                 raise GateFailure("SMALI_REMAP_LITERAL_COVERAGE_INVALID")
             replaced[dex] = len(found)
+    # This is the separate-package clone path only: identity control keeps raw OEM DEX.
+    # Patch the SINGLE OEM main-process predicate, not its original init/side-process flow.
+    guard_report = patch_staged_clone(staged)
     # Exactly the two OEM DEX bytes from prepare() are discarded in the
     # quarantined staging tree. The separate classes3.dex native bridge stays.
     for name, _folder in DEX_DIRS:
@@ -90,4 +94,5 @@ def stage_reassembled_oem(original: Path, codeonly: Path, staged: Path):
     return {"status": "PRIVATE_OEM_SMALI_REASSEMBLY_PENDING_FINAL_VALIDATION",
             "original_dex_count": 2,
             "authority_literal_count_by_dex": replaced,
+            "clone_main_process_guard": guard_report,
             "private_payload_published": False}

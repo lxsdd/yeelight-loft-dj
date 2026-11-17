@@ -31,6 +31,26 @@ def dex_fixture(values):
     return bytes(data)
 
 
+GUARD_SOURCE = (
+    '.class public Lcom/yeelight/cherry/YeelightApplication;\n'
+    '.super Landroidx/multidex/MultiDexApplication;\n'
+    '.method public h()Z\n'
+    '    .locals 2\n'
+    '    invoke-direct {p0}, Lcom/yeelight/cherry/YeelightApplication;->f()Ljava/lang/String;\n'
+    '    move-result-object v0\n'
+    '    if-eqz v0, :not_main\n'
+    '    const-string v1, "com.yeelight.cherry"\n'
+    '    invoke-virtual {v0, v1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z\n'
+    '    move-result v0\n'
+    '    if-eqz v0, :not_main\n'
+    '    const/4 v0, 0x1\n'
+    '    return v0\n'
+    '    :not_main\n'
+    '    const/4 v0, 0x0\n'
+    '    return v0\n'
+    '.end method\n'
+)
+
 class ReassemblyTests(unittest.TestCase):
     def test_old_inplace_dex_remap_corrupts_art_string_order(self):
         raw = dex_fixture(["alpha", "com.yeelight.cherry.device",
@@ -74,11 +94,16 @@ class ReassemblyTests(unittest.TestCase):
                 'const-string v0, "com.yeelight.cherry.device"\n')
             (source/"smali_classes2"/"B.smali").write_text(
                 'const-string v0, "com.yeelight.cherry.landevice"\n')
+            guard_path = source/"smali/com/yeelight/cherry/YeelightApplication.smali"
+            guard_path.parent.mkdir(parents=True)
+            guard_path.write_text(GUARD_SOURCE)
             (stage/"classes.dex").write_bytes(first)
             (stage/"classes2.dex").write_bytes(second)
             (stage/"classes3.dex").write_bytes(b"native-bridge")
             report = stage_reassembled_oem(orig, source, stage)
             self.assertEqual(report["original_dex_count"], 2)
+            self.assertEqual(report["clone_main_process_guard"]["original_oem_methods_modified"], 1)
+            self.assertIn("->getPackageName()", (stage/"smali/com/yeelight/cherry/YeelightApplication.smali").read_text())
             self.assertFalse((stage/"classes.dex").exists())
             self.assertFalse((stage/"classes2.dex").exists())
             self.assertEqual((stage/"classes3.dex").read_bytes(), b"native-bridge")
