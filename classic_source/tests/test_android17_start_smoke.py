@@ -376,6 +376,52 @@ class Android17StartupTest(unittest.TestCase):
                 self.assertFalse(result["native_entry_navigation_tested"])
                 self.assertFalse(any(c[:3] == ("shell", "input", "tap") for c in a.calls))
 
+    def test_transient_system_first_frame_rechecks_without_system_interaction(self):
+        system = ('<?xml version="1.0"?><hierarchy>'
+                  '<node package="android" text="Private system dialog data"/>'
+                  '</hierarchy>')
+        class DelayedADB(FakeADB):
+            def __init__(self, *, stays_system=False):
+                super().__init__()
+                self.stays_system = stays_system
+                self.native_clicked = False
+            def __call__(self, args, *, serial):
+                if tuple(args) == ("shell", "dumpsys", "activity", "activities"):
+                    return ACTIVITY % (DJ if self.native_clicked else LAUNCHER)
+                if tuple(args) == ("shell", "input", "tap", "110", "60"):
+                    self.native_clicked = True
+                if tuple(args) == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
+                    self.calls.append(tuple(args))
+                    self.ui_count += 1
+                    self._dump_pending = (system if self.ui_count == 1 or self.stays_system
+                                          else ENTRY if self.ui_count == 2 else DJ_UI)
+                    return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+                return super().__call__(args, serial=serial)
+        delayed = DelayedADB()
+        pauses = []
+        report = probe_private_emulator(
+            "emulator-5554", owner_approved=True, launcher_component=LAUNCHER,
+            expected_installed_apk_sha256=PIN, adb=delayed, pause=pauses.append)
+        self.assertEqual(report["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        home = report["entrypoint_observations"][0]
+        self.assertEqual(home["passive_system_ui_recheck"]["status"],
+                         "NATIVE_CONTROLS_BECAME_VISIBLE")
+        self.assertEqual(pauses, [3.0, 8, 3.0])
+        self.assertEqual(
+            [x for x in delayed.calls if x[:3] == ("shell", "input", "tap")],
+            [("shell", "input", "tap", "110", "60")])
+        self.assertNotIn("Private system dialog data", str(report))
+        blocked = DelayedADB(stays_system=True)
+        blocked_report = blocked.run()
+        self.assertEqual(blocked_report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertEqual(
+            blocked_report["entrypoint_observations"][0]
+            ["passive_system_ui_recheck"]["status"], "SYSTEM_UI_PERSISTED_NO_ACTION")
+        self.assertEqual(blocked.ui_count, 2)
+        self.assertFalse(any(x[:3] == ("shell", "input", "tap") for x in blocked.calls))
+        self.assertFalse(blocked_report["native_entry_navigation_tested"])
+        self.assertNotIn("Private system dialog data", str(blocked_report))
+
     def test_spoofed_foreign_button_cannot_create_native_entry_or_coordinates(self):
         foreign = ENTRY.replace('package="' + PACKAGE + '"',
                                 'package="com.android.systemui"')

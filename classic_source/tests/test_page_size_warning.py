@@ -142,6 +142,38 @@ class PageSizeWarningTests(unittest.TestCase):
             with self.subTest(focus=focus):
                 self.assertIsNone(self.action(focus=focus))
 
+    def test_non_phone_system_window_is_read_only_classified_never_tapped(self):
+        for kind, expected in (
+            ('BASE_APPLICATION', 'APP_BASE'),
+            ('APPLICATION', 'APP_MAIN'),
+            ('SYSTEM_DIALOG', 'SYSTEM_DIALOG'),
+            ('APPLICATION_ATTACHED_DIALOG', 'APP_ATTACHED_DIALOG'),
+            ('com.private.unknown', 'OTHER_UNCLASSIFIED'),
+        ):
+            with self.subTest(kind=kind):
+                evidence = {}
+                focused = WINDOWS.replace('ty=PHONE', 'ty=' + kind)
+                self.assertIsNone(self.action(windows=focused, diagnostic=evidence))
+                self.assertEqual(evidence['window_type'], 'OTHER')
+                self.assertEqual(evidence['window_type_detail'], expected)
+                self.assertEqual(evidence['focused_window_category'],
+                                 'OTHER_OR_UNVERIFIED')
+                self.assertNotIn(kind, str(evidence) if kind.startswith('com.') else '')
+        for token, label in (
+            (' DeprecatedTargetSdkVersionDialog}', 'AOSP_DEPRECATED_TARGET_DIALOG'),
+            (' Application Not Responding: app}', 'ANDROID_ANR_DIALOG'),
+            (' com.android.permissioncontroller/.Permissions}', 'ANDROID_PERMISSION_CONTROLLER'),
+        ):
+            with self.subTest(token=label):
+                evidence = {}
+                focus = FOCUS.replace(' Synthetic app label}', token)
+                windows = WINDOWS.replace(' Synthetic app label}', token)
+                self.assertIsNone(self.action(
+                    focus=focus, windows=windows.replace('ty=PHONE', 'ty=SYSTEM_DIALOG'),
+                    diagnostic=evidence))
+                self.assertEqual(evidence['focused_window_category'], label)
+                self.assertEqual(evidence['window_type_detail'], 'SYSTEM_DIALOG')
+
     def test_no_permission_or_unknown_message_or_ambiguous_button(self):
         for xml in (ui(package='com.yeelight.cherry'), ui(message='Allow this app to record audio?'),
                     ui().replace('button1', 'button2'), ui().replace('text="OK"', 'text="Allow"'),

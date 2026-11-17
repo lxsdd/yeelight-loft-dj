@@ -754,6 +754,36 @@ def _single_known_16k_warning(ui_xml, *, run, pause):
         return ui_xml, observation
 
 
+def _passive_system_ui_recheck(ui_xml, *, stage, run, pause):
+    """One bounded read-only wait for transient first-run system surfaces.
+
+    Android's cold first run can outlive the first 3-second window. Never
+    acknowledge, swipe, log in, grant permission, or infer OEM readiness.
+    No raw UI hierarchy, Android dialog text, or OEM labels leave this module.
+    """
+    before = classify_visible_ui(ui_xml, stage=stage)
+    if before["ui_node_origin_category"] != "ANDROID_SYSTEM_ONLY":
+        return ui_xml, None
+    pause(8)
+    fresh = capture_private_ui_hierarchy(run)
+    state = classify_visible_ui(fresh, stage=stage)
+    status = ("NATIVE_CONTROLS_BECAME_VISIBLE"
+              if state["expected_native_ui_observed"] else
+              "SYSTEM_UI_PERSISTED_NO_ACTION"
+              if state["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY" else
+              "OTHER_UI_NO_NATIVE_PROOF")
+    return fresh, {
+        "status": status,
+        "wait_ms": 8000,
+        "ui_node_origin_category": state["ui_node_origin_category"],
+        "expected_native_ui_observed": state["expected_native_ui_observed"],
+        "interaction_performed": False,
+        "permission_granted": False,
+        "account_login_tested": False,
+        "raw_ui_or_window_logged": False,
+    }
+
+
 def probe_private_emulator(serial, *, owner_approved, launcher_component,
                            expected_installed_apk_sha256, dwell_ms=3000,
                            adb=_adb, pause=time.sleep, candidate_graph=None):
@@ -842,6 +872,19 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                     "status", "resumed_activity_observed", "foreground_category",
                     "crash")})
                 home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
+        ui_data, delayed = _passive_system_ui_recheck(
+            ui_data, stage="classic_entry", run=run, pause=pause)
+        if delayed is not None:
+            home["passive_system_ui_recheck"] = delayed
+            fresh = evaluate_launch_window(
+                component=launcher_component, launch_output=am_output,
+                activity_snapshot=run(["shell", "dumpsys", "activity", "activities"]),
+                crash_log=run(["logcat", "-b", "crash", "-d"]),
+                observed_ms=dwell_ms, candidate_graph=candidate_graph,
+                installed_apk_path=installed_path)
+            home.update({k: fresh[k] for k in (
+                "status", "resumed_activity_observed", "foreground_category", "crash")})
+            home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
         # Initial OEM welcome/login or a platform dialog need not inflate
         # activity_main_new.xml, where the normal clone's entry is attached.
         # Preserve independent startup evidence, but do not tap, infer an
@@ -880,6 +923,11 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
         if dj_warning["acknowledged"]:
             dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
             dj_crashes = run(["logcat", "-b", "crash", "-d"])
+    dj_ui, dj_delayed = _passive_system_ui_recheck(
+        dj_ui, stage="native_dj", run=run, pause=pause)
+    if dj_delayed is not None:
+        dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
+        dj_crashes = run(["logcat", "-b", "crash", "-d"])
     dj = evaluate_navigation_window(component=PACKAGE + "/" + DJ_ACTIVITY,
                                     activity_snapshot=dj_snapshot,
                                     crash_log=dj_crashes, ui_dump=dj_ui,
@@ -888,6 +936,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                                     installed_apk_path=installed_path)
     if dj_warning is not None:
         dj["system_warning"] = dj_warning
+    if dj_delayed is not None:
+        dj["passive_system_ui_recheck"] = dj_delayed
     reports.append(dj)
     success = dj["status"] == "EMULATOR_NATIVE_DJ_NAVIGATION_OBSERVED"
     return {

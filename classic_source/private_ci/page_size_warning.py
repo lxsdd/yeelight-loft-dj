@@ -165,6 +165,38 @@ def _system_phone_window(focus, windows, diagnostic=None, *, target_package=ORIG
                                 'OTHER' if len(owners) == 1 else 'UNPARSEABLE')
     evidence['window_type'] = ('PHONE' if phone else
                                'OTHER' if len(types) == 1 else 'UNPARSEABLE')
+    # Read-only AOSP window category. Never output raw titles, types or OEM
+    # labels. No category other than the independently verified PHONE gate
+    # changes the permission to acknowledge a framework dialog.
+    window_kinds = {
+        "PHONE": "PHONE", "2002": "PHONE",
+        "BASE_APPLICATION": "APP_BASE", "1": "APP_BASE",
+        "APPLICATION": "APP_MAIN", "2": "APP_MAIN",
+        "APPLICATION_STARTING": "APP_STARTING", "3": "APP_STARTING",
+        "APPLICATION_PANEL": "APP_PANEL", "1000": "APP_PANEL",
+        "APPLICATION_ATTACHED_DIALOG": "APP_ATTACHED_DIALOG", "1003": "APP_ATTACHED_DIALOG",
+        "SYSTEM_DIALOG": "SYSTEM_DIALOG", "2008": "SYSTEM_DIALOG",
+        "SYSTEM_ALERT": "SYSTEM_ALERT", "2003": "SYSTEM_ALERT",
+        "SYSTEM_ERROR": "SYSTEM_ERROR", "2010": "SYSTEM_ERROR",
+        "APPLICATION_OVERLAY": "APP_OVERLAY", "2038": "APP_OVERLAY",
+        "STATUS_BAR": "STATUS_BAR", "2000": "STATUS_BAR",
+        "INPUT_METHOD": "INPUT_METHOD", "2011": "INPUT_METHOD",
+        "TOAST": "TOAST", "2005": "TOAST",
+    }
+    evidence['window_type_detail'] = (
+        window_kinds.get(types[0], 'OTHER_UNCLASSIFIED')
+        if len(types) == 1 else 'UNPARSEABLE')
+    title = current[0]
+    evidence['focused_window_category'] = (
+        'AOSP_DEPRECATED_TARGET_DIALOG' if ' DeprecatedTargetSdkVersionDialog}' in title
+        else 'ANDROID_ANR_DIALOG' if ('Application Not Responding:' in title
+                                     or 'App Not Responding:' in title)
+        else 'ANDROID_PERMISSION_CONTROLLER' if 'permissioncontroller' in title.lower()
+        else 'ANDROID_LAUNCHER' if ('com.android.launcher3' in title
+                                   or 'com.google.android.apps.nexuslauncher' in title)
+        else 'ANDROID_SYSTEM_UI' if 'com.android.systemui' in title
+        else 'ANDROID_SPLASH_WINDOW' if 'Splash Screen' in title
+        else 'OTHER_OR_UNVERIFIED')
     evidence['window_check'] = ('VERIFIED' if classic and owner and phone
                                 else 'OWNER_TYPE_OR_SELECTED_APP_NOT_VERIFIED')
     return classic and owner and phone

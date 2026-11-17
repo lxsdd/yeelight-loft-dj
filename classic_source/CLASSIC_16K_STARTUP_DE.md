@@ -199,3 +199,25 @@ by source-only development. New synthetic positive/negative tests cover
 clone vs original package, resources, focus, system warning, permission,
 page size, and absence of blind taps. Private runtime requires a separately
 owner-dispatched exact-SHA workflow.
+
+
+## 18.11.2026 – geschützter OEM-Lauf #44200821367, TYPE_PHONE-Hypothese widerlegt
+
+Kandidat PR108 `04fffeb8308456a8d34a3cf6fb7f7581de01970e`; Owner-Gate,
+alle drei öffentlichen CI-Jobs, OEM-Reassembly, Klassenparität und flüchtige
+Testsignatur bestanden. Emulator nach erster 3-s-Beobachtung:
+`SAME_CLONE_ORIGINAL_ACTIVITY` resumed, kein Target-Fatal, UI
+`ANDROID_SYSTEM_ONLY`, `window_owner=ANDROID_SYSTEM`,
+`focused_app=CLASSIC`, 16-KiB-Page-Kernel, aber
+`window_type=OTHER` / `OWNER_TYPE_OR_SELECTED_APP_NOT_VERIFIED`.
+Daher kein Warnungs-Tap, keine sichtbare DJ-Navigation, Exit 2.
+AOSP `PageSizeMismatchDialog.java` und `DeprecatedTargetSdkVersionDialog.java`
+setzen beide `TYPE_PHONE`; hier ist die Warnung **nicht** sicher zugeordnet.
+Der nächste Quellstand ergänzt ausschließlich nicht-sensitive kategorisierte
+Window-Type-/Focus-Diagnose und eine einzige passive 8-s-UI-Nachbeobachtung
+bei Android-only-Systemoberfläche, auch nach Activity-Wechsel. Kein Dialog,
+Permission, Account, LAN oder Gerät wird dadurch bedient; nur sichtbar echte
+Classic-Klonelemente und Crash-freier Resumed-Zustand erlauben Navigation.
+Fake-ADB-Regressions prüfen transienten und persistierenden System-Vordergrund
+und verbieten Systemklicks. OEM-Laufzeit bleibt owner-only/unqualifiziert,
+weitere Änderungen benötigen 3x exact-SHA öffentliche CI.
