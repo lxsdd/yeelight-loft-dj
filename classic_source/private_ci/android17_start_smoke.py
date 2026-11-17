@@ -19,6 +19,7 @@ from zipfile import ZipFile
 import xml.etree.ElementTree as ET
 
 PACKAGE = "io.lxsdd.yeelightdj"
+ORIGINAL_PACKAGE = "com.yeelight.cherry"  # private identity-only offline A/B control
 DJ_ACTIVITY = "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity"
 MAX_TEXT = 2_000_000
 SERIAL = re.compile(r"emulator-[0-9]{4,5}\Z")
@@ -504,13 +505,15 @@ def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash
 
 
 
-def classify_visible_ui(dump, *, stage):
+def classify_visible_ui(dump, *, stage, expected_package=PACKAGE):
     """Confirm visible, clickable native controls; never return raw UI XML.
 
     An ActivityRecord alone may identify an empty or broken Activity. UIAutomator
     data is read exclusively from the isolated private emulator and discarded.
     """
     _bounded(dump, "SMOKE_BAD_UI_DUMP")
+    if expected_package not in (PACKAGE, ORIGINAL_PACKAGE):
+        raise SmokeBlocked("SMOKE_UI_PACKAGE_NOT_AUTHORIZED")
     if stage not in ("classic_entry", "native_dj"):
         raise SmokeBlocked("SMOKE_INVALID_UI_STAGE")
     if "<!DOCTYPE" in dump or "<!ENTITY" in dump:
@@ -534,8 +537,8 @@ def classify_visible_ui(dump, *, stage):
     system_packages = {"android", "com.android.systemui",
                        "com.google.android.permissioncontroller",
                        "com.android.permissioncontroller"}
-    if PACKAGE in packages:
-        origin = ("CLONE_ONLY" if packages == {PACKAGE}
+    if expected_package in packages:
+        origin = ("CLONE_ONLY" if packages == {expected_package}
                   else "CLONE_AND_OTHER")
     elif packages and packages <= system_packages:
         origin = "ANDROID_SYSTEM_ONLY"
@@ -544,7 +547,7 @@ def classify_visible_ui(dump, *, stage):
     else:
         origin = "UNATTRIBUTED"
     def own_control(node, label, clickable=None):
-        return (node.get("package") == PACKAGE and
+        return (node.get("package") == expected_package and
                 node.get("text") == label and
                 node.get("enabled") != "false" and
                 (clickable is None or node.get("clickable") == clickable))
@@ -560,9 +563,10 @@ def classify_visible_ui(dump, *, stage):
             "ui_stage": stage, "ui_interaction_tested": False}
 
 
-def entry_button_coordinates(dump, display):
+def entry_button_coordinates(dump, display, *, expected_package=PACKAGE):
     """Select only the actual visible Classic Loft DJ button; no blind taps."""
-    result = classify_visible_ui(dump, stage="classic_entry")
+    result = classify_visible_ui(dump, stage="classic_entry",
+                                 expected_package=expected_package)
     if not result["expected_native_ui_observed"]:
         raise SmokeBlocked("SMOKE_CLASSIC_ENTRY_NOT_VISIBLE")
     _bounded(display, "SMOKE_BAD_DISPLAY")
@@ -581,7 +585,7 @@ def entry_button_coordinates(dump, display):
     except ET.ParseError:
         raise SmokeBlocked("SMOKE_UI_XML_INVALID") from None
     buttons = [n.attrib for n in tree.iter("node")
-               if n.get("package") == PACKAGE and
+               if n.get("package") == expected_package and
                n.get("text") == "Loft DJ" and
                n.get("clickable") == "true" and n.get("enabled") != "false"]
     if len(buttons) != 1:

@@ -537,7 +537,7 @@ def evaluate_identity_navigation(snapshot: str, crash: dict, ui_dump: str) -> di
         try:
             surface = classify_private_ui_surface(ui_dump)
             visible = (surface["original_package_node_count"] == surface["node_count"]
-                       and classify_visible_ui(ui_dump, stage="native_dj")[
+                       and classify_visible_ui(ui_dump, stage="native_dj", expected_package=ORIGINAL)[
                            "expected_native_ui_observed"])
         except (SmokeBlocked, BaselineBlocked):
             visible = False
@@ -657,7 +657,7 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
             report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
             return report
         try:
-            entry_visible = classify_visible_ui(ui_xml, stage="classic_entry")[
+            entry_visible = classify_visible_ui(ui_xml, stage="classic_entry", expected_package=ORIGINAL)[
                 "expected_native_ui_observed"]
         except SmokeBlocked:
             report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
@@ -672,7 +672,7 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
                 return report
             try:
                 report["native_entry_ui_surface_after_warning"] = classify_private_ui_surface(ui_xml)
-                entry_visible = classify_visible_ui(ui_xml, stage="classic_entry")[
+                entry_visible = classify_visible_ui(ui_xml, stage="classic_entry", expected_package=ORIGINAL)[
                     "expected_native_ui_observed"]
             except (BaselineBlocked, SmokeBlocked):
                 report["native_dj_observed_state"] = "CLASSIC_UI_HIERARCHY_UNAVAILABLE"
@@ -692,7 +692,7 @@ def probe(original: Path, candidate: Path, *, serial: str, approved: bool,
             report["native_dj_observed_state"] = "ORIGINAL_CLASSIC_SURFACE_NOT_VERIFIED"
             return report
         try:
-            x, y = entry_button_coordinates(ui_xml, display)
+            x, y = entry_button_coordinates(ui_xml, display, expected_package=ORIGINAL)
         except SmokeBlocked:
             report["native_dj_observed_state"] = "CLASSIC_DJ_ENTRY_COORDS_INVALID"
             return report

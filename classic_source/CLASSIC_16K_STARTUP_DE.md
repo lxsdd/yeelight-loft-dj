@@ -170,3 +170,10 @@ OEM welcome, Android system UI, spoofed text, mixed surfaces and disabled
 buttons. This source change cannot itself classify a page as a login screen,
 fix 16-KiB OEM ELF compatibility or qualify the original Music UI. A fresh
 owner-scoped offline emulator observation remains separately gated.
+
+The owner-only original-identity A/B probe is a separate, explicitly allowed
+`com.yeelight.cherry` diagnostic branch. Its caller passes that exact expected
+package to UI classification and coordinate selection; the default clone
+probe continues to require `io.lxsdd.yeelightdj`. Foreign package strings
+are never accepted, and A/B observations remain non-qualifying for product
+acceptance.

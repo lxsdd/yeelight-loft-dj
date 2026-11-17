@@ -204,6 +204,37 @@ class Android17StartupTest(unittest.TestCase):
         self.assertEqual(result["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
         self.assertFalse(result["native_entry_navigation_tested"])
 
+    def test_explicit_original_identity_control_is_allowed_but_not_a_clone(self):
+        original = "com.yeelight.cherry"
+        identity_entry = ENTRY.replace('package="' + PACKAGE + '"',
+                                       'package="' + original + '"')
+        self.assertFalse(classify_visible_ui(
+            identity_entry, stage="classic_entry")["expected_native_ui_observed"])
+        self.assertTrue(classify_visible_ui(
+            identity_entry, stage="classic_entry",
+            expected_package=original)["expected_native_ui_observed"])
+        self.assertEqual(entry_button_coordinates(
+            identity_entry, "Physical size: 1080x2400",
+            expected_package=original), (110, 60))
+        self.assertFalse(classify_visible_ui(
+            ENTRY, stage="classic_entry",
+            expected_package=original)["expected_native_ui_observed"])
+        identity_dj = DJ_UI.replace('package="' + PACKAGE + '"',
+                                    'package="' + original + '"')
+        self.assertTrue(classify_visible_ui(
+            identity_dj, stage="native_dj",
+            expected_package=original)["expected_native_ui_observed"])
+
+    def test_ui_expected_package_rejects_foreign_or_malformed_identity(self):
+        for value in ("com.other.app", "", None, 42, "com.yeelight.cherry.evil"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_PACKAGE_NOT_AUTHORIZED"):
+                    classify_visible_ui(ENTRY, stage="classic_entry",
+                                        expected_package=value)
+                with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_PACKAGE_NOT_AUTHORIZED"):
+                    entry_button_coordinates(ENTRY, "Physical size: 1080x2400",
+                                              expected_package=value)
+
     def test_first_run_oem_surface_does_not_imply_failed_app_or_login(self):
         a = FakeADB()
         welcome = ('<?xml version="1.0"?><hierarchy>'
