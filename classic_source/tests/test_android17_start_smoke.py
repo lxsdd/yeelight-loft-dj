@@ -251,6 +251,7 @@ class Android17StartupTest(unittest.TestCase):
                 self.warn_on_dj = warn_on_dj
                 self.flip_focus_after_read = flip_focus_after_read
                 self.focus_reads = 0
+                self.launched = False
                 self.taps = []
                 self.stage = 0
                 self.focus_changed = False
@@ -258,8 +259,13 @@ class Android17StartupTest(unittest.TestCase):
                 key = tuple(args)
                 if key == ("shell", "dumpsys", "activity", "activities"):
                     return ACTIVITY % (DJ if self.stage >= 2 else LAUNCHER)
+                if key == ("shell", "am", "start", "-W", "-n", LAUNCHER):
+                    self.launched = True
                 if key == ("shell", "dumpsys", "window", "displays"):
-                    self.focus_reads += 1
+                    # The new PRIVATE prelaunch baseline must not consume a
+                    # simulated *postlaunch* focus-race observation.
+                    if self.launched:
+                        self.focus_reads += 1
                     changed = self.focus_changed or (
                         self.flip_focus_after_read and self.focus_reads >= 2)
                     current = ("Window{a2 u0 Other warning}" if changed
