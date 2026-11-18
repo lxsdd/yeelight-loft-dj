@@ -12,8 +12,6 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
-import android.widget.EditText;
-import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -22,9 +20,7 @@ import android.widget.TextView;
 public final class ClassicDjActivity extends Activity {
     public static final String EXTRA_SELECTED_IPS = "io.github.lxsdd.yeelightclassicdj.SELECTED_LAMP_IPS";
     private TextView status;
-    private EditText lampIps;
-    private CheckBox musicOptIn;
-    private double liveGain = 1.0;
+     private double liveGain = 1.0;
     private String liveScene = "SPECTRUM";
     private boolean pulseBeatSync = true;
     private int pulseBpm = 90;
@@ -67,13 +63,12 @@ public final class ClassicDjActivity extends Activity {
         TextView warning = new TextView(this);
         warning.setText("Nur Color4/1S mit aktiviertem LAN-Zugriff. Music-Mode wird ausschließlich für gewählte Lampen gestartet. Bei Verbindungsfehler bitte Lampenstatus kontrollieren.");
         layout.addView(warning);
-        lampIps = new EditText(this);
-        lampIps.setSingleLine(false);
-        lampIps.setHint("Color4-IP(s), durch Komma getrennt (max. 4)");
-        layout.addView(lampIps);
-        musicOptIn = new CheckBox(this);
-        musicOptIn.setText("Diese Color4-Lampen ausdrücklich für DJ-Music auswählen");
-        layout.addView(musicOptIn);
+        // Never expose a raw-IP selection that appears authorized but has no
+        // proven OEM device identity or Classic account/room binding.
+        TextView selectionGate = new TextView(this);
+        selectionGate.setText("Lampensteuerung gesperrt: Classic-Geräteauswahl und "
+            + "Berechtigung sind noch nicht verifiziert. Mikrofonanalyse ohne Lampen möglich.");
+        layout.addView(selectionGate);
         Button start = new Button(this);
         start.setText("Mikrofon starten");
         start.setOnClickListener(v -> requestMic());
@@ -236,33 +231,18 @@ public final class ClassicDjActivity extends Activity {
     }
 
     private void startMicService() {
-        java.util.ArrayList<String> ips = new java.util.ArrayList<>();
-        if (musicOptIn.isChecked()) {
-            String input = lampIps.getText().toString().trim();
-            if (input.isEmpty()) {
-                showTransientStatus("Mindestens eine Color4-IP eingeben oder Auswahl deaktivieren.");
-                return;
-            }
-            for (String part : input.split(",")) {
-                String ip = part.trim();
-                if (!validPrivateLanIp(ip) || ips.contains(ip)) {
-                    showTransientStatus("Ungültige oder doppelte Color4-IP: bitte prüfen.");
-                    return;
-                }
-                ips.add(ip);
-            }
-            if (ips.size() > 4) { showTransientStatus("Maximal vier Lampen gleichzeitig."); return; }
-        }
+        // A text IP is never a substitute for a verified Classic participant.
+        // No lamp target is emitted by this screen, even after microphone grant.
+        final String[] selectedIps = new String[0];
         Intent i = new Intent(this, ClassicDjService.class);
         i.setAction(ClassicDjService.ACTION_MIC);
-        i.putExtra(EXTRA_SELECTED_IPS, ips.toArray(new String[0]));
+        i.putExtra(EXTRA_SELECTED_IPS, selectedIps);
         i.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
         i.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
         writePulseSettings(i);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
-        showTransientStatus(ips.isEmpty() ? "Mikrofonanalyse ohne Lampen gestartet." :
-            "Music-Rückkanal für " + ips.size() + " gewählte Color4-Lampen wird aufgebaut.");
+        showTransientStatus("Mikrofonanalyse ohne Lampen angefordert.");
     }
 
     /** Fail closed: no DNS, public network, multicast or off-subnet fallback. */

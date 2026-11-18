@@ -102,8 +102,13 @@ public final class ClassicDjService extends Service {
         final String[] selectedIps = intent.getStringArrayExtra(ClassicDjActivity.EXTRA_SELECTED_IPS);
         final java.util.List<String> ips = selectedIps == null ? java.util.Collections.emptyList()
             : java.util.Arrays.asList(selectedIps);
-        if (ips.size() > 4 || new java.util.HashSet<>(ips).size() != ips.size()) {
-            currentState = "Ungültige Lampenauswahl";
+        // No OEM device/room identity or user selection is verified by this
+        // bridge. Raw IP extras, including those from legacy screens, must
+        // never authorize a reverse Music session or a lamp power command.
+        // This remains zero-target until a separately qualified OEM adapter
+        // provides a generation-fenced participant authorization.
+        if (!ips.isEmpty()) {
+            currentState = "OEM-Lampenauswahl nicht verifiziert · keine Lampenbefehle";
             stopSelf();
             return START_NOT_STICKY;
         }
