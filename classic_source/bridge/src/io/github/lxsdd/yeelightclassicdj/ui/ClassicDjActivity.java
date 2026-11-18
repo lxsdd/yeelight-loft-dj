@@ -20,6 +20,8 @@ import android.widget.TextView;
 public final class ClassicDjActivity extends Activity {
     public static final String EXTRA_SELECTED_IPS = "io.github.lxsdd.yeelightclassicdj.SELECTED_LAMP_IPS";
     private TextView status;
+    // Legacy private QA surface also participates in the SAME service gate.
+    private String sessionOwner;
      private double liveGain = 1.0;
     private String liveScene = "SPECTRUM";
     private boolean pulseBeatSync = true;
@@ -171,9 +173,23 @@ public final class ClassicDjActivity extends Activity {
         Button stop = new Button(this);
         stop.setText("DJ stoppen");
         stop.setOnClickListener(v -> {
-            Intent i = new Intent(this, ClassicDjService.class);
-            i.setAction(ClassicDjService.ACTION_STOP);
-            startService(i);
+            String oldOwner = sessionOwner;
+            sessionOwner = null;
+            if (oldOwner == null) {
+                showTransientStatus("Keine eigene Analyse aktiv.");
+                return;
+            }
+            if (!ClassicDjService.stopOwnedFromUi(oldOwner)) {
+                Intent i = new Intent(this, ClassicDjService.class);
+                i.setAction(ClassicDjService.ACTION_STOP);
+                i.putExtra(ClassicDjService.EXTRA_UI_OWNER, oldOwner);
+                try {
+                    startService(i);
+                } catch (RuntimeException blocked) {
+                    showTransientStatus("Stopp unbestätigt; Sitzungsstatus prüfen.");
+                    return;
+                }
+            }
             showTransientStatus("Stopp angefordert; Lampenstatus muss bestätigt werden.");
         });
         layout.addView(stop);
@@ -203,8 +219,10 @@ public final class ClassicDjActivity extends Activity {
     /** Config changes only the already-owned DSP pipeline; never starts lamps. */
     private void updateRunningSettings() {
         if (!ClassicDjService.hasActiveSession()) return;
+        if (sessionOwner == null) return;
         Intent config = new Intent(this, ClassicDjService.class);
         config.setAction(ClassicDjService.ACTION_CONFIG);
+        config.putExtra(ClassicDjService.EXTRA_UI_OWNER, sessionOwner);
         config.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
         config.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
         writePulseSettings(config);
@@ -234,15 +252,26 @@ public final class ClassicDjActivity extends Activity {
         // A text IP is never a substitute for a verified Classic participant.
         // No lamp target is emitted by this screen, even after microphone grant.
         final String[] selectedIps = new String[0];
+        if (ClassicDjService.hasActiveSession()) {
+            showTransientStatus("Andere DJ-Analyse bereits aktiv.");
+            return;
+        }
+        String newOwner = java.util.UUID.randomUUID().toString();
         Intent i = new Intent(this, ClassicDjService.class);
         i.setAction(ClassicDjService.ACTION_MIC);
+        i.putExtra(ClassicDjService.EXTRA_UI_OWNER, newOwner);
         i.putExtra(EXTRA_SELECTED_IPS, selectedIps);
         i.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
         i.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
         writePulseSettings(i);
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-        else startService(i);
-        showTransientStatus("Mikrofonanalyse ohne Lampen angefordert.");
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+            else startService(i);
+            sessionOwner = newOwner;
+            showTransientStatus("Mikrofonanalyse ohne Lampen angefordert.");
+        } catch (RuntimeException blocked) {
+            showTransientStatus("Mikrofonanalyse nicht gestartet.");
+        }
     }
 
     /** Fail closed: no DNS, public network, multicast or off-subnet fallback. */

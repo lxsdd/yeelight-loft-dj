@@ -62,6 +62,32 @@ Ausführbare positive/negative synthetische Java-Regressionsfälle
 ergänzen die Quelltests. Diese Änderung beansprucht **keine**
 OEM-Laufzeit-, Session- oder Lampenabnahme.
 
+## Classic-DJ-Session-Fence im echten Music-Produktpfad (18.11.2026)
+
+Der Service akzeptiert `MIC` nur mit einer frischen, gültigen
+sitzungsgebundenen UI-Kennung. Beide im APK vorhandenen Aufrufer (das
+native `ClassicMusicInlineControls`-Panel und die allein für private
+Diagnostik verbliebene Legacy-Activity) erzeugen beim expliziten
+Start je eine neue Generation und geben sie bei Live-Änderungen und
+Stopp weiter. `ACTION_CONFIG`, `ACTION_STOP` und die
+Benachrichtigungs-Stoppaktion akzeptieren ausschließlich die
+**aktuell zugeordnete** Generation; alte, fehlende und fremde Kennungen
+werden abgewiesen. Ein zweiter fehlerhafter Start kann eine bestehende
+Sitzung nicht mit `stopSelf()` beenden.
+
+Beim Pausieren der originalen MusicActivity wird die eigene bestehende
+Service-Instanz sofort generationstreu eingezäunt und asynchron beendet.
+Wenn Android die direkte Serviceinstanz noch nicht bereitgestellt hat,
+folgt ein generationstreuer Service-Stopp-Intent. Der vorherige
+`stopService`-Fallback ohne Besitzprüfung wurde entfernt, um die
+Musiksitzung einer neu gestarteten Activity nicht abzuschießen.
+Regressionsprüfungen umfassen den echten Java-Gate-Typ, beide UI-Aufrufer,
+Lebenszyklus, doppelte Generationen und ungültige Stopp-Intents.
+
+Diese **UI-Sitzungskennung ist keine OEM-Lampenfreigabe**. Alle
+tatsächlichen Ziele bleiben leer; Color4-, MiOT-, LAN- und reale
+MusicActivity-Laufzeitabnahme sind weiterhin offen.
+
 ## Nachweise und Akzeptanzgrenzen
 
 Source-CI testet die private Manifestroute mit Eigentümer-/Scope-Gates,

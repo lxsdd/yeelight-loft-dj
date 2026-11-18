@@ -51,6 +51,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private int scene = 0;
     private int gain = 1;
     private boolean locallyStarted = false;
+    private String sessionOwner;
     private boolean attached = false;
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
@@ -195,8 +196,10 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             status.setText("Mikrofonberechtigung in Classic aktivieren, dann erneut starten");
             return;
         }
+        String newOwner = java.util.UUID.randomUUID().toString();
         Intent intent = new Intent(host, ClassicDjService.class);
         intent.setAction(ClassicDjService.ACTION_MIC);
+        intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, newOwner);
         intent.putExtra(ClassicDjActivity.EXTRA_SELECTED_IPS, new String[0]);
         intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
         intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
@@ -204,6 +207,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         try {
             if (Build.VERSION.SDK_INT >= 26) host.startForegroundService(intent);
             else host.startService(intent);
+            sessionOwner = newOwner;
             locallyStarted = true;
             status.setText("Mikrofonanalyse startet · keine Lampenbefehle");
         } catch (RuntimeException error) {
@@ -224,9 +228,11 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     private void configureIfOwned() {
-        if (!locallyStarted || !ClassicDjService.hasActiveSession()) return;
+        if (!locallyStarted || sessionOwner == null ||
+                !ClassicDjService.hasActiveSession()) return;
         Intent intent = new Intent(host, ClassicDjService.class);
         intent.setAction(ClassicDjService.ACTION_CONFIG);
+        intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, sessionOwner);
         intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
         intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
         addPulseSettings(intent);
@@ -239,22 +245,25 @@ public final class ClassicMusicInlineControls extends LinearLayout {
 
     private void stopOwned() {
         if (!locallyStarted) return;
+        String oldOwner = sessionOwner;
         locallyStarted = false;
-        Intent intent = new Intent(host, ClassicDjService.class);
-        intent.setAction(ClassicDjService.ACTION_STOP);
-        try {
-            host.startService(intent);
-        } catch (RuntimeException blockedInBackground) {
-            // Android may prohibit startService as the OEM MusicActivity
-            // backgrounds. Destroy only our existing, locally owned service
-            // as a fallback: onDestroy() performs fenced owned cleanup.
+        sessionOwner = null;
+        if (oldOwner == null) return;
+        // This same-process path fences an already-running session before
+        // Android restricts a background startService on Activity pause.
+        if (!ClassicDjService.stopOwnedFromUi(oldOwner)) {
+            // Service startup may still be queued; enqueue a generation-matched
+            // stop rather than blindly terminating another Activity's service.
+            Intent intent = new Intent(host, ClassicDjService.class);
+            intent.setAction(ClassicDjService.ACTION_STOP);
+            intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, oldOwner);
             try {
-                host.stopService(new Intent(host, ClassicDjService.class));
-            } catch (RuntimeException ignored) {
+                host.startService(intent);
+            } catch (RuntimeException blockedInBackground) {
                 status.setText("Stopp unbestätigt · Sitzungsstatus prüfen");
                 return;
             }
         }
-        status.setText("Analyse gestoppt · Classic-Musik unverändert");
+        status.setText("Analyse wird beendet · Classic-Musik unverändert");
     }
 }

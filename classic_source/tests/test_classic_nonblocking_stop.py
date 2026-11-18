@@ -19,6 +19,15 @@ class NonblockingStopContract(unittest.TestCase):
         cls.coordinator = COORDINATOR.read_text("utf-8")
         cls.transport = TRANSPORT.read_text("utf-8")
 
+    def test_stale_music_activity_cannot_blindly_stop_new_session(self):
+        ui_path = ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls.java"
+        ui = ui_path.read_text("utf-8")
+        self.assertIn("ClassicDjService.stopOwnedFromUi(oldOwner)", ui)
+        self.assertIn("intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, oldOwner)", ui)
+        self.assertNotIn("host.stopService(new Intent(host, ClassicDjService.class))", ui)
+        self.assertIn("uiOwner.owns(owner)", self.service)
+        self.assertIn("service.stopSession(service.currentToken, \"Gestoppt\", true)", self.service)
+
     def test_explicit_user_stop_fences_immediately_and_stops_asynchronously(self):
         service = self.service
         beginning = service.index("private void stopSession(")

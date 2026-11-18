@@ -18,6 +18,7 @@ public final class ClassicDjService extends Service {
     public static final String ACTION_MIC = "io.github.lxsdd.yeelightclassicdj.MIC";
     public static final String ACTION_STOP = "io.github.lxsdd.yeelightclassicdj.STOP";
     public static final String ACTION_CONFIG = "io.github.lxsdd.yeelightclassicdj.CONFIG";
+    public static final String EXTRA_UI_OWNER = "io.github.lxsdd.yeelightclassicdj.UI_SESSION_OWNER";
     public static final String EXTRA_GAIN = "io.github.lxsdd.yeelightclassicdj.LIVE_GAIN";
     public static final String EXTRA_SCENE = "io.github.lxsdd.yeelightclassicdj.LIVE_SCENE";
     public static final String EXTRA_PULSE_MODE = "io.github.lxsdd.yeelightclassicdj.PULSE_MODE";
@@ -33,6 +34,8 @@ public final class ClassicDjService extends Service {
     private DjRuntime runtime;
     private final Object sessionGuard = new Object();
     private final ClassicSessionFence sessionFence = new ClassicSessionFence();
+    private final ClassicUiSessionOwner uiOwner = new ClassicUiSessionOwner();
+    private static volatile ClassicDjService liveService;
     private final android.os.Handler cleanupHandler =
         new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean shuttingDown;
@@ -45,6 +48,22 @@ public final class ClassicDjService extends Service {
 
     /** Same-process observation only; not a device power-state assertion. */
     public static boolean hasActiveSession() { return activeSession; }
+
+    /**
+     * The OEM MusicActivity can pause after Android disallows startService.
+     * Immediately fence ONLY its own already-running session, then clean up
+     * asynchronously. Never use a blind stopService() on an unknown owner.
+     */
+    static boolean stopOwnedFromUi(String owner) {
+        ClassicDjService service = liveService;
+        if (service == null) return false;
+        synchronized (service.sessionGuard) {
+            if (service.shuttingDown || !service.uiOwner.owns(owner) ||
+                    !service.sessionFence.owns(service.currentToken)) return false;
+            service.stopSession(service.currentToken, "Gestoppt", true);
+            return true;
+        }
+    }
 
     public static String uiStatus() {
         String bpm = lastBpm > 0.0 ? String.format(java.util.Locale.ROOT, "%.0f BPM", lastBpm) : "BPM wird analysiert";
@@ -68,7 +87,15 @@ public final class ClassicDjService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? "" : intent.getAction();
         if (ACTION_STOP.equals(action)) {
-            stopSession(0L, "Gestoppt", true);
+            final long stopToken;
+            synchronized (sessionGuard) {
+                stopToken = !shuttingDown &&
+                    uiOwner.owns(intent.getStringExtra(EXTRA_UI_OWNER)) &&
+                    sessionFence.owns(currentToken) ? currentToken : 0L;
+                if (stopToken == 0L && !shuttingDown &&
+                        !sessionFence.owns(currentToken)) stopSelf();
+            }
+            if (stopToken != 0L) stopSession(stopToken, "Gestoppt", true);
             return START_NOT_STICKY;
         }
         if (ACTION_CONFIG.equals(action)) {
@@ -76,6 +103,7 @@ public final class ClassicDjService extends Service {
             String scene = intent.getStringExtra(EXTRA_SCENE);
             synchronized (sessionGuard) {
                 if (sessionFence.owns(currentToken) && !shuttingDown &&
+                    uiOwner.owns(intent.getStringExtra(EXTRA_UI_OWNER)) &&
                     runtime != null && configureRuntime(runtime, intent, gain, scene)) {
                     currentState = "DJ-Einstellung live aktualisiert";
                 }
@@ -83,6 +111,18 @@ public final class ClassicDjService extends Service {
             return START_NOT_STICKY;
         }
         if (!ACTION_MIC.equals(action)) return START_NOT_STICKY;
+        // Reject duplicate or stale UI starts BEFORE their invalid settings
+        // can call stopSelf() on an already-owned running DJ session.
+        synchronized (sessionGuard) {
+            if (shuttingDown || sessionFence.owns(currentToken))
+                return START_NOT_STICKY;
+        }
+        final String requestedOwner = intent.getStringExtra(EXTRA_UI_OWNER);
+        if (!ClassicUiSessionOwner.valid(requestedOwner)) {
+            currentState = "Ungültige DJ-Sitzungskennung · kein Start";
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         final double requestedGain = intent.getDoubleExtra(EXTRA_GAIN, 1.0);
         final String requestedScene = intent.getStringExtra(EXTRA_SCENE) == null ?
             "SPECTRUM" : intent.getStringExtra(EXTRA_SCENE);
@@ -129,11 +169,16 @@ public final class ClassicDjService extends Service {
                 stopSelf();
                 return START_NOT_STICKY;
             }
+            if (!uiOwner.begin(requestedOwner)) return START_NOT_STICKY;
             token = sessionFence.begin();
-            if (token == 0L) return START_NOT_STICKY;
+            if (token == 0L) {
+                uiOwner.clear();
+                return START_NOT_STICKY;
+            }
             currentToken = token;
             runtime = session;
             activeSession = true;
+            liveService = this;
             currentState = "Mikrofon-Analyse wird vorbereitet";
         }
         try {
@@ -233,6 +278,8 @@ public final class ClassicDjService extends Service {
         }
         Intent stop = new Intent(this, ClassicDjService.class);
         stop.setAction(ACTION_STOP);
+        // The notification STOP belongs only to this exact service generation.
+        stop.putExtra(EXTRA_UI_OWNER, uiOwner.current());
         PendingIntent stopPi = PendingIntent.getService(this, 33, stop, flags);
         Notification.Builder n = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         n.setContentTitle("Loft DJ · Classic")
@@ -262,6 +309,7 @@ public final class ClassicDjService extends Service {
             if (shuttingDown || (expectedToken != 0L && !sessionFence.owns(expectedToken))) return;
             shuttingDown = true;
             sessionFence.cancel(); // fence callbacks before touching any session/socket
+            uiOwner.clear(); // revoke all stale panel/notification actions
             currentToken = 0L;
             activeSession = false;
             instance = runtime;
@@ -311,6 +359,7 @@ public final class ClassicDjService extends Service {
 
     @Override public void onDestroy() {
         stopSession(0L, "Gestoppt", false);
+        if (liveService == this) liveService = null;
         super.onDestroy();
     }
 

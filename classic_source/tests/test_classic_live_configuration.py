@@ -20,6 +20,20 @@ class LiveDJConfigurationContract(unittest.TestCase):
     def setUpClass(cls):
         cls.sources = {k: p.read_text("utf-8") for k,p in PATHS.items()}
 
+    def test_live_control_requires_own_exact_ui_generation(self):
+        ui = self.sources["activity"]
+        service = self.sources["service"]
+        self.assertIn("config.putExtra(ClassicDjService.EXTRA_UI_OWNER, sessionOwner)", ui)
+        self.assertIn("if (sessionOwner == null) return;", ui)
+        self.assertIn("uiOwner.owns(intent.getStringExtra(EXTRA_UI_OWNER))", service)
+        self.assertIn("uiOwner.begin(requestedOwner)", service)
+        self.assertIn("uiOwner.clear(); // revoke all stale panel/notification actions", service)
+        self.assertIn("stopSession(stopToken, \"Gestoppt\", true)", service)
+        self.assertIn("stop.putExtra(EXTRA_UI_OWNER, uiOwner.current())", service)
+        self.assertIn("ClassicUiSessionOwner.valid(requestedOwner)", service)
+        self.assertIn("if (shuttingDown || sessionFence.owns(currentToken))", service)
+        self.assertNotIn("stopSession(0L, \"Gestoppt\", true);", service)
+
     def test_user_action_only_changes_existing_session(self):
         ui = self.sources["activity"]
         self.assertIn("ClassicDjService.hasActiveSession()", ui)
