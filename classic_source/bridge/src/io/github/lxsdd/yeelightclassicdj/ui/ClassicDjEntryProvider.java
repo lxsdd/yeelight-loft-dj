@@ -5,6 +5,8 @@ import android.app.Application;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import java.lang.ref.WeakReference;
 import android.database.Cursor;
 import android.graphics.Rect;
 import android.net.Uri;
@@ -31,6 +33,19 @@ public final class ClassicDjEntryProvider extends ContentProvider
         implements Application.ActivityLifecycleCallbacks {
     private static final String ORIGINAL_PACKAGE = "com.yeelight.cherry";
     private static final String CLONE_PACKAGE = "io.lxsdd.yeelightdj";
+    // A real resumed original MusicActivity, held weakly, is the only return target.
+    private static volatile WeakReference<Activity> observedMusicHost =
+        new WeakReference<>(null);
+
+    /** Never create a standalone-DJ or login-screen notification fallback. */
+    static Intent verifiedMusicReturnIntent(Context caller) {
+        if (caller == null || !CLONE_PACKAGE.equals(caller.getPackageName())) return null;
+        Activity observed = observedMusicHost.get();
+        if (observed == null || observed.isFinishing() || observed.isDestroyed()) return null;
+        String activityName = observed.getClass().getName();
+        if (!isOriginalMusicHost(observed.getPackageName(), activityName)) return null;
+        return new Intent().setClassName(caller.getPackageName(), activityName);
+    }
 
     // Match only a trusted original OEM MusicActivity in the isolated clone.
     // This is NOT an exported intent and never invokes an OEM private method.
@@ -81,6 +96,8 @@ public final class ClassicDjEntryProvider extends ContentProvider
         if (activity == null || activity instanceof ClassicDjActivity) return;
         if (isOriginalMusicHost(activity.getPackageName(),
                                 activity.getClass().getName())) {
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+            observedMusicHost = new WeakReference<>(activity);
             scheduleMusicPanel(activity);
             return;
         }
@@ -266,6 +283,9 @@ public final class ClassicDjEntryProvider extends ContentProvider
     @Override public void onActivityDestroyed(Activity a) {
         cancelPending(a);
         pauseMusicPanel(a);
+        // A previous host must not invalidate a newer configuration-change host.
+        if (observedMusicHost.get() == a)
+            observedMusicHost = new WeakReference<>(null);
     }
 
     // No queryable state or remote control surface. Manifest exported=false.

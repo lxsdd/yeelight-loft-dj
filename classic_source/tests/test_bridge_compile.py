@@ -16,7 +16,7 @@ STUBS = {
 }''',
 'android/content/Intent.java': '''package android.content; public class Intent {
  public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4;
- public Intent(Context c, Class<?> k){} public Intent addFlags(int f){return this;}
+ public Intent(){} public Intent(Context c, Class<?> k){} public Intent setClassName(String p,String k){return this;} public Intent addFlags(int f){return this;}
  public Intent setAction(String a){return this;} public String getAction(){return "";}
  public Intent putExtra(String k,String[] a){return this;} public String[] getStringArrayExtra(String k){return null;}
 }''',
@@ -101,7 +101,7 @@ STUBS = {
 STUBS.update({
 'android/content/Intent.java': '''package android.content; public class Intent {
  public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4;
- public Intent(Context c, Class<?> k){} public Intent addFlags(int f){return this;}
+ public Intent(){} public Intent(Context c, Class<?> k){} public Intent setClassName(String p,String k){return this;} public Intent addFlags(int f){return this;}
  public Intent setAction(String a){return this;} public String getAction(){return "";}
  public Intent putExtra(String k,String[] a){return this;}
  public Intent putExtra(String k,String v){return this;}
@@ -233,6 +233,13 @@ class BridgeCompileTests(unittest.TestCase):
             self.assertTrue(klass.exists())
             self.assertTrue((root/'classes/io/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls.class').exists())
             if shutil.which('java'):
+                # Executable Java host/notification contract with synthetic Android only.
+                oem = root/'com/yeelight/cherry/ui/MusicActivity.java'
+                oem.parent.mkdir(parents=True, exist_ok=True)
+                oem.write_text("""package com.yeelight.cherry.ui;
+public final class MusicActivity extends android.app.Activity {
+    @Override public String getPackageName() { return "io.lxsdd.yeelightdj"; }
+}""")
                 probe = root/'NativeMusicHostContract.java'
                 probe.write_text("""package io.github.lxsdd.yeelightclassicdj.ui;
 public final class NativeMusicHostContract {
@@ -249,11 +256,32 @@ public final class NativeMusicHostContract {
         check("io.lxsdd.yeelightdj", "com.other.MusicActivity", false);
         check("com.yeelight.cherry", "com.yeelight.cherry.ui.MusicActivity", false);
         check("io.lxsdd.yeelightdj", null, false);
+        android.content.Context clone = new android.content.Context() {
+            @Override public String getPackageName() { return "io.lxsdd.yeelightdj"; }
+        };
+        android.content.Context original = new android.content.Context() {
+            @Override public String getPackageName() { return "com.yeelight.cherry"; }
+        };
+        ClassicDjEntryProvider provider = new ClassicDjEntryProvider();
+        if (ClassicDjEntryProvider.verifiedMusicReturnIntent(clone) != null)
+            throw new AssertionError("Unobserved host must not authorize notification");
+        provider.onActivityResumed(new android.app.Activity());
+        if (ClassicDjEntryProvider.verifiedMusicReturnIntent(clone) != null)
+            throw new AssertionError("Unknown host must not authorize notification");
+        com.yeelight.cherry.ui.MusicActivity host = new com.yeelight.cherry.ui.MusicActivity();
+        provider.onActivityResumed(host);
+        if (ClassicDjEntryProvider.verifiedMusicReturnIntent(clone) == null)
+            throw new AssertionError("Observed Classic Music must authorize notification");
+        if (ClassicDjEntryProvider.verifiedMusicReturnIntent(original) != null)
+            throw new AssertionError("Original identity must not authorize clone intent");
+        provider.onActivityDestroyed(host);
+        if (ClassicDjEntryProvider.verifiedMusicReturnIntent(clone) != null)
+            throw new AssertionError("Destroyed host must revoke notification");
     }
 }""")
                 probe_build = subprocess.run(
                     ['javac', '--release', '8', '-cp', str(root/'classes'),
-                     '-d', str(root/'classes'), str(probe)],
+                     '-d', str(root/'classes'), str(probe), str(oem)],
                     text=True, capture_output=True, timeout=20)
                 self.assertEqual(probe_build.returncode, 0, probe_build.stderr)
                 check = subprocess.run(

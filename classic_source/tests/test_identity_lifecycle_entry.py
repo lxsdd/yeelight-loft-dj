@@ -125,6 +125,19 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
                           "Color4-IP(s)", "getRemoteDeviceList"):
             self.assertNotIn(forbidden, inline)
 
+    def test_notification_routes_to_verified_music_only(self):
+        source_root = ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj/ui"
+        service = (source_root / "ClassicDjService.java").read_text("utf-8")
+        provider = (source_root / "ClassicDjEntryProvider.java").read_text("utf-8")
+        self.assertIn("ClassicDjEntryProvider.verifiedMusicReturnIntent(this)", service)
+        self.assertNotIn("new Intent(this, ClassicDjActivity.class)", service)
+        self.assertIn("if (open != null) n.setContentIntent(open)", service)
+        self.assertIn("if (caller == null || !CLONE_PACKAGE.equals(caller.getPackageName())) return null;", provider)
+        self.assertIn("if (observed == null || observed.isFinishing() || observed.isDestroyed()) return null;", provider)
+        self.assertIn("if (!isOriginalMusicHost(observed.getPackageName(), activityName)) return null;", provider)
+        self.assertIn("if (observedMusicHost.get() == a)", provider)
+        self.assertNotIn("getLaunchIntentForPackage", service)
+
     def test_provider_lifecycle_safe_inline_entry_contract(self):
         path = (ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj"
                 "/ui/ClassicDjEntryProvider.java")

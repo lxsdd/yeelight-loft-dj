@@ -38,7 +38,7 @@ public final class ClassicDjService extends Service {
     private boolean shuttingDown;
     private long currentToken;
     private Thread startupWorker;
-    private static volatile String currentState = "Bereit · ausgewählte Color4-Lampen";
+    private static volatile String currentState = "Bereit · Mikrofonanalyse ohne Lampenziele";
     private static volatile double lastBpm = 0.0;
     private static volatile float lastLevel = 0f;
     private static volatile boolean activeSession = false;
@@ -222,21 +222,28 @@ public final class ClassicDjService extends Service {
 
     private Notification notification() {
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
-        Intent reopen = new Intent(this, ClassicDjActivity.class);
-        reopen.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP |
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent open = PendingIntent.getActivity(this, 32, reopen, flags);
+        // Only a previously resumed OEM MusicActivity may receive the tap.
+        // Missing first-run/login host: no tap destination, never a sidecar.
+        Intent reopen = ClassicDjEntryProvider.verifiedMusicReturnIntent(this);
+        PendingIntent open = null;
+        if (reopen != null) {
+            reopen.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP |
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            open = PendingIntent.getActivity(this, 32, reopen, flags);
+        }
         Intent stop = new Intent(this, ClassicDjService.class);
         stop.setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 33, stop, flags);
         Notification.Builder n = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
-        return n.setContentTitle("Loft DJ · Classic")
-            .setContentText("DJ läuft · Tippen öffnet Classic")
+        n.setContentTitle("Loft DJ · Classic")
+            .setContentText(open == null
+                ? "DJ läuft · Classic-Musik derzeit nicht verfügbar"
+                : "DJ läuft · Zurück zu Classic-Musik")
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentIntent(open)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_media_pause, "Stopp", stopPi)
-            .build();
+            .addAction(android.R.drawable.ic_media_pause, "Stopp", stopPi);
+        if (open != null) n.setContentIntent(open);
+        return n.build();
     }
 
     /**

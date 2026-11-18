@@ -49,6 +49,19 @@ Vollständige OEM-Music-/DiscoFragment-Ersetzung, Classic-Farbpicker,
 Auto-Power der ausgewählten Lampen, Drag-and-Drop, Scene-Persistenz
 sowie physische Color4-Abnahme sind **offen**.
 
+## Rücknavigation aus der DJ-Benachrichtigung (Quellstand 18.11.2026)
+
+Die Benachrichtigung erhält ihr Ziel nur nach tatsächlichem
+`onActivityResumed` der OEM-`MusicActivity` im separaten Klon.
+Die beobachtete Activity wird schwach referenziert und nach Zerstörung
+widerrufen; ein neu erzeugter Host wird dabei nicht überschrieben.
+Ohne qualifizierte Classic-Music-Activity wird kein Tap-Intent gesetzt,
+insbesondere kein Rückfall auf die bisherige separate DJ-Activity oder
+einen Login-/Welcome-Start. Die Stopp-Aktion bleibt verfügbar.
+Ausführbare positive/negative synthetische Java-Regressionsfälle
+ergänzen die Quelltests. Diese Änderung beansprucht **keine**
+OEM-Laufzeit-, Session- oder Lampenabnahme.
+
 ## Nachweise und Akzeptanzgrenzen
 
 Source-CI testet die private Manifestroute mit Eigentümer-/Scope-Gates,
