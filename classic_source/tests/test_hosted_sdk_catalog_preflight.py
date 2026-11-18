@@ -50,7 +50,10 @@ class HostedCatalogPreflight(unittest.TestCase):
             home = self.make_fake_sdk(root)
             outcome = self.execute(home, root)
             self.assertEqual(outcome.returncode, 0, outcome.stderr)
-            self.assertEqual(outcome.stdout.strip(), "ANDROID17_PUBLIC_STABLE_CATALOG_PASS")
+            self.assertEqual(outcome.stdout.strip().splitlines(), [
+                "ANDROID17_4K_CATALOG_CANDIDATE_UNAVAILABLE",
+                "ANDROID17_PUBLIC_STABLE_CATALOG_PASS",
+            ])
             self.assertNotIn(APPROVED, outcome.stdout + outcome.stderr)
             self.assertFalse(list(root.glob("classic-readonly-sdk.*")))
             self.assertEqual(len(list(home.rglob("*"))), 8)
