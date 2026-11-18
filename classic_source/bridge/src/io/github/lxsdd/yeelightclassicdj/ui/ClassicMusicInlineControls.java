@@ -34,8 +34,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final Button sceneButton;
     private final Button gainButton;
     private final Button pulseModeButton;
-    private final Button pulseTempoButton;
-    private final LinearLayout pulseControls;
+    private Button pulseTempoButton;
+    private LinearLayout pulseControls;
     private static final int[] PULSE_TEMPOS = {60, 90, 120, 150, 180};
     private int pulseTempo = 2;
     private boolean beatPulse = true;
