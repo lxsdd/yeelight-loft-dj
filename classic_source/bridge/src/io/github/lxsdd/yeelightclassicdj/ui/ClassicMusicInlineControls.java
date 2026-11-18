@@ -33,6 +33,12 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final LinearLayout expanded;
     private final Button sceneButton;
     private final Button gainButton;
+    private final Button pulseModeButton;
+    private final Button pulseTempoButton;
+    private final LinearLayout pulseControls;
+    private static final int[] PULSE_TEMPOS = {60, 90, 120, 150, 180};
+    private int pulseTempo = 2;
+    private boolean beatPulse = true;
     private int scene = 0;
     private int gain = 1;
     private boolean locallyStarted = false;
@@ -43,7 +49,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             if (locallyStarted) {
                 status.setText(ClassicDjService.hasActiveSession() ?
                     ClassicDjService.uiStatus() :
-                    "Mikrofonanalyse wird vorbereitet · keine Lampen");
+                    "Analyse nicht aktiv · erneut starten oder stoppen");
             }
             handler.postDelayed(this, 650L);
         }
@@ -87,6 +93,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         sceneButton.setOnClickListener(v -> {
             scene = (scene + 1) % SCENES.length;
             sceneButton.setText(SCENE_LABELS[scene]);
+            pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
             configureIfOwned();
         });
         controls.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -106,6 +113,33 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         stop.setOnClickListener(v -> stopOwned());
         controls.addView(stop, new LinearLayout.LayoutParams(0, -2, 1f));
         expanded.addView(controls);
+
+        // DSP-only pulse controls in the original MusicActivity hierarchy.
+        // Never create a second color picker or synthesize OEM device identities.
+        pulseControls = new LinearLayout(activity);
+        pulseControls.setOrientation(HORIZONTAL);
+        pulseControls.setVisibility(View.GONE);
+        pulseModeButton = new Button(activity);
+        pulseModeButton.setText("Puls: Beat");
+        pulseModeButton.setContentDescription("Puls zwischen Beat und Zeitsteuerung umschalten");
+        pulseModeButton.setOnClickListener(v -> {
+            beatPulse = !beatPulse;
+            pulseModeButton.setText(beatPulse ? "Puls: Beat" : "Puls: Timer");
+            pulseTempoButton.setEnabled(!beatPulse);
+            configureIfOwned();
+        });
+        pulseControls.addView(pulseModeButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        pulseTempoButton = new Button(activity);
+        pulseTempoButton.setText("120 BPM");
+        pulseTempoButton.setEnabled(false);
+        pulseTempoButton.setContentDescription("Puls-Tempo für Zeitsteuerung");
+        pulseTempoButton.setOnClickListener(v -> {
+            pulseTempo = (pulseTempo + 1) % PULSE_TEMPOS.length;
+            pulseTempoButton.setText(PULSE_TEMPOS[pulseTempo] + " BPM");
+            configureIfOwned();
+        });
+        pulseControls.addView(pulseTempoButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        expanded.addView(pulseControls);
     }
 
     public void onHostResumed() {
@@ -140,6 +174,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         intent.putExtra(ClassicDjActivity.EXTRA_SELECTED_IPS, new String[0]);
         intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
         intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
+        addPulseSettings(intent);
         try {
             if (Build.VERSION.SDK_INT >= 26) host.startForegroundService(intent);
             else host.startService(intent);
@@ -150,12 +185,19 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         }
     }
 
+    private void addPulseSettings(Intent intent) {
+        // The existing OEM picker remains the color authority.
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MODE, beatPulse ? "BEAT" : "TIMER");
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) PULSE_TEMPOS[pulseTempo]);
+    }
+
     private void configureIfOwned() {
         if (!locallyStarted || !ClassicDjService.hasActiveSession()) return;
         Intent intent = new Intent(host, ClassicDjService.class);
         intent.setAction(ClassicDjService.ACTION_CONFIG);
         intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
         intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
+        addPulseSettings(intent);
         try {
             host.startService(intent);
         } catch (RuntimeException error) {
