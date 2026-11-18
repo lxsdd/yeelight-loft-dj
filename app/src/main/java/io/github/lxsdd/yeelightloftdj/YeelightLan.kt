@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightloftdj
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -43,8 +44,69 @@ data class YeelightDevice(
 }
 
 object YeelightLan {
-    private val commandGate = DeviceCommandGate()
-    private val tcp = YeelightTcpSessions()
+    private const val QUARANTINED_IPS_KEY = "firmware-quota-blocked-ips"
+    @Volatile private var quotaStore: SharedPreferences? = null
+    private val commandGate = DeviceCommandGate(
+        onQuarantined = { ip -> writeQuarantine(ip, blocked = true) },
+        onRecovered = { ip -> writeQuarantine(ip, blocked = false) }
+    )
+    private val tcp = YeelightTcpSessions(
+        onFirmwareQuotaRejected = { ip, error ->
+            // Transport-level detection covers power, manual, status and
+            // future callers uniformly. Never wait for a caller's JSON check.
+            commandGate.recordFirmwareRejection(ip, error)
+        }
+    )
+
+    /**
+     * The firmware-quota lockout must survive an Android activity/process
+     * restart. The stored local IPs remain in app-private preferences.
+     */
+    fun installQuotaState(context: Context) {
+        val prefs = context.applicationContext.getSharedPreferences(
+            "lan-firmware-safety", Context.MODE_PRIVATE
+        )
+        val blockedIps = prefs.getStringSet(QUARANTINED_IPS_KEY, emptySet())
+            .orEmpty().toList()
+        // Do not hold the YeelightLan object monitor while acquiring per-IP
+        // gate locks: quarantine callbacks take these locks in reverse order
+        // (per-IP gate -> SharedPreferences writer).
+        quotaStore = prefs
+        blockedIps.forEach(commandGate::markQuarantined)
+    }
+
+    @Synchronized
+    private fun writeQuarantine(ip: String, blocked: Boolean) {
+        val store = quotaStore ?: return
+        val ips = store.getStringSet(QUARANTINED_IPS_KEY, emptySet()).orEmpty().toMutableSet()
+        if (blocked) ips.add(ip) else ips.remove(ip)
+        // Commit before a later process death; never publish these IPs.
+        check(store.edit().putStringSet(QUARANTINED_IPS_KEY, ips).commit()) {
+            "LAN-Quarantäne konnte nicht dauerhaft gespeichert werden"
+        }
+    }
+
+    fun isLanQuarantined(device: YeelightDevice): Boolean =
+        commandGate.isQuarantined(device.ip)
+
+    /**
+     * A single explicitly requested read-only get_prop. Never auto-run it in
+     * discovery, scenes, UI recomposition or background status refresh.
+     */
+    fun verifyLanRecovery(device: YeelightDevice): String {
+        require(isLocalIp(device.ip))
+        return commandGate.explicitRecoveryProbe(device.ip) {
+            val result = tcp.request(device.ip, device.port, seq.getAndIncrement(),
+                "get_prop", listOf("power"))
+            if (result.has("error")) {
+                error("LAN-Recovery durch Firmware abgelehnt: " +
+                    result.optJSONObject("error")?.optString("message", "Gerätefehler"))
+            }
+            result.optJSONArray("result")?.optString(0)
+                ?.takeIf { it == "on" || it == "off" }
+                ?: error("LAN-Recovery: keine gültige Statusantwort; Sperre bleibt bestehen")
+        }
+    }
     /** Release LAN slots when the user leaves the app, including for Yeelight itself. */
     fun releaseTcpConnections() = tcp.closeAll()
     private const val HOST = "239.255.255.250"
@@ -421,24 +483,25 @@ object YeelightLan {
     internal fun matchesReplyId(response: JSONObject, id: Int): Boolean =
         response.has("id") && response.optInt("id", -1) == id
 
-    private class RejectedCommand(message: String) : IllegalStateException(message)
+    internal class RejectedCommand(message: String) : IllegalStateException(message)
 
     /**
-     * One TCP connection for a requested power change AND its verification.
-     * Never auto-retry a command when the ACK is missing: the bulb may already
-     * have switched and the ACK alone could have been lost.
+     * Power and verification use one TCP session, but are TWO distinct LAN
+     * requests. Never charge two budget tokens at one timestamp and then send
+     * the two physical packets back-to-back: each request must pass the shared
+     * paced gate separately. No replay of an ambiguous power command.
      */
     fun setPowerVerified(device: YeelightDevice, on: Boolean): PowerProbe {
         return try {
-            commandGate.run(device.ip, requests = 2) {
-                directSetPowerVerified(device, on)
-            }.also { result ->
+            directSetPowerVerified(device, on).also { result ->
                 if (result.outcome == PowerOutcome.REJECTED)
                     commandGate.recordFirmwareRejection(device.ip, result.message)
             }
         } catch (e: DeviceCommandGate.Deferred) {
-            PowerProbe(PowerOutcome.REJECTED,
-                message = e.message ?: "Yeelight-Befehlslimit erreicht")
+            // The local gate sent NOTHING. Never present this as a firmware
+            // rejection or missing acknowledgement from a real power command.
+            PowerProbe(PowerOutcome.PROTECTED,
+                message = e.message ?: "Lokales Yeelight-Sicherheitsbudget erreicht")
         }
     }
 
@@ -453,8 +516,10 @@ object YeelightLan {
         var ackMs: Long? = null
         try {
             val powerId=seq.getAndIncrement()
-            val result=tcp.request(device.ip,device.port,powerId,"set_power",
-                listOf(if(on) "on" else "off","sudden",0))
+            val result=commandGate.run(device.ip) {
+                tcp.request(device.ip,device.port,powerId,"set_power",
+                    listOf(if(on) "on" else "off","sudden",0))
+            }
             if (result.has("error")) {
                 return PowerProbe(PowerOutcome.REJECTED,totalMs=ms(),
                     message=result.optJSONObject("error")?.optString("message","Gerätefehler")
@@ -465,17 +530,21 @@ object YeelightLan {
                     message="Keine gültige OK-Bestätigung")
             }
             ackMs=ms()
-            if (device.methods.isNotEmpty() && "get_prop" !in device.methods) {
+            if (!PowerReadbackPolicy.shouldAutomaticallyRead(device)) {
                 return PowerProbe(PowerOutcome.ACK_ONLY,ackMs=ackMs,totalMs=ms(),
-                    message="get_prop nicht gemeldet")
+                    message="Manueller Befehl bestätigt; keine automatische get_prop-Abfrage " +
+                        "(Color4-/unbekanntes Firmwareverhalten). Status separat prüfen.")
             }
             Thread.sleep(75)
             val observed=runCatching {
-                val response=tcp.request(device.ip,device.port,seq.getAndIncrement(),
-                    "get_prop", listOf("power"))
-                check(!response.has("error")) {
-                    "Statusabfrage abgelehnt: " +
-                        response.optJSONObject("error")?.optString("message","Gerätefehler")
+                val response=commandGate.run(device.ip) {
+                    val reply=tcp.request(device.ip,device.port,seq.getAndIncrement(),
+                        "get_prop", listOf("power"))
+                    check(!reply.has("error")) {
+                        "Statusabfrage abgelehnt: " +
+                            reply.optJSONObject("error")?.optString("message","Gerätefehler")
+                    }
+                    reply
                 }
                 when(response.optJSONArray("result")?.optString(0)) {
                     "on" -> true
@@ -489,6 +558,11 @@ object YeelightLan {
                 statusMs=if(observed.isSuccess)ms() else null,
                 totalMs=ms(),
                 message=observed.exceptionOrNull()?.message.orEmpty())
+        } catch (e: DeviceCommandGate.Deferred) {
+            // Before the first write: a protected bulb was never touched.
+            // After an acknowledged set_power: a deferred readback remains
+            // ACK_ONLY in the explicit readback handling above.
+            throw e
         } catch (e:Exception) {
             return PowerProbe(if(ackMs!=null)PowerOutcome.ACK_ONLY
                 else PowerOutcome.NO_ACK,
@@ -502,13 +576,24 @@ object YeelightLan {
         commandGate.run(device.ip) { directSend(device, method, params) }
     }
 
+    internal fun rejectionMessage(
+        method: String, params: List<Any>, error: JSONObject,
+    ): String {
+        val phase = if (method == "set_music") "set_music(${params.firstOrNull()})" else method
+        val code = error.optInt("code", Int.MIN_VALUE)
+        val codeLabel = if (code == Int.MIN_VALUE) "" else " (Fehlercode $code)"
+        return "$phase abgelehnt$codeLabel: " +
+            error.optString("message", "Yeelight-Fehler")
+    }
+
     private fun directSend(device: YeelightDevice, method: String, params: List<Any>) {
         require(isLocalIp(device.ip))
         require(method in setOf("set_power","start_cf","stop_cf","set_scene",
             "set_bright","set_rgb","set_ct_abx","set_hsv","set_music"))
         val result=tcp.request(device.ip,device.port,seq.getAndIncrement(),method,params)
-        if(result.has("error"))throw RejectedCommand("$method abgelehnt: " +
-            result.getJSONObject("error").optString("message","Yeelight-Fehler"))
+        if(result.has("error"))throw RejectedCommand(
+            rejectionMessage(method, params, result.getJSONObject("error"))
+        )
         check(result.optJSONArray("result")?.optString(0)=="ok") {
             "Keine OK-Bestätigung für $method"
         }
@@ -545,7 +630,21 @@ object YeelightLan {
         val flowing: Boolean?,
         val snapshot: LampSnapshot?,
         val powerOn: Boolean?,
+        /** Firmware-reported 0/1; never interpret missing property as off. */
+        val musicOn: Boolean? = null,
     )
+
+    internal fun musicStateFromValue(raw: String?): Boolean? =
+        flowStateFromValue(raw)
+
+    /** Refuse a new music session if another controller may own it. */
+    internal fun musicPreflightRefusal(musicOn: Boolean?): String? = when (musicOn) {
+        false -> null
+        true -> "Musikmodus der Lampe ist bereits aktiv (music_on=1). " +
+            "Keine fremde Sitzung überschreiben oder erneut starten."
+        null -> "Musikmodus der Lampe nicht lesbar (music_on unbekannt). " +
+            "Keine LAN-Steuerbefehle für einen ungeprüften Musikstart."
+    }
 
     internal fun parseRecoveryProperties(values: List<String>): RecoveryObservation {
         val powerOn = when (values.getOrNull(1)) {
@@ -558,7 +657,8 @@ object YeelightLan {
         return RecoveryObservation(
             flowing = flowStateFromValue(values.getOrNull(0)),
             snapshot = LampSnapshot.fromValues(values.drop(1)),
-            powerOn = powerOn
+            powerOn = powerOn,
+            musicOn = musicStateFromValue(values.getOrNull(1 + LampSnapshot.properties.size))
         )
     }
 
@@ -568,7 +668,7 @@ object YeelightLan {
     private fun directReadRecoveryObservation(device: YeelightDevice): RecoveryObservation {
         require(isLocalIp(device.ip))
         val reply=tcp.request(device.ip,device.port,seq.getAndIncrement(),"get_prop",
-            listOf("flowing")+LampSnapshot.properties)
+            listOf("flowing")+LampSnapshot.properties+listOf("music_on"))
         if(reply.has("error"))error("Zustandsprüfung abgelehnt: " +
             reply.getJSONObject("error").optString("message","Yeelight-Fehler"))
         val values=reply.optJSONArray("result")?:error("Statuswerte fehlen")
@@ -594,11 +694,38 @@ object YeelightLan {
     }
 
     /**
+     * One read-only get_prop snapshot with music_on for safe music preflight.
+     * An unavailable value is UNKNOWN, never interpreted as idle.
+     * This is a single command, not a background poll or automatic retry.
+     */
+    fun readMusicPreflight(device: YeelightDevice): LampSnapshot =
+        commandGate.run(device.ip) {
+            require(isLocalIp(device.ip))
+            val response = tcp.request(device.ip, device.port, seq.getAndIncrement(),
+                "get_prop", LampSnapshot.properties + listOf("music_on"))
+            if (response.has("error")) error("Music-Preflight abgelehnt: " +
+                response.getJSONObject("error").optString("message", "Gerätefehler"))
+            val values = response.optJSONArray("result")
+                ?: error("Music-Preflight: keine Statusantwort")
+            val musicOn = musicStateFromValue(
+                values.optString(LampSnapshot.properties.size, "")
+            )
+            musicPreflightRefusal(musicOn)?.let { error(it) }
+            LampSnapshot.fromValues((0 until LampSnapshot.properties.size).map {
+                values.optString(it)
+            }) ?: error("Music-Preflight: ursprünglicher Lichtzustand unvollständig")
+        }
+
+    /**
      * Only devices that EXPLICITLY advertise set_music and set_rgb can use
      * the reverse stream. Unknown device capabilities never trigger a
      * speculative Music-Mode handshake against a real lamp.
      */
     private val musicChannels = ConcurrentHashMap<String, YeelightMusicChannel>()
+    // A failed start must not be confused with a failed stop. The three
+    // outcomes have different recovery safety requirements.
+    private enum class MusicStartFailure { REJECTED_BEFORE_START, COMPENSATION_ACKED, COMPENSATION_UNCONFIRMED }
+    private val failedMusicStarts = ConcurrentHashMap<String, MusicStartFailure>()
 
     fun supportsMusicMode(device: YeelightDevice): Boolean =
         "set_music" in device.methods && "set_rgb" in device.methods
@@ -622,7 +749,17 @@ object YeelightLan {
                 send(device, "set_music", listOf(0))
             }
         )
-        channel.start(host)
+        failedMusicStarts.remove(device.ip)
+        try {
+            channel.start(host)
+        } catch (failure: Exception) {
+            failedMusicStarts[device.ip] = when {
+                channel.enableDefinitelyNotAccepted -> MusicStartFailure.REJECTED_BEFORE_START
+                channel.alreadyDisabledSuccessfully -> MusicStartFailure.COMPENSATION_ACKED
+                else -> MusicStartFailure.COMPENSATION_UNCONFIRMED
+            }
+            throw failure
+        }
         musicChannels[device.ip] = channel
         return true
     }
@@ -630,8 +767,16 @@ object YeelightLan {
     fun musicModeActive(device: YeelightDevice): Boolean =
         musicChannels[device.ip]?.isActive == true
 
+    /** Abort only reverse-stream TCP writes; no quota-accounted command. */
+    fun interruptMusicOutputs(ips: Set<String>) {
+        ips.forEach { ip -> musicChannels[ip]?.interruptBlockedOutput() }
+    }
+
     /** Returns false only if the device is using the normal LAN mode. */
     fun sendMusicRgb(device: YeelightDevice, rgb: Int): Boolean {
+        check(!commandGate.isQuarantined(device.ip)) {
+            "Music-Mode pausiert: Firmware-LAN-Quarantäne dieser Lampe"
+        }
         val channel = musicChannels[device.ip] ?: return false
         channel.sendRgb(rgb)
         return true
@@ -646,10 +791,26 @@ object YeelightLan {
     @Synchronized
     fun stopMusicMode(device: YeelightDevice) {
         val channel = musicChannels.remove(device.ip)
+        val failedStart = failedMusicStarts.remove(device.ip)
         if (channel != null) {
             channel.close()
-        } else if (supportsMusicMode(device)) {
-            send(device, "set_music", listOf(0))
+        } else when (failedStart) {
+            MusicStartFailure.REJECTED_BEFORE_START -> error(
+                "set_music(1) wurde ausdrücklich abgelehnt; " +
+                    "kein automatischer Deaktivierungsbefehl gesendet. " +
+                    "Vorheriger Musikmodus bleibt unklar; nur lesend prüfen."
+            )
+            MusicStartFailure.COMPENSATION_UNCONFIRMED -> error(
+                "set_music(0) nach unbestätigtem Start nicht bestätigt; " +
+                    "kein weiterer Stoppversuch. Nur lesend prüfen."
+            )
+            MusicStartFailure.COMPENSATION_ACKED -> Unit
+            null -> if (supportsMusicMode(device)) {
+                // A persisted journal is not proof a firmware session still
+                // exists. Never send a second stop after process death.
+                error("Kein bestätigter Live-Musikrückkanal; kein automatischer " +
+                    "Deaktivierungsbefehl. Nur lesend prüfen.")
+            }
         }
     }
 

@@ -596,8 +596,9 @@ private fun RecoveryBanner(controller: LoftController) {
                         ". Dies entfernt ausschließlich den lokalen " +
                         "Lichtshow-/Wiederherstellungseintrag dieser Lampe. " +
                         "Es sendet KEINEN Stoppbefehl. Ein eventuell laufender " +
-                        "Lichtlauf wird dadurch nicht beendet. Der frühere Lichtzustand " +
-                        "kann anschließend nicht mehr automatisch wiederhergestellt werden.")
+                        "Lichtlauf oder Musikmodus wird dadurch nicht beendet. " +
+                        "Der frühere Lichtzustand kann anschließend nicht mehr " +
+                        "automatisch wiederhergestellt werden.")
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = acceptsRunningFlow,
                             onCheckedChange = { acceptsRunningFlow = it })
@@ -954,7 +955,8 @@ private fun DeviceSummaryCard(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedButton(onClick = { controller.refreshLamp(device) },
-                    enabled = !controller.busy, modifier = Modifier.weight(1f)) {
+                    enabled = !controller.busy && !controller.isLampLanQuarantined(device),
+                    modifier = Modifier.weight(1f)) {
                     Text("Status")
                 }
                 OutlinedButton(onClick = { controller.identifyLamp(device) },
@@ -1329,6 +1331,27 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
     if (!expanded) return
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val lanQuarantined = controller.isLampLanQuarantined(device)
+        if (device.model.equals("color4", ignoreCase = true)) {
+            Text(
+                "Steuerweg: lokales Yeelight-LAN (TCP 55443) · " +
+                    "Hersteller-Cloud in Loft DJ nicht gekoppelt · " +
+                    if (YeelightLan.supportsMusicMode(device))
+                        "Music Mode laut Gerätemeldung unterstützt"
+                    else "Music Mode noch nicht bestätigt",
+                color = muted, fontSize = 11.sp,
+            )
+        }
+        if (lanQuarantined) {
+            Note("LAN-Steuerung dieser Lampe geschützt: Die Firmware hat " +
+                "'client quota exceeded' gemeldet. Es werden keine regulären " +
+                "LAN-Kommandos mehr gesendet. Kein automatischer Neustart oder Retry.")
+            OutlinedButton(
+                onClick = { controller.verifyLampLanRecovery(device) },
+                enabled = !controller.busy,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("LAN-Wiederherstellung prüfen (1 Leseabfrage)") }
+        }
         if (device.methods.isEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
@@ -1351,7 +1374,8 @@ private fun LampManualPanel(device: YeelightDevice, controller: LoftController,
                 fontSize = 12.sp,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = { controller.refreshLamp(device) }, enabled = !controller.busy) {
+            TextButton(onClick = { controller.refreshLamp(device) },
+                enabled = !controller.busy && !lanQuarantined) {
                 Text("Aktualisieren")
             }
         }

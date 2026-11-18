@@ -1,19 +1,27 @@
 package io.github.lxsdd.yeelightloftdj
 
 /**
- * Pure selection rules. The runtime keeps per-device failure details and
- * persists stop/recovery markers independently from this selection.
+ * Pure selection rules. A firmware-quarantined bulb cannot enter a scene
+ * before network I/O, state snapshotting or a durable recovery marker.
  */
 internal object SceneTargetPolicy {
-    data class FlowTargets(val supported: List<YeelightDevice>, val unsupported: List<YeelightDevice>)
+    data class FlowTargets(
+        val supported: List<YeelightDevice>,
+        val unsupported: List<YeelightDevice>,
+        val blocked: List<YeelightDevice> = emptyList(),
+    )
 
-    fun flowTargets(devices: List<YeelightDevice>): FlowTargets {
-        // A manually added bulb can be rediscovered under a different id.
-        // Never attempt to control the same physical IP twice in one scene.
+    fun flowTargets(
+        devices: List<YeelightDevice>,
+        quarantinedIps: Set<String> = emptySet(),
+    ): FlowTargets {
+        // Never attempt the same physical IP twice (manual + SSDP aliases).
         val distinct = devices.distinctBy { it.ip }
+        val allowed = distinct.filterNot { it.ip in quarantinedIps }
         return FlowTargets(
-            supported = distinct.filter { it.canFlow },
-            unsupported = distinct.filterNot { it.canFlow },
+            supported = allowed.filter { it.canFlow },
+            unsupported = allowed.filterNot { it.canFlow },
+            blocked = distinct.filter { it.ip in quarantinedIps },
         )
     }
 

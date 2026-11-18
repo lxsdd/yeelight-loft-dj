@@ -50,7 +50,23 @@ object RecoveryReadPolicy {
         }
     }
 
-    fun canClear(d: RecoveryReadDecision): Boolean = d in setOf(
+    /** Only an explicit firmware music_on=0 establishes a stopped session.
+     * Missing/unsupported values and music_on=1 never unlock restoration.
+     */
+    fun musicStillUnconfirmed(sessionTracked: Boolean, musicOn: Boolean?): Boolean =
+        sessionTracked && musicOn != false
+
+    /** A stopped music transport can be followed by static restoration
+     * only if the real firmware reports no music and no running flow.
+     */
+    fun safeToRestoreAfterLostMusicChannel(
+        musicOn: Boolean?, flowing: Boolean?,
+    ): Boolean = musicOn == false && flowing == false
+
+    fun canClear(
+        d: RecoveryReadDecision,
+        musicSessionUnconfirmed: Boolean = false,
+    ): Boolean = !musicSessionUnconfirmed && d in setOf(
         RecoveryReadDecision.ALREADY_RESTORED,
         RecoveryReadDecision.FLOW_STOPPED_NO_SNAPSHOT,
         RecoveryReadDecision.SCANNER_OFF

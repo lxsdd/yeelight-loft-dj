@@ -16,6 +16,10 @@ import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,6 +42,7 @@ private val bandLabels = listOf("Bass", "Kick", "Tiefmitte", "Mitten", "Präsenz
 @Composable
 fun MusicScreen(controller: LoftController) {
     val context = LocalContext.current
+    var showColor4AcceptanceConfirm by remember { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -203,6 +208,20 @@ fun MusicScreen(controller: LoftController) {
                     "und behalten eine Stoppreserve. " +
                     "Keine Stroboskop-Effekte.",
                     color = Color(0xFFAAB6CE), fontSize = 11.sp)
+                val acceptanceRefusal = controller.color4MusicAcceptanceRefusal()
+                val acceptanceTarget = controller.color4AcceptanceTargetName() ?: "unbekannt"
+                OutlinedButton(
+                    onClick = { showColor4AcceptanceConfirm = true },
+                    enabled = audioRunning && !controller.busy &&
+                        !controller.musicLightArmed &&
+                        controller.runningDeviceIps.isEmpty() &&
+                        acceptanceRefusal == null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Color4-Einzeltest · 8 Sekunden · automatisch stoppen") }
+                Text(
+                    acceptanceRefusal ?: "Testziel: $acceptanceTarget · begrenzter Music Mode",
+                    color = Color(0xFF98A6C0), fontSize = 11.sp
+                )
                 if (!controller.musicLightArmed && controller.runningDeviceIps.isEmpty()) {
                     Button(
                         onClick = controller::armMusicLights,
@@ -224,6 +243,31 @@ fun MusicScreen(controller: LoftController) {
             }
         }
 
+        if (showColor4AcceptanceConfirm) {
+            AlertDialog(
+                onDismissRequest = { showColor4AcceptanceConfirm = false },
+                title = { Text("Color4-Music-Mode-Test") },
+                text = {
+                    Text("Ausgewählte Lampe: ${controller.color4AcceptanceTargetName() ?: "unbekannt"}. " +
+                        "Nur fortfahren, wenn dies Couchtisch ist. " +
+                        "Der Test läuft höchstens 8 Sekunden, sendet nur musikgesteuerte " +
+                        "Farbimpulse über den bestätigten Rückkanal und versucht anschließend " +
+                        "die vorherigen Werte wiederherzustellen. Bei einer Fehlermeldung " +
+                        "keine weiteren Versuche starten.")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showColor4AcceptanceConfirm = false
+                        controller.armColor4MusicAcceptance()
+                    }) { Text("Nur Couchtisch testen") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showColor4AcceptanceConfirm = false }) {
+                        Text("Abbrechen")
+                    }
+                }
+            )
+        }
         Surface(color = Color(0xFF24283B), shape = RoundedCornerShape(18.dp)) {
             Text(
                 "Internes Audio: Android AudioPlaybackCapture mit ausdrücklicher Zustimmung. " +
