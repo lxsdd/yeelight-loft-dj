@@ -33,9 +33,10 @@ STUBS = {
  public void stopForeground(boolean remove){}
 }''',
 'android/app/PendingIntent.java': '''package android.app; public class PendingIntent {
- public static final int FLAG_UPDATE_CURRENT=1, FLAG_IMMUTABLE=2;
+ public static final int FLAG_UPDATE_CURRENT=1, FLAG_IMMUTABLE=2, FLAG_NO_CREATE=4;
  public static PendingIntent getActivity(android.content.Context c,int i,android.content.Intent a,int f){return null;}
  public static PendingIntent getService(android.content.Context c,int i,android.content.Intent a,int f){return null;}
+ public void cancel(){}
 }''',
 'android/app/Notification.java': '''package android.app; public class Notification {
  public static class Builder {

@@ -147,7 +147,7 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("revokeMusicReturnPendingIntent(a);", provider_source)
         self.assertIn("PendingIntent.FLAG_NO_CREATE", provider_source)
         self.assertIn("if (existing != null) existing.cancel();", provider_source)
-        self.assertIn("getActivity(\\n                activity, 32, target, flags)", provider_source)
+        self.assertIn("getActivity(\n                activity, 32, target, flags)", provider_source)
         self.assertIn("PendingIntent.getActivity(this, 32, reopen, flags)", service_source)
         self.assertNotIn("FLAG_UPDATE_CURRENT", provider_source)
         self.assertNotIn("getLaunchIntentForPackage", provider_source)
