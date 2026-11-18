@@ -277,6 +277,33 @@ public final class ClassicDjEntryProvider extends ContentProvider
     @Override public void onActivityPaused(Activity a) {
         cancelPending(a);
         pauseMusicPanel(a);
+        // A paused MusicActivity is no longer a verified foreground return
+        // target. Revoke the previously issued notification PendingIntent too:
+        // otherwise Android can retain its old explicit Activity target after
+        // Welcome/Login, task switching, or an Activity replacement.
+        if (observedMusicHost.get() == a) {
+            observedMusicHost = new WeakReference<>(null);
+            revokeMusicReturnPendingIntent(a);
+        }
+    }
+
+    private static void revokeMusicReturnPendingIntent(Activity activity) {
+        if (activity == null || !CLONE_PACKAGE.equals(activity.getPackageName())) return;
+        try {
+            int flags = android.app.PendingIntent.FLAG_NO_CREATE |
+                (android.os.Build.VERSION.SDK_INT >= 23 ?
+                    android.app.PendingIntent.FLAG_IMMUTABLE : 0);
+            // FLAG_NO_CREATE never manufactures a navigation destination.
+            // PendingIntent identity is requestCode + component + intent action;
+            // the service's NEW_TASK/CLEAR_TOP flags do not affect equality.
+            Intent target = new Intent().setClassName(
+                activity.getPackageName(), activity.getClass().getName());
+            android.app.PendingIntent existing = android.app.PendingIntent.getActivity(
+                activity, 32, target, flags);
+            if (existing != null) existing.cancel();
+        } catch (RuntimeException ignored) {
+            // Optional notification cleanup must not crash original Classic.
+        }
     }
     @Override public void onActivityStopped(Activity a) {}
     @Override public void onActivitySaveInstanceState(Activity a, Bundle state) {}

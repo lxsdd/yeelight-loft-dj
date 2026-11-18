@@ -138,6 +138,20 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("if (observedMusicHost.get() == a)", provider)
         self.assertNotIn("getLaunchIntentForPackage", service)
 
+    def test_paused_music_revokes_stale_notification_navigation(self):
+        source_root = ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj/ui"
+        provider_source = (source_root / "ClassicDjEntryProvider.java").read_text("utf-8")
+        service_source = (source_root / "ClassicDjService.java").read_text("utf-8")
+        self.assertIn("if (observedMusicHost.get() == a) {", provider_source)
+        self.assertIn("observedMusicHost = new WeakReference<>(null);", provider_source)
+        self.assertIn("revokeMusicReturnPendingIntent(a);", provider_source)
+        self.assertIn("PendingIntent.FLAG_NO_CREATE", provider_source)
+        self.assertIn("if (existing != null) existing.cancel();", provider_source)
+        self.assertIn("getActivity(\\n                activity, 32, target, flags)", provider_source)
+        self.assertIn("PendingIntent.getActivity(this, 32, reopen, flags)", service_source)
+        self.assertNotIn("FLAG_UPDATE_CURRENT", provider_source)
+        self.assertNotIn("getLaunchIntentForPackage", provider_source)
+
     def test_provider_lifecycle_safe_inline_entry_contract(self):
         path = (ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj"
                 "/ui/ClassicDjEntryProvider.java")
