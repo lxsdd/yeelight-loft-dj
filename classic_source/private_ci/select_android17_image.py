@@ -19,10 +19,37 @@ APPROVED_IMAGES = (
     "system-images;android-37.2;google_apis_ps16k;x86_64",
     "system-images;android-37.1;google_apis_ps16k;x86_64",
 )
+# Catalog discovery is NOT a 4-KiB runtime attestation. These untagged,
+# stable package variants are candidates only; PAGE_SIZE must be measured in
+# a separately approved disposable emulator before any OEM launch.
+FOUR_K_CANDIDATES = (
+    "system-images;android-37.2;google_apis;x86_64",
+    "system-images;android-37.1;google_apis;x86_64",
+    "system-images;android-37.2;default;x86_64",
+    "system-images;android-37.1;default;x86_64",
+)
 COLUMNS = re.compile(
     r"^\s*(system-images;android-[A-Za-z0-9._-]+;[A-Za-z0-9_-]+;[A-Za-z0-9_-]+)\s*\|"
 )
 HEADERS = re.compile(r"^\s*(Installed packages|Available Packages|Available Updates)\s*:\s*$", re.I)
+
+
+def catalogued_four_k_candidates(catalog: str) -> tuple[str, ...]:
+    """List only exact untagged stable API37 options, never infer real page size."""
+    if not isinstance(catalog, str) or len(catalog.encode("utf-8")) > MAX_CATALOG_BYTES:
+        return ()
+    section, listed = "", set()
+    for line in catalog.splitlines():
+        header = HEADERS.fullmatch(line)
+        if header:
+            section = header.group(1).lower()
+            continue
+        if section not in ("available packages", "installed packages"):
+            continue
+        match = COLUMNS.match(line)
+        if match:
+            listed.add(match.group(1))
+    return tuple(p for p in FOUR_K_CANDIDATES if p in listed)
 
 
 def select_stable_android17_image(catalog: str) -> str | None:
@@ -49,6 +76,8 @@ def select_stable_android17_image(catalog: str) -> str | None:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("catalog_file", type=Path)
+    parser.add_argument("--probe-4k", action="store_true",
+                        help="read-only catalog indicator, NOT emulator qualification")
     args = parser.parse_args(argv)
     try:
         if args.catalog_file.is_symlink() or not args.catalog_file.is_file():
@@ -56,6 +85,11 @@ def main(argv=None):
         if args.catalog_file.stat().st_size > MAX_CATALOG_BYTES:
             return 2
         content = args.catalog_file.read_text(encoding="utf-8")
+        if args.probe_4k:
+            possible = catalogued_four_k_candidates(content)
+            print("ANDROID17_POTENTIAL_4K_CATALOG_CANDIDATE_NOT_VERIFIED"
+                  if possible else "ANDROID17_4K_CATALOG_CANDIDATE_UNAVAILABLE")
+            return 0
         selected = select_stable_android17_image(content)
     except (OSError, UnicodeError):
         return 2

@@ -105,7 +105,8 @@ class FirebaseFinalManifestGate(unittest.TestCase):
                 '{http://schemas.android.com/apk/res/android}name': n,
                 '{http://schemas.android.com/apk/res/android}authorities': (
                     'io.lxsdd.yeelightdj.loftdj.music' if i == 5
-                    else f'io.lxsdd.yeelightdj.p{i}')}}
+                    else f'io.lxsdd.yeelightdj.p{i}'),
+                '{http://schemas.android.com/apk/res/android}exported': 'false'}}
                 for i,n in enumerate(names)]}):
             with self.assertRaisesRegex(GateFailure, 'FINAL_MISSING_DEVICE_PROVIDER_REINTRODUCED'):
                 verify_final_firebase_boundary(self.candidate)

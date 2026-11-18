@@ -74,3 +74,16 @@ sicherstellen, dass der Test keine vollständige Integration vortäuscht.
 
 Keine Merges, Releases, dauerhaftes Signing, physischen Geräteaktionen,
 Cloud-Logins, OEM-APK-/Smali-Publikation, Kostenzusagen oder Launcher-Bypässe.
+
+## Qualifikationsweg: 4-KiB-Android-17-Kandidaten nur lesend ermitteln
+
+Die öffentliche Source-CI führt auf dem tatsächlichen GitHub-Host eine
+**reine Katalogabfrage** aus. Die für 4-KiB infrage kommenden ungetaggten,
+stabilen API37-x86_64-Imagevarianten werden ausschließlich durch einen
+festen positiven/negativen Indikator gemeldet. Ein Katalogfund beweist noch
+**keine** 4-KiB-Seitengröße: Diese muss in einer getrennt autorisierten,
+vollständig isolierten Emulatorinstanz tatsächlich per `getconf PAGE_SIZE`
+nachgewiesen werden. Bis dahin läuft der bisherige private 16-KiB-OEM-Test
+nicht als neue MusicActivity-Produktabnahme. Die bestehende selektive
+16-KiB-Imagezulassung und deren CI-Schranken sind unverändert; keine
+Image-Installation, Lizenzannahme, APK-Publikation oder Gerätesteuerung.
