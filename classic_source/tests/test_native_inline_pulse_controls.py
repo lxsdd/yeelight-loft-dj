@@ -23,6 +23,26 @@ class NativePulseControlsTest(unittest.TestCase):
         self.assertIn("configureRuntime(runtime, intent, gain, scene)", SERVICE)
         self.assertIn("target.configurePulse(", SERVICE)
 
+    def test_native_pulse_envelope_and_gamma_are_live_in_original_music_ui(self):
+        self.assertIn("pulseShape = (pulseShape + 1) % PULSE_SHAPES.length", INLINE)
+        self.assertIn("pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE)", INLINE)
+        self.assertIn("PULSE_SHAPES = {", INLINE)
+        self.assertIn("PULSE_GAMMAS = {2.2, 1.2, 2.0}", INLINE)
+        for extra in ("EXTRA_PULSE_MIN", "EXTRA_PULSE_MAX", "EXTRA_PULSE_ATTACK",
+                      "EXTRA_PULSE_DECAY", "EXTRA_PULSE_GAMMA"):
+            self.assertIn("ClassicDjService." + extra, INLINE)
+            self.assertIn(extra, SERVICE)
+        self.assertEqual(INLINE.count("addPulseSettings(intent);"), 2)
+        self.assertIn("configureIfOwned();", INLINE)
+
+    def test_pulse_presets_are_valid_and_dsp_only(self):
+        self.assertIn("{12, 65, 160, 900}", INLINE)
+        self.assertIn("{8, 100, 70, 330}", INLINE)
+        self.assertIn("{12, 90, 90, 600}", INLINE)
+        self.assertNotIn("set_power", INLINE)
+        self.assertNotIn("set_bright", INLINE)
+        self.assertNotIn("startActivity(", INLINE)
+
     def test_no_unverified_lamp_target_or_duplicate_picker(self):
         self.assertIn("new String[0]", INLINE)
         self.assertIn("if (!ips.isEmpty())", SERVICE)

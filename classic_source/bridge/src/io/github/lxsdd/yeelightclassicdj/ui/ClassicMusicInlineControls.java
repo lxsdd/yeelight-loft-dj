@@ -35,7 +35,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final Button gainButton;
     private final Button pulseModeButton;
     private Button pulseTempoButton;
+    private Button pulseShapeButton;
     private LinearLayout pulseControls;
+    private LinearLayout pulseShapeControls;
+    // These are DSP-only envelope presets. They never assert a lamp power state.
+    private static final int[][] PULSE_SHAPES = {
+        {12, 65, 160, 900}, {8, 100, 70, 330}, {12, 90, 90, 600}
+    };
+    private static final double[] PULSE_GAMMAS = {2.2, 1.2, 2.0};
+    private static final String[] PULSE_SHAPE_LABELS = {"Sanft", "Kräftig", "Normal"};
+    private int pulseShape = 2;
     private static final int[] PULSE_TEMPOS = {60, 90, 120, 150, 180};
     private int pulseTempo = 2;
     private boolean beatPulse = true;
@@ -94,6 +103,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             scene = (scene + 1) % SCENES.length;
             sceneButton.setText(SCENE_LABELS[scene]);
             pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
+            pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
             configureIfOwned();
         });
         controls.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -140,6 +150,22 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         });
         pulseControls.addView(pulseTempoButton, new LinearLayout.LayoutParams(0, -2, 1f));
         expanded.addView(pulseControls);
+
+        // Perceptual brightness/envelope shaping on the SAME Classic Music UI.
+        // No OEM color-picker replacement and no unverified lamp selection.
+        pulseShapeControls = new LinearLayout(activity);
+        pulseShapeControls.setOrientation(HORIZONTAL);
+        pulseShapeControls.setVisibility(View.GONE);
+        pulseShapeButton = new Button(activity);
+        pulseShapeButton.setText("Puls: Normal");
+        pulseShapeButton.setContentDescription("Pulsform zwischen Normal, Sanft und Kräftig wechseln");
+        pulseShapeButton.setOnClickListener(v -> {
+            pulseShape = (pulseShape + 1) % PULSE_SHAPES.length;
+            pulseShapeButton.setText("Puls: " + PULSE_SHAPE_LABELS[pulseShape]);
+            configureIfOwned();
+        });
+        pulseShapeControls.addView(pulseShapeButton);
+        expanded.addView(pulseShapeControls);
     }
 
     public void onHostResumed() {
@@ -189,6 +215,12 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         // The existing OEM picker remains the color authority.
         intent.putExtra(ClassicDjService.EXTRA_PULSE_MODE, beatPulse ? "BEAT" : "TIMER");
         intent.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) PULSE_TEMPOS[pulseTempo]);
+        int[] envelope = PULSE_SHAPES[pulseShape];
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MIN, (double) envelope[0]);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MAX, (double) envelope[1]);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, (double) envelope[2]);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, (double) envelope[3]);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, PULSE_GAMMAS[pulseShape]);
     }
 
     private void configureIfOwned() {
