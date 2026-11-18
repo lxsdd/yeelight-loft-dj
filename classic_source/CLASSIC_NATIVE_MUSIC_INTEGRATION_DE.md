@@ -126,3 +126,30 @@ nachgewiesen werden. Bis dahin läuft der bisherige private 16-KiB-OEM-Test
 nicht als neue MusicActivity-Produktabnahme. Die bestehende selektive
 16-KiB-Imagezulassung und deren CI-Schranken sind unverändert; keine
 Image-Installation, Lizenzannahme, APK-Publikation oder Gerätesteuerung.
+
+## Geschützter Clone-Test folgt jetzt der nativen MusicActivity, nicht Home
+
+Der ausschließlich eigentümerautorisiert gestartete private Emulator-Runner
+verlangt mit `--require-clone-music-ui` nun das tatsächliche Original-
+`MusicActivity`-Fenster im **isolierten Klon**. Er akzeptiert zuerst nur einen
+realen OEM-Launcher-Start, isoliert alle Netzwerkrouten und überprüft den
+installierten privaten APK-SHA. Falls Welcome/Login/Home statt MusicActivity
+angezeigt wird, meldet er differenziert
+`PRIVATE_EMULATOR_OEM_START_ONLY` /`OEM_START_OBSERVED_MUSIC_NOT_ATTESTED`
+ohne irgendeine fremde Schaltfläche anzutippen oder eine Anmeldung zu erfinden.
+Das ist bewusst **kein** Feature- oder Login-PASS.
+
+Nur beim tatsächlichen OEM-MusicActivity-Foreground mit exakt benanntem
+`Loft DJ`-Toggle aus `ClassicMusicInlineControls` tippt der Test
+diesen einen Schalter an. Anschließend müssen dieselbe originale
+MusicActivity sowie die Status-, Analyse- und Stopp-Controls aus
+dem Inline-Panel sichtbar sein; eine neue `ClassicDjActivity` wäre
+ein Fail. Es gibt keinen Mikrofonstart, keine Gerätekommandos und
+keinen Login-Bypass. Fremde, doppelte, versteckte oder falsche Buttons
+qualifizieren nicht. Der ältere separierte Home-/Identitätskontroll-
+Test bleibt als historische Diagnostik erhalten, aber ist nicht
+mehr der reguläre private Clone-Akzeptanzpfad.
+
+Diese Korrektur beseitigt den wiederholten **falschen erwarteten
+Home-Button**, nicht den noch erforderlichen realen Classic-Erststart,
+MiOT-Init/Account-State oder den 4-KiB- und Pixel-6a-Akzeptanztest.

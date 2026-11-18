@@ -121,6 +121,7 @@ if python3 classic_source/private_ci/android17_start_smoke.py \
  --launcher-component "io.lxsdd.yeelightdj/$LAUNCHER" \
  --expected-installed-apk-sha256 "$PIN" \
  --candidate-apk "$APK" \
+ --require-clone-music-ui \
  --explicit-owner-approved-private-emulator; then
   printf 'PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS\n'
 else

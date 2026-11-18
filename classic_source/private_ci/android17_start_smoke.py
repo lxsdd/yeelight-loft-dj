@@ -517,7 +517,7 @@ def classify_visible_ui(dump, *, stage, expected_package=PACKAGE):
     _bounded(dump, "SMOKE_BAD_UI_DUMP")
     if expected_package not in (PACKAGE, ORIGINAL_PACKAGE):
         raise SmokeBlocked("SMOKE_UI_PACKAGE_NOT_AUTHORIZED")
-    if stage not in ("classic_entry", "native_dj"):
+    if stage not in ("classic_entry", "native_dj", "music_inline_toggle", "music_inline_expanded"):
         raise SmokeBlocked("SMOKE_INVALID_UI_STAGE")
     if "<!DOCTYPE" in dump or "<!ENTITY" in dump:
         raise SmokeBlocked("SMOKE_UNSAFE_UI_XML")
@@ -556,6 +556,31 @@ def classify_visible_ui(dump, *, stage, expected_package=PACKAGE):
                 (clickable is None or node.get("clickable") == clickable))
     if stage == "classic_entry":
         ok = any(own_control(x, "Loft DJ", "true") for x in nodes)
+    elif stage in ("music_inline_toggle", "music_inline_expanded"):
+        toggle = any(own_control(x, "Loft DJ", "true") and
+                     x.get("content-desc") ==
+                     "Loft DJ Steuerung in Classic-Musik einblenden"
+                     for x in nodes)
+        if stage == "music_inline_toggle":
+            ok = toggle
+        else:
+            # These appear only after tapping the in-place toggle.
+            # No separate DJ Activity and no microphone permission is needed.
+            status = any(x.get("package") == expected_package and
+                         x.get("content-desc") ==
+                         "Loft DJ Status innerhalb Classic Music"
+                         for x in nodes)
+            analyze = any(x.get("package") == expected_package and
+                          x.get("content-desc") ==
+                          "Mikrofonanalyse starten, ohne Lampen" and
+                          x.get("enabled") != "false" and
+                          x.get("clickable") == "true" for x in nodes)
+            stop = any(x.get("package") == expected_package and
+                       x.get("content-desc") ==
+                       "Loft DJ Mikrofonanalyse stoppen" and
+                       x.get("enabled") != "false" and
+                       x.get("clickable") == "true" for x in nodes)
+            ok = toggle and status and analyze and stop
     else:
         title = any(own_control(x, "Loft DJ · Yeelight Classic") for x in nodes)
         start = any(own_control(x, "Mikrofon starten", "true") for x in nodes)
@@ -566,12 +591,18 @@ def classify_visible_ui(dump, *, stage, expected_package=PACKAGE):
             "ui_stage": stage, "ui_interaction_tested": False}
 
 
-def entry_button_coordinates(dump, display, *, expected_package=PACKAGE):
-    """Select only the actual visible Classic Loft DJ button; no blind taps."""
-    result = classify_visible_ui(dump, stage="classic_entry",
+def entry_button_coordinates(dump, display, *, expected_package=PACKAGE,
+                             native_music=False):
+    """Select only the verified Classic button; native mode is Music-only."""
+    if type(native_music) is not bool or (
+            native_music and expected_package != PACKAGE):
+        raise SmokeBlocked("SMOKE_MUSIC_MODE_OUT_OF_SCOPE")
+    stage = "music_inline_toggle" if native_music else "classic_entry"
+    result = classify_visible_ui(dump, stage=stage,
                                  expected_package=expected_package)
     if not result["expected_native_ui_observed"]:
-        raise SmokeBlocked("SMOKE_CLASSIC_ENTRY_NOT_VISIBLE")
+        raise SmokeBlocked("SMOKE_MUSIC_INLINE_TOGGLE_NOT_VISIBLE"
+                           if native_music else "SMOKE_CLASSIC_ENTRY_NOT_VISIBLE")
     _bounded(display, "SMOKE_BAD_DISPLAY")
     sizes = re.findall(r"(?:Physical|Override) size:\s*(\d+)x(\d+)", display)
     if not sizes:
@@ -590,6 +621,8 @@ def entry_button_coordinates(dump, display, *, expected_package=PACKAGE):
     buttons = [n.attrib for n in tree.iter("node")
                if n.get("package") == expected_package and
                n.get("text") == "Loft DJ" and
+               (not native_music or n.get("content-desc") ==
+                "Loft DJ Steuerung in Classic-Musik einblenden") and
                n.get("clickable") == "true" and n.get("enabled") != "false"]
     if len(buttons) != 1:
         raise SmokeBlocked("SMOKE_CLASSIC_ENTRY_AMBIGUOUS")
@@ -826,9 +859,93 @@ def _passive_system_ui_recheck(ui_xml, *, stage, run, pause):
     }
 
 
+def _native_clone_music_host(snapshot):
+    """Current global top is the real Classic MusicActivity inside the clone.
+
+    Class names are compared privately and NEVER returned/logged.
+    """
+    category, activity = _global_top(snapshot)
+    return bool(category == "CLONE_GLOBAL_TOP" and activity and
+                activity.startswith("com.yeelight.cherry.") and
+                activity.endswith(".MusicActivity") and
+                "$" not in activity and "/" not in activity)
+
+
+def _verify_inline_music_route(*, home, reports, ui_data, run, pause,
+                               dwell_ms, candidate_graph, installed_path):
+    """Qualify one real OEM Music screen and in-place DJ expansion, no login.
+
+    This is private emulator UI evidence only, NOT app, MiOT or lamp acceptance.
+    """
+    if (home["status"] not in ("EMULATOR_ACTIVITY_RESUMED_OBSERVED",
+                               "BLOCKED_REQUIRED_UI_NOT_VISIBLE")
+            or not home["resumed_activity_observed"]):
+        return {"status": "PRIVATE_EMULATOR_LAUNCH_BLOCKED",
+                "entrypoint_observations": reports,
+                "installed_apk_hash_verified": True,
+                "native_entry_navigation_tested": False,
+                "physical_device_tested": False,
+                "app_functionally_accepted": False}
+    before = run(["shell", "dumpsys", "activity", "activities"])
+    host = _native_clone_music_host(before)
+    home["oem_music_activity_resumed"] = host
+    if not host or not home["ui"]["expected_native_ui_observed"]:
+        # An OEM Welcome/Login/Home may be fully healthy while its Music
+        # screen is unreachable in a freshly installed OFFLINE test clone.
+        home["status"] = "OEM_START_OBSERVED_MUSIC_NOT_ATTESTED"
+        return {"status": "PRIVATE_EMULATOR_OEM_START_ONLY",
+                "entrypoint_observations": reports,
+                "installed_apk_hash_verified": True,
+                "native_entry_navigation_tested": False,
+                "cloud_login_tested": False,
+                "miot_binding_attested": False,
+                "physical_device_tested": False,
+                "app_functionally_accepted": False}
+    x, y = entry_button_coordinates(ui_data, run(["shell", "wm", "size"]),
+                                    native_music=True)
+    run(["logcat", "-b", "crash", "-c"])
+    run(["shell", "input", "tap", str(x), str(y)])
+    pause(dwell_ms / 1000.0)
+    after = run(["shell", "dumpsys", "activity", "activities"])
+    crash = classify_crash(run(["logcat", "-b", "crash", "-d"]),
+                           candidate_graph=candidate_graph,
+                           installed_apk_path=installed_path)
+    expanded = classify_visible_ui(capture_private_ui_hierarchy(run),
+                                   stage="music_inline_expanded")
+    same_host = (_native_clone_music_host(after) and
+                 _global_top(after) == _global_top(before))
+    good = (same_host and expanded["expected_native_ui_observed"] and
+            not crash["target_crash"] and not crash["unattributed_fatal"])
+    reports.append({
+        "status": ("EMULATOR_CLASSIC_MUSIC_INLINE_OPENED" if good else
+                   "BLOCKED_MUSIC_ACTIVITY_CHANGED" if not same_host else
+                   "BLOCKED_CRASH" if crash["target_crash"] else
+                   "BLOCKED_UNATTRIBUTED_FATAL" if crash["unattributed_fatal"] else
+                   "BLOCKED_INLINE_CONTROLS_NOT_VISIBLE"),
+        "oem_music_activity_retained": bool(same_host),
+        "ui": expanded, "crash": crash,
+        "microphone_started": False, "lamp_commands_sent": False,
+    })
+    return {
+        "status": ("PRIVATE_EMULATOR_NATIVE_MUSIC_INLINE_OBSERVED" if good
+                   else "PRIVATE_EMULATOR_NATIVE_MUSIC_INLINE_BLOCKED"),
+        "entrypoint_observations": reports,
+        "installed_apk_hash_verified": True,
+        "native_entry_navigation_tested": True,
+        "ui_controls_exercised": False,
+        "microphone_started": False,
+        "cloud_login_tested": False,
+        "miot_binding_attested": False,
+        "lamp_commands_sent": False,
+        "physical_device_tested": False,
+        "app_functionally_accepted": False,
+    }
+
+
 def probe_private_emulator(serial, *, owner_approved, launcher_component,
                            expected_installed_apk_sha256, dwell_ms=3000,
-                           adb=_adb, pause=time.sleep, candidate_graph=None):
+                           adb=_adb, pause=time.sleep, candidate_graph=None,
+                           require_clone_music_ui=False):
     """Explicitly authorized PRIVATE offline emulator only; NEVER a real phone.
 
     Requires preinstalled private candidate, Android 17, emulator kernel,
@@ -841,6 +958,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
         raise SmokeBlocked("SMOKE_EMULATOR_SERIAL_REQUIRED")
     _component(launcher_component)
     _component(PACKAGE + "/" + DJ_ACTIVITY)
+    if type(require_clone_music_ui) is not bool:
+        raise SmokeBlocked("SMOKE_INVALID_MUSIC_TEST_MODE")
     if (type(expected_installed_apk_sha256) is not str or
             not PIN.fullmatch(expected_installed_apk_sha256)):
         raise SmokeBlocked("SMOKE_APK_PIN_REQUIRED")
@@ -900,10 +1019,11 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                                   crash_log=crashes, observed_ms=dwell_ms,
                                   candidate_graph=candidate_graph,
                                   installed_apk_path=installed_path)
+    ui_stage = "music_inline_toggle" if require_clone_music_ui else "classic_entry"
     ui_data = None
     if home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
         ui_data = capture_private_ui_hierarchy(run)
-        home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
+        home["ui"] = classify_visible_ui(ui_data, stage=ui_stage)
         if (not home["ui"]["expected_native_ui_observed"] and
                 home["ui"]["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY"):
             ui_data, warning = _single_known_16k_warning(
@@ -922,9 +1042,9 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                 home.update({k: fresh[k] for k in (
                     "status", "resumed_activity_observed", "foreground_category",
                     "crash")})
-                home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
+                home["ui"] = classify_visible_ui(ui_data, stage=ui_stage)
         ui_data, delayed = _passive_system_ui_recheck(
-            ui_data, stage="classic_entry", run=run, pause=pause)
+            ui_data, stage=ui_stage, run=run, pause=pause)
         if delayed is not None:
             home["passive_system_ui_recheck"] = delayed
             fresh = evaluate_launch_window(
@@ -935,7 +1055,7 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                 installed_apk_path=installed_path)
             home.update({k: fresh[k] for k in (
                 "status", "resumed_activity_observed", "foreground_category", "crash")})
-            home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
+            home["ui"] = classify_visible_ui(ui_data, stage=ui_stage)
         # Initial OEM welcome/login or a platform dialog need not inflate
         # activity_main_new.xml, where the normal clone's entry is attached.
         # Preserve independent startup evidence, but do not tap, infer an
@@ -947,6 +1067,11 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                 home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED"):
             home["status"] = "BLOCKED_REQUIRED_UI_NOT_VISIBLE"
     reports.append(home)
+    if require_clone_music_ui:
+        return _verify_inline_music_route(
+            home=home, reports=reports, ui_data=ui_data,
+            run=run, pause=pause, dwell_ms=dwell_ms,
+            candidate_graph=candidate_graph, installed_path=installed_path)
     if home["status"] != "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
         return {"status": "PRIVATE_EMULATOR_LAUNCH_BLOCKED",
                 "entrypoint_observations": reports,
@@ -1013,6 +1138,7 @@ def main(argv=None):
     p.add_argument("--expected-installed-apk-sha256", required=True)
     p.add_argument("--explicit-owner-approved-private-emulator", action="store_true")
     p.add_argument("--candidate-apk", required=True)
+    p.add_argument("--require-clone-music-ui", action="store_true")
     args = p.parse_args(argv)
     try:
         candidate_graph = _private_candidate_graph(args.candidate_apk)
@@ -1021,13 +1147,17 @@ def main(argv=None):
             owner_approved=args.explicit_owner_approved_private_emulator,
             launcher_component=args.launcher_component,
             expected_installed_apk_sha256=args.expected_installed_apk_sha256,
-            candidate_graph=candidate_graph)
+            candidate_graph=candidate_graph,
+            require_clone_music_ui=args.require_clone_music_ui)
     except SmokeBlocked as e:
         # Fixed code only. Never print the raw adb/logcat/OEM identity.
         print(json.dumps({"status": "BLOCKED", "code": str(e)}, sort_keys=True))
         return 2
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["status"] == "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED" else 2
+    accepted = ("PRIVATE_EMULATOR_NATIVE_MUSIC_INLINE_OBSERVED"
+                if args.require_clone_music_ui else
+                "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+    return 0 if report["status"] == accepted else 2
 
 
 if __name__ == "__main__":

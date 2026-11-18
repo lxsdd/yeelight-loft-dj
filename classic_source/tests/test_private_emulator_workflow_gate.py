@@ -47,7 +47,8 @@ def verify_private_shell(value):
         'install -r --no-streaming "$APK"', 'sha256sum "$APK"',
         'clone_launcher_selection.py', 'query-activities --components --user 0',
         'resolve-activity --components --user 0',
-        'android17_start_smoke.py', 'classloader_linkage_forensics.py',
+        'android17_start_smoke.py', '--require-clone-music-ui',
+        'classloader_linkage_forensics.py',
         'private_original_baseline.py',
         'PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB',
         'shell pm list packages --user 0 io.lxsdd.yeelightdj',
@@ -102,6 +103,12 @@ class PrivateEmulatorWorkflowContract(unittest.TestCase):
         verify_private_shell(text)
         result = subprocess.run(["bash", "-n", str(SHELL)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, "private shell syntax invalid")
+
+    def test_negative_obsolete_home_probe_flag_fails(self):
+        value = SHELL.read_text("utf-8")
+        with self.assertRaises(AssertionError):
+            verify_private_shell(value.replace(
+                "--require-clone-music-ui", "--old-home-shortcut"))
 
     def test_negative_shell_no_network_check_fails(self):
         text = SHELL.read_text("utf-8")
