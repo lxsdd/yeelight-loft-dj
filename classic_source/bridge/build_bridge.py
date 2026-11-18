@@ -50,6 +50,77 @@ def find_sdk_tools(sdk):
 def run(args, timeout=300, cwd=None, env=None):
     return subprocess.run([str(x) for x in args], check=True, timeout=timeout, cwd=cwd, env=env)
 
+# A fixed, source-owned failure vocabulary; raw Gradle text never leaves the
+# ephemeral owner-only runner. Gradle stages only public bridge+SDK sources.
+GRADLE_BRIDGE_CODES = frozenset((
+    "GRADLE_BRIDGE_TRANSIENT_NETWORK",
+    "GRADLE_BRIDGE_COMPILER_FAILED",
+    "GRADLE_BRIDGE_DEPENDENCY_UNAVAILABLE",
+    "GRADLE_BRIDGE_DAEMON_FAILED",
+    "GRADLE_BRIDGE_PROCESS_FAILED_UNCLASSIFIED",
+    "GRADLE_BRIDGE_TIMEOUT",
+))
+_GRADLE_NETWORK_TRANSIENT_MARKERS = (
+    b"connection reset", b"connection timed out", b"read timed out",
+    b"unknownhostexception", b"sockettimeoutexception",
+    b"temporary failure in name resolution", b"network is unreachable",
+    b"no route to host", b"remote host terminated the handshake",
+    b"http 502", b"http 503", b"http 504",
+)
+
+
+def _gradle_stage_reason(raw: bytes) -> str:
+    """Return an allowlisted failure reason, never raw stderr."""
+    tail = raw[-131072:].lower()
+    if any(marker in tail for marker in _GRADLE_NETWORK_TRANSIENT_MARKERS):
+        return "GRADLE_BRIDGE_TRANSIENT_NETWORK"
+    if (b"compilation error" in tail or b"compilation failed" in tail
+            or b"compilation failure" in tail
+            or b"execution failed for task ':compilekotlin" in tail
+            or b"execution failed for task ':compilejava" in tail):
+        return "GRADLE_BRIDGE_COMPILER_FAILED"
+    if ((b"plugin [" in tail and b"was not found" in tail)
+            or b"could not find " in tail or b"could not resolve " in tail):
+        return "GRADLE_BRIDGE_DEPENDENCY_UNAVAILABLE"
+    if b"gradle build daemon disappeared unexpectedly" in tail:
+        return "GRADLE_BRIDGE_DAEMON_FAILED"
+    return "GRADLE_BRIDGE_PROCESS_FAILED_UNCLASSIFIED"
+
+
+def stage_gradle_inputs(gradle, project, sdk, out):
+    """No new toolchain or OEM inputs; retry only one proven transient I/O.
+
+    All raw build output stays inside the already-private build tree and is
+    removed on *every* exit path. Compiler/plugin, daemon, timeout and unknown
+    failures never trigger an automatic repeat or unsafe fallback.
+    """
+    env = os.environ.copy()
+    env["ANDROID_HOME"] = str(sdk)
+    cmd = [gradle, "--no-daemon", "--stacktrace",
+           "--project-dir", project, "stageBridgeInputs"]
+    private_log = out / "gradle-bridge-private.log"
+    try:
+        for attempt in range(2):
+            try:
+                with private_log.open("wb") as private:
+                    result = subprocess.run(
+                        [str(x) for x in cmd], check=False, timeout=360,
+                        env=env, stdout=private, stderr=subprocess.STDOUT)
+            except subprocess.TimeoutExpired:
+                raise ToolError("GRADLE_BRIDGE_TIMEOUT") from None
+            if result.returncode == 0:
+                return
+            with private_log.open("rb") as private:
+                private.seek(max(0, private_log.stat().st_size - 131072))
+                reason = _gradle_stage_reason(private.read(131072))
+            if reason == "GRADLE_BRIDGE_TRANSIENT_NETWORK" and attempt == 0:
+                continue
+            raise ToolError(reason)
+        raise ToolError("GRADLE_BRIDGE_PROCESS_FAILED_UNCLASSIFIED")
+    finally:
+        private_log.unlink(missing_ok=True)
+
+
 def dex_descriptors(dex):
     """Extract class_def descriptors from DEX; used for OEM/sidecar collision gate."""
     import struct
@@ -164,9 +235,8 @@ def build(sdk, out, original_apk=None):
     out.mkdir()
     dex = out / 'dex'; dex.mkdir()
     if gradle:
-        env = os.environ.copy(); env['ANDROID_HOME'] = str(sdk)
         project = root / 'private_gradle_bridge'
-        run([gradle, '--no-daemon', '--stacktrace', '--project-dir', project, 'stageBridgeInputs'], timeout=360, env=env)
+        stage_gradle_inputs(gradle, project, sdk, out)
         staged = project / 'build' / 'dex-input'
         inputs = sorted(staged.glob('*.jar'))
         if len(inputs) < 2 or not any('kotlin-stdlib' in i.name for i in inputs):

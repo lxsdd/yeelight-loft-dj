@@ -20,6 +20,15 @@ PHASES = frozenset((
     "APKTOOL_REBUILD", "MULTIDEX_LAYOUT", "UNSIGNED_PARITY",
     "FINAL_COMPONENT_GATES", "PRIVATE_OUTPUT_COPY", "RECEIPT_WRITTEN",
 ))
+# Only these fixed source-owned reasons may enter an owner-only summary.
+BRIDGE_FAILURE_CODES = frozenset((
+    "GRADLE_BRIDGE_TRANSIENT_NETWORK",
+    "GRADLE_BRIDGE_COMPILER_FAILED",
+    "GRADLE_BRIDGE_DEPENDENCY_UNAVAILABLE",
+    "GRADLE_BRIDGE_DAEMON_FAILED",
+    "GRADLE_BRIDGE_PROCESS_FAILED_UNCLASSIFIED",
+    "GRADLE_BRIDGE_TIMEOUT",
+))
 UI_FAILURE_CODES = frozenset((
     "UI_DECODED_ROOT_INVALID", "UI_XML_INPUT_INVALID",
     "UI_XML_DECLARATION_DENIED", "UI_XML_PARSE_INVALID",
@@ -112,8 +121,12 @@ def record_failure(error: BaseException, env=None) -> bool:
         cause = "UNEXPECTED_BUILD_EXCEPTION"
     reason = (safe_ui_reason(str(error)) if cause == "ORIGINAL_UI_AUDIT"
               else "NOT_EMITTED")
+    bridge = (str(error) if phase_name == "ANDROID_BRIDGE"
+              and type(error).__name__ == "ToolError"
+              and str(error) in BRIDGE_FAILURE_CODES else "NOT_EMITTED")
     return _append((f"Last attempted phase: `{phase_name}`",
                     f"Failure category: `{cause}`",
+                    f"Bridge failure code: `{bridge}`",
                     f"UI error code: `{reason}`",
                     "Raw build log/OEM bytes: `NOT_PUBLISHED`"), env)
 

@@ -221,3 +221,26 @@ Classic-Klonelemente und Crash-freier Resumed-Zustand erlauben Navigation.
 Fake-ADB-Regressions prüfen transienten und persistierenden System-Vordergrund
 und verbieten Systemklicks. OEM-Laufzeit bleibt owner-only/unqualifiziert,
 weitere Änderungen benötigen 3x exact-SHA öffentliche CI.
+
+
+## 18.11.2026 – private Gradle bridge failure #44203013685
+
+Owner-pinned candidate `4bb706f4c835d43a46e2496cf45e0a7e4ebd5ee6`:
+source/owner/exact-SHA CI and private APK fetch passed, but private build stopped
+at `ANDROID_BRIDGE` / `PROCESS_FAILURE`; the action summary says the
+public-source-only `YeelightClassicPrivateBridge:stageBridgeInputs` failed.
+The private build uses Gradle 9.8.2, while public `verify-and-build` uses
+8.13. Both passed earlier for this bridge; the current exception is unknown,
+not proof of compiler vs network vs daemon failure. OEM APK never enters Gradle.
+
+The CHAT successor adds only private ephemeral-file Gradle output capture and
+strict fixed-vocabulary diagnostics: temporary network, compiler, missing
+dependency, daemon, timeout, or unclassified process failure. Only recognized
+transient network I/O retries once (maximum 2 attempts). All raw Gradle output
+is unconditionally deleted, never in stdout, public logs or job summaries.
+No dependency pin, target SDK, class graph, sign/merge/release or device gate
+is weakened. Public synthetic positive/negative regressions exercise retry,
+fail-closed compiler/unknown errors, and disclosure prevention. The trusted
+main protected workflow's differing Gradle version is not changed by this PR.
+Real OEM/emulator qualification still requires separate owner-approved dispatch
+and exact-SHA three-job public CI first.

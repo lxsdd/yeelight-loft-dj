@@ -45,6 +45,32 @@ class PrivateBuildDiagnosticsTests(unittest.TestCase):
             self.assertIn("UNEXPECTED_BUILD_EXCEPTION",summary.read_text("utf8"))
             self.assertNotIn("credential=abc",summary.read_text("utf8"))
 
+    def test_bridge_failure_reason_is_fixed_and_owner_only(self):
+        from bridge.build_bridge import ToolError
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sub = root/'_runner_file_commands'
+            sub.mkdir()
+            summary = sub/'step_summary_bridge'
+            env = self.environment(root, summary)
+            diag.phase('ANDROID_BRIDGE')
+            self.assertTrue(diag.record_failure(
+                ToolError('GRADLE_BRIDGE_DEPENDENCY_UNAVAILABLE'), env))
+            output = summary.read_text('utf-8')
+            self.assertIn('Bridge failure code: `GRADLE_BRIDGE_DEPENDENCY_UNAVAILABLE`', output)
+            self.assertIn('TOOLCHAIN', output)
+            # No substring or user-derived cause may be printed.
+            self.assertTrue(diag.record_failure(
+                ToolError('GRADLE_BRIDGE_DEPENDENCY_UNAVAILABLE secret=abc'), env))
+            output = summary.read_text('utf-8')
+            self.assertIn('Bridge failure code: `NOT_EMITTED`', output)
+            self.assertNotIn('secret=abc', output)
+            diag.phase('UNSIGNED_PARITY')
+            self.assertTrue(diag.record_failure(
+                ToolError('GRADLE_BRIDGE_TIMEOUT'), env))
+            self.assertIn('Bridge failure code: `NOT_EMITTED`',
+                          summary.read_text('utf-8'))
+
     def test_wrong_actor_branch_repo_or_path_never_writes_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); sub=root/"_runner_file_commands";sub.mkdir()
