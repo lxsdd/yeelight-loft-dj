@@ -202,6 +202,75 @@ def _system_phone_window(focus, windows, diagnostic=None, *, target_package=ORIG
     return classic and owner and phone
 
 
+def inspect_app_overlay_readonly(xml, focus, windows, resources, *,
+                                 target_package=CLONE):
+    """Sanitize a system-owned APP_OVERLAY; never authorize a click.
+
+    Unlike the AOSP TYPE_PHONE compatibility warning, a 2038 overlay cannot
+    be interpreted as page-size consent merely by an Android UID/title.
+    Compare a single Android framework message to *runtime-resolved* resource
+    values without returning the message, identity, classes or coordinates.
+    No system interaction is available from this helper.
+    """
+    evidence = {}
+    _system_phone_window(focus, windows, evidence,
+                         target_package=target_package)
+    if (evidence.get('focused_app') != 'CLASSIC'
+            or evidence.get('window_binding') != 'MATCHED'
+            or evidence.get('window_owner') != 'ANDROID_SYSTEM'
+            or evidence.get('window_type_detail') != 'APP_OVERLAY'):
+        return {'status': 'OVERLAY_WINDOW_NOT_VERIFIED',
+                'interaction_performed': False}
+    result = {'status': 'SYSTEM_APP_OVERLAY_UNCLASSIFIED',
+              'interaction_performed': False,
+              'raw_ui_logged': False,
+              'framework_page_size_message': 'UNVERIFIED',
+              'system_message_node': False,
+              'system_positive_button_node': False,
+              'clickable_count_category': 'UNVERIFIED'}
+    if (type(xml) is not str or not 0 < len(xml) <= MAX_TEXT
+            or '<!DOCTYPE' in xml.upper() or '<!ENTITY' in xml.upper()
+            or type(resources) is not dict):
+        result['status'] = 'OVERLAY_UI_INVALID'
+        return result
+    start, end = xml.find('<?xml'), xml.find('</hierarchy>')
+    if start < 0 or end < start:
+        result['status'] = 'OVERLAY_UI_INVALID'
+        return result
+    try:
+        root = ET.fromstring(xml[start:end + len('</hierarchy>')])
+    except (ET.ParseError, ValueError):
+        result['status'] = 'OVERLAY_UI_INVALID'
+        return result
+    nodes = list(root.iter('node'))
+    if (root.tag != 'hierarchy' or not 1 <= len(nodes) <= 1000
+            or any(n.get('package') != 'android' for n in nodes)):
+        result['status'] = 'OVERLAY_UI_PACKAGE_UNVERIFIED'
+        return result
+    messages = [n for n in nodes if n.get('resource-id') == 'android:id/message']
+    buttons = [n for n in nodes if n.get('resource-id') == 'android:id/button1']
+    result['system_message_node'] = len(messages) == 1
+    result['system_positive_button_node'] = len(buttons) == 1
+    clickable = sum(n.get('clickable') == 'true' for n in nodes)
+    result['clickable_count_category'] = (
+        'NONE' if clickable == 0 else 'ONE' if clickable == 1 else 'MULTIPLE')
+    if len(messages) != 1:
+        result['status'] = 'NO_UNIQUE_ANDROID_MESSAGE_NODE'
+        return result
+    message = ' '.join(messages[0].get('text', '').split())
+    readable = [rendered_resource(resources.get(key)) for key in RESOURCES]
+    readable = [s for s in readable if s and len(s) >= 32]
+    if not readable:
+        result['status'] = 'FRAMEWORK_PAGE_SIZE_RESOURCES_UNAVAILABLE'
+        return result
+    match = sum(s == message for s in readable)
+    result['framework_page_size_message'] = (
+        'EXACT' if match == 1 else 'NO_MATCH' if match == 0 else 'AMBIGUOUS')
+    result['status'] = ('FRAMEWORK_PAGE_SIZE_MESSAGE_MATCH_NO_ACTION'
+                        if match == 1 else 'NOT_AOSP_PAGE_SIZE_MESSAGE')
+    return result
+
+
 def warning_action(xml, focus, windows, display, page_size, resources,
                    diagnostic=None, *, target_package=ORIGINAL):
     """Return (point, fixed reason) only for the exact verified system warning."""

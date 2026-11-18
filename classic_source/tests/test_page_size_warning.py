@@ -174,6 +174,43 @@ class PageSizeWarningTests(unittest.TestCase):
                 self.assertEqual(evidence['focused_window_category'], label)
                 self.assertEqual(evidence['window_type_detail'], 'SYSTEM_DIALOG')
 
+    def test_android_2038_overlay_is_classified_but_never_tapped(self):
+        clone = warning.CLONE
+        focus = FOCUS.replace('com.yeelight.cherry/', clone + '/')
+        windows = WINDOWS.replace('ty=PHONE', 'ty=2038')
+        for message, category in (
+            (MESSAGE, 'FRAMEWORK_PAGE_SIZE_MESSAGE_MATCH_NO_ACTION'),
+            ('Unknown private system overlay: not the page-size warning',
+             'NOT_AOSP_PAGE_SIZE_MESSAGE'),
+        ):
+            with self.subTest(category=category):
+                details = warning.inspect_app_overlay_readonly(
+                    ui(message=message), focus, windows, RESOURCES,
+                    target_package=clone)
+                self.assertEqual(details['status'], category)
+                self.assertFalse(details['interaction_performed'])
+                self.assertFalse(details['raw_ui_logged'])
+                self.assertTrue(details['system_message_node'])
+                self.assertTrue(details['system_positive_button_node'])
+                self.assertNotIn(message, str(details))
+        self.assertEqual(warning.inspect_app_overlay_readonly(
+            ui(), focus, windows, {}, target_package=clone)['status'],
+            'FRAMEWORK_PAGE_SIZE_RESOURCES_UNAVAILABLE')
+        self.assertEqual(warning.inspect_app_overlay_readonly(
+            ui(), focus, windows.replace('package=android','package=private'),
+            RESOURCES, target_package=clone)['status'],
+            'OVERLAY_WINDOW_NOT_VERIFIED')
+        self.assertEqual(warning.inspect_app_overlay_readonly(
+            ui(), focus, WINDOWS, RESOURCES, target_package=clone)['status'],
+            'OVERLAY_WINDOW_NOT_VERIFIED')
+        self.assertEqual(warning.inspect_app_overlay_readonly(
+            ui(package='com.other.app'), focus, windows,
+            RESOURCES, target_package=clone)['status'],
+            'OVERLAY_UI_PACKAGE_UNVERIFIED')
+        self.assertEqual(warning.inspect_app_overlay_readonly(
+            '<!DOCTYPE private><hierarchy/>', focus, windows,
+            RESOURCES, target_package=clone)['status'], 'OVERLAY_UI_INVALID')
+
     def test_no_permission_or_unknown_message_or_ambiguous_button(self):
         for xml in (ui(package='com.yeelight.cherry'), ui(message='Allow this app to record audio?'),
                     ui().replace('button1', 'button2'), ui().replace('text="OK"', 'text="Allow"'),

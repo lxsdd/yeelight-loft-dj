@@ -17,7 +17,9 @@ import time
 from pathlib import Path
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
-from page_size_warning import read_warning_action
+from page_size_warning import (
+    read_warning_action, read_framework_resources, inspect_app_overlay_readonly
+)
 
 PACKAGE = "io.lxsdd.yeelightdj"
 ORIGINAL_PACKAGE = "com.yeelight.cherry"  # private identity-only offline A/B control
@@ -687,13 +689,31 @@ def _focused_system_window(run):
     return "", "FOCUS_NOT_DECLARED_NO_ACTION"
 
 
+def _unique_current_focus_token(snapshot):
+    """Opaque private-only token; NEVER serialize the focused window title."""
+    if type(snapshot) is not str or len(snapshot) > MAX_TEXT:
+        return None
+    matches = re.findall(
+        r"(?m)^[ \t]*mCurrentFocus=(Window\{[^\r\n]{1,300}\})[ \t]*$",
+        snapshot)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _focus_token_relation(before, after):
+    old = _unique_current_focus_token(before)
+    new = _unique_current_focus_token(after)
+    return ('UNVERIFIED' if not old or not new else
+            'SAME_FOCUS_TOKEN' if old == new else
+            'DIFFERENT_FOCUS_TOKEN')
+
+
 def _warning_focus_tokens(snapshot):
     return tuple(re.findall(
         r"(?m)^[ \t]*m(?:CurrentFocus|FocusedApp)=[^\r\n]{1,512}$",
         snapshot))
 
 
-def _single_known_16k_warning(ui_xml, *, run, pause):
+def _single_known_16k_warning(ui_xml, *, run, pause, prelaunch_focus=''):
     """At most one exact AOSP 16K acknowledgment per Activity transition.
 
     Unknown, login, permission, ANR and unrelated Android dialogs are NEVER
@@ -718,6 +738,25 @@ def _single_known_16k_warning(ui_xml, *, run, pause):
             ui_xml, focus, display, run, evidence, target_package=PACKAGE)
         observation["page_size_probe"] = evidence
         if warning is None:
+            # An actual system UID 1000 APPLICATION_OVERLAY is *not* the
+            # AOSP TYPE_PHONE warning. Classify only known platform text and
+            # lifecycle identity; never grant a tap or emit the raw UI.
+            if (evidence.get('window_type_detail') == 'APP_OVERLAY'
+                    and evidence.get('focused_app') == 'CLASSIC'
+                    and evidence.get('window_owner') == 'ANDROID_SYSTEM'):
+                observation['prelaunch_focus_relation'] = (
+                    _focus_token_relation(prelaunch_focus, focus))
+                try:
+                    windows = run(['shell', 'dumpsys', 'window', 'windows'])
+                    resources = read_framework_resources(run)
+                    observation['system_overlay_inspection'] = (
+                        inspect_app_overlay_readonly(
+                            ui_xml, focus, windows, resources,
+                            target_package=PACKAGE))
+                except (SmokeBlocked, OSError, ValueError, TypeError):
+                    observation['system_overlay_inspection'] = {
+                        'status': 'OVERLAY_READONLY_PROBE_UNAVAILABLE',
+                        'interaction_performed': False}
             return ui_xml, observation
         next_focus, next_state = _focused_system_window(run)
         current_tokens = _warning_focus_tokens(focus)
@@ -764,8 +803,10 @@ def _passive_system_ui_recheck(ui_xml, *, stage, run, pause):
     before = classify_visible_ui(ui_xml, stage=stage)
     if before["ui_node_origin_category"] != "ANDROID_SYSTEM_ONLY":
         return ui_xml, None
+    before_focus, _before_source = _focused_system_window(run)
     pause(8)
     fresh = capture_private_ui_hierarchy(run)
+    after_focus, _after_source = _focused_system_window(run)
     state = classify_visible_ui(fresh, stage=stage)
     status = ("NATIVE_CONTROLS_BECAME_VISIBLE"
               if state["expected_native_ui_observed"] else
@@ -775,6 +816,7 @@ def _passive_system_ui_recheck(ui_xml, *, stage, run, pause):
     return fresh, {
         "status": status,
         "wait_ms": 8000,
+        "window_focus_relation": _focus_token_relation(before_focus, after_focus),
         "ui_node_origin_category": state["ui_node_origin_category"],
         "expected_native_ui_observed": state["expected_native_ui_observed"],
         "interaction_performed": False,
@@ -835,6 +877,14 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
             fields[0] != expected_installed_apk_sha256):
         raise SmokeBlocked("SMOKE_INSTALLED_APK_HASH_MISMATCH")
 
+    # Capture an opaque prelaunch focus token while the verified clone is
+    # installed but not running. Only SAME/DIFFERENT/UNVERIFIED leaves RAM.
+    # No prelaunch UI, OEM app label or system window title is serialized.
+    try:
+        prelaunch_focus, _prelaunch_source = _focused_system_window(run)
+    except SmokeBlocked:
+        prelaunch_focus = ''
+
     reports = []
     # Launch ONLY the OEM launcher, which must already be exported as a normal
     # launcher Activity. The private native DJ Activity is intentionally
@@ -857,7 +907,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
         if (not home["ui"]["expected_native_ui_observed"] and
                 home["ui"]["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY"):
             ui_data, warning = _single_known_16k_warning(
-                ui_data, run=run, pause=pause)
+                ui_data, run=run, pause=pause,
+                prelaunch_focus=prelaunch_focus)
             home["system_warning"] = warning
             if warning["acknowledged"]:
                 # A compatibility confirmation is NOT OEM init or a native

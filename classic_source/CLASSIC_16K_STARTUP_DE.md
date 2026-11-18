@@ -244,3 +244,31 @@ fail-closed compiler/unknown errors, and disclosure prevention. The trusted
 main protected workflow's differing Gradle version is not changed by this PR.
 Real OEM/emulator qualification still requires separate owner-approved dispatch
 and exact-SHA three-job public CI first.
+
+
+## 18.11.2026 – Private Android17 run #44211785838: persistierendes System-Overlay
+
+Geschützter Owner-Run `44211785838` auf PR108 HEAD
+`fdf4465b6423f91268f414cbc3734a03e9974cc0`: alle Owner-/PR-/3x-CI,
+Source-Regressionen, private OEM-Reassembly, Graph/DEX-/Payload-Parität und
+flüchtige Testsignierung bestanden; **nicht** die reale native UI-Qualifikation.
+Der installierte Clone wurde in Original-Classic-Activity resumed und kein
+Target-Fatal beobachtet. Die einzige sichtbar erfasste UI war `ANDROID_SYSTEM_ONLY`;
+nach acht Sekunden weiter `SYSTEM_UI_PERSISTED_NO_ACTION`. Strikt belegte
+Fokus-/Fensterdaten: `focused_app=CLASSIC`, `window_owner=ANDROID_SYSTEM`,
+`window_type_detail=APP_OVERLAY` (AOSP TYPE_APPLICATION_OVERLAY 2038),
+`focused_window_category=OTHER_OR_UNVERIFIED`, 16-KiB-Kernel. Das unterscheidet
+sich von der bisherigen bekannten AOSP `TYPE_PHONE`-Seitenwarnung; kein
+Dialog/Permission/Account-Tap. `MiOT` und OEM-Main nicht attestiert.
+
+Der nachfolgende reine Diagnose-Quellblock misst, **ohne OEM-Text zu loggen**,
+ob der opaque fokussierte Fenster-Token vor dem App-Start bereits vorhanden
+war und ob der Fokus während der passiven Achtsekunden-Nachbeobachtung stabil
+blieb. Er vergleicht eine Android-System-`android:id/message` ausschließlich
+mit auf **diesem** Emulator aus dem Framework aufgelösten 16-KiB-Warnungstexten,
+und meldet nur exakte Match-Kategorien, nie Meldung, Titel oder Klassenbezeichner.
+**Ein APP_OVERLAY erlaubt weiterhin unter keinen Umständen einen Tap**,
+selbst bei exakt erkannten Warnungstexten. Unbekannte Eingaben bleiben blocked.
+Die positive und negative Regression testet beide Focus-Lifecycles, bekannte
+und unbekannte Meldungen, fremdes UID/Fenster, kaputtes XML und 0 System-Taps.
+Keine Geräte-, Firmware-, OEM-/Nutzerdatei-, Account-/Login- oder LAN-Aktionen.

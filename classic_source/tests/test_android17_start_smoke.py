@@ -422,6 +422,85 @@ class Android17StartupTest(unittest.TestCase):
         self.assertFalse(blocked_report["native_entry_navigation_tested"])
         self.assertNotIn("Private system dialog data", str(blocked_report))
 
+    def test_persistent_android_overlay_prelaunch_and_runtime_source_classified(self):
+        from page_size_warning import CLONE
+        known = "Synthetic 16 KB compatibility warning known to AOSP resources."
+        unknown = "Private unknown Android overlay text not an official warning."
+        system_ui = lambda text: (
+            '<?xml version="1.0"?><hierarchy>'
+            '<node package="android"/>'
+            '<node package="android" resource-id="android:id/message" text="' +
+            text + '"/>'
+            '<node package="android" resource-id="android:id/button1" '
+            'text="OK" clickable="true" class="android.widget.Button" '
+            'enabled="true" bounds="[50,100][150,140]"/>'
+            '</hierarchy>')
+        class OverlayADB(FakeADB):
+            def __init__(self, message=known, preexisting=False):
+                super().__init__()
+                self.launched = False
+                self.preexisting = preexisting
+                self.message = message
+            def __call__(self, args, *, serial):
+                key = tuple(args)
+                window = ("Window{a1 u0 android app overlay}" if
+                          self.preexisting or self.launched else
+                          "Window{b1 u0 platform launcher}")
+                if key == ("shell", "dumpsys", "window", "displays"):
+                    target = (CLONE + "/com.yeelight.cherry.MainActivity" if
+                              self.launched else
+                              "com.android.launcher3/.Launcher")
+                    return ("mCurrentFocus=" + window + "\n"
+                            "mFocusedApp=ActivityRecord{c1 u0 " + target + " t1}\n")
+                if key == ("shell", "dumpsys", "window", "windows"):
+                    return ("Window #0 " + window + ":\n"
+                            "mOwnerUid=1000 showForAllUsers=false package=android\n"
+                            "mAttrs={(0,0)(wrapxwrap) ty=APPLICATION_OVERLAY}\n")
+                if key == ("shell", "am", "start", "-W", "-n", LAUNCHER):
+                    self.launched = True
+                if key == ("shell", "getconf", "PAGE_SIZE"):
+                    return "16384"
+                if args[:4] == ["shell", "cmd", "overlay", "lookup"]:
+                    label = args[-1].split("/")[-1]
+                    return {
+                        'page_size_compat_apk_warning': known,
+                        'page_size_compat_elf_warning': "Different synthetic ELF compatibility message.",
+                        'page_size_compat_apk_and_elf_warning':
+                            "Different synthetic combined compatibility message.",
+                        'ok': 'OK'}[label]
+                if key == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
+                    self.calls.append(key)
+                    self.ui_count += 1
+                    self._dump_pending = system_ui(self.message)
+                    return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+                return super().__call__(args, serial=serial)
+        for message, preexisting, expected, relation in (
+            (known, False, 'FRAMEWORK_PAGE_SIZE_MESSAGE_MATCH_NO_ACTION',
+             'DIFFERENT_FOCUS_TOKEN'),
+            (unknown, True, 'NOT_AOSP_PAGE_SIZE_MESSAGE',
+             'SAME_FOCUS_TOKEN'),
+        ):
+            with self.subTest(expected=expected):
+                fake = OverlayADB(message, preexisting)
+                report = fake.run()
+                self.assertEqual(report['status'], 'PRIVATE_EMULATOR_LAUNCH_BLOCKED')
+                home = report['entrypoint_observations'][0]
+                self.assertEqual(home['system_warning']['page_size_probe']
+                                 ['window_type_detail'], 'APP_OVERLAY')
+                self.assertEqual(home['system_warning']['prelaunch_focus_relation'],
+                                 relation)
+                self.assertEqual(home['system_warning']['system_overlay_inspection']
+                                 ['status'], expected)
+                self.assertEqual(home['passive_system_ui_recheck']
+                                 ['window_focus_relation'], 'SAME_FOCUS_TOKEN')
+                self.assertEqual(home['passive_system_ui_recheck']
+                                 ['status'], 'SYSTEM_UI_PERSISTED_NO_ACTION')
+                self.assertFalse(home['system_warning']['acknowledged'])
+                self.assertFalse(report['native_entry_navigation_tested'])
+                self.assertFalse(any(c[:3] == ("shell", "input", "tap")
+                                     for c in fake.calls))
+                self.assertNotIn(message, str(report))
+
     def test_spoofed_foreign_button_cannot_create_native_entry_or_coordinates(self):
         foreign = ENTRY.replace('package="' + PACKAGE + '"',
                                 'package="com.android.systemui"')
