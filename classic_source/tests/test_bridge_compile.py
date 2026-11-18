@@ -11,6 +11,7 @@ STUBS = {
 'android/R.java': '''package android; public final class R { public static class drawable { public static final int ic_media_play=1, ic_media_pause=2; }}''',
 'android/content/Context.java': '''package android.content; public class Context {
   public void startActivity(Intent i) {} public void startService(Intent i){} public void startForegroundService(Intent i){}
+ public boolean stopService(Intent i){return true;}
   public <T> T getSystemService(Class<T> serviceClass){return null;} public int checkSelfPermission(String p){return 0;}
 }''',
 'android/content/Intent.java': '''package android.content; public class Intent {
@@ -130,6 +131,7 @@ STUBS.update({
 }''',
 'android/content/Context.java': '''package android.content; public class Context {
  public void startActivity(Intent i) {} public void startService(Intent i){} public void startForegroundService(Intent i){}
+ public boolean stopService(Intent i){return true;}
  public <T> T getSystemService(Class<T> serviceClass){return null;} public int checkSelfPermission(String p){return 0;}
  public Context getApplicationContext(){return null;} public String getPackageName(){return "";}
  public android.content.res.Resources getResources(){return new android.content.res.Resources();}

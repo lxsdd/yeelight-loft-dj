@@ -170,8 +170,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         intent.setAction(ClassicDjService.ACTION_STOP);
         try {
             host.startService(intent);
-        } catch (RuntimeException ignored) {
-            // No synchronous state save or lamp command on Activity exit.
+        } catch (RuntimeException blockedInBackground) {
+            // Android may prohibit startService as the OEM MusicActivity
+            // backgrounds. Destroy only our existing, locally owned service
+            // as a fallback: onDestroy() performs fenced owned cleanup.
+            try {
+                host.stopService(new Intent(host, ClassicDjService.class));
+            } catch (RuntimeException ignored) {
+                status.setText("Stopp unbestätigt · Sitzungsstatus prüfen");
+                return;
+            }
         }
         status.setText("Analyse gestoppt · Classic-Musik unverändert");
     }

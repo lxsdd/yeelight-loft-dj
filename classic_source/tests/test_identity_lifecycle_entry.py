@@ -115,6 +115,7 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("root.addView(controls, params);", provider_source)
         self.assertIn("new ClassicMusicInlineControls(activity)", provider_source)
         self.assertIn("onHostPaused()", inline)
+        self.assertIn("host.stopService(new Intent(host, ClassicDjService.class))", inline)
         self.assertIn("new String[0]", inline)
         self.assertIn("ClassicDjService.ACTION_CONFIG", inline)
         self.assertIn("ClassicDjService.ACTION_STOP", inline)
