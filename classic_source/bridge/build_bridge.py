@@ -172,7 +172,8 @@ def no_oem_class_collisions(original_apk, sidecar_dex):
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;',
-                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;'}
+                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;',
+                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;'}
     if not expected <= added: raise ToolError('SIDECAR_REQUIRED_COMPONENTS_MISSING')
     return {'oem_classes': len(originals), 'added_classes': len(added), 'collisions': 0}
 

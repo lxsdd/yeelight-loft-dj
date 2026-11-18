@@ -174,10 +174,13 @@ public abstract class ContentProvider {
  public View(android.content.Context c){this.c=c;}
  public void setContentDescription(CharSequence a){} public void setOnClickListener(OnClickListener x){}
  public android.content.Context getContext(){return c;}
+ public android.content.res.Resources getResources(){return new android.content.res.Resources();}
  public void setTag(Object o){tag=o;} public Object getTag(){return tag;}
  public boolean isShown(){return true;} public boolean isClickable(){return true;}
  public boolean isAttachedToWindow(){return true;}
  public static final int IMPORTANT_FOR_ACCESSIBILITY_YES = 1;
+ public static final int VISIBLE = 0, GONE = 8;
+ public void setVisibility(int visibility){} public int getVisibility(){return VISIBLE;}
  public void setImportantForAccessibility(int value){}
  public int getWidth(){return 1;} public int getHeight(){return 1;}
  public void setElevation(float v){} public void bringToFront(){}
@@ -193,7 +196,7 @@ public abstract class ContentProvider {
  }
 }''',
 'android/view/Gravity.java': '''package android.view; public class Gravity {
- public static final int TOP=48, BOTTOM=80, END=8388613;
+ public static final int TOP=48, BOTTOM=80, END=8388613, CENTER_VERTICAL=16, CENTER_HORIZONTAL=1;
 }''',
 'android/widget/FrameLayout.java': '''package android.widget;
 public class FrameLayout extends android.view.ViewGroup {
@@ -218,11 +221,42 @@ class BridgeCompileTests(unittest.TestCase):
                 p.write_text(data)
                 paths.append(p)
             sources = list((ROOT/'bridge/src').rglob('*.java'))
-            self.assertGreaterEqual(len(sources), 4)
+            self.assertGreaterEqual(len(sources), 7)
+            self.assertTrue(any(p.name == 'ClassicMusicInlineControls.java' for p in sources))
             result = subprocess.run(['javac', '--release', '8', '-Xlint:all', '-d', str(root/'classes'), *(str(p) for p in paths+sources)], text=True, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             klass = root/'classes/io/github/lxsdd/yeelightclassicdj/ui/ClassicDjService.class'
             self.assertTrue(klass.exists())
+            self.assertTrue((root/'classes/io/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls.class').exists())
+            if shutil.which('java'):
+                probe = root/'NativeMusicHostContract.java'
+                probe.write_text("""package io.github.lxsdd.yeelightclassicdj.ui;
+public final class NativeMusicHostContract {
+    private static void check(String packageName, String host, boolean expected) {
+        if (ClassicDjEntryProvider.isOriginalMusicHost(packageName, host) != expected)
+            throw new AssertionError("NativeMusicHostContract");
+    }
+    public static void main(String[] args) {
+        check("io.lxsdd.yeelightdj", "com.yeelight.cherry.ui.MusicActivity", true);
+        check("io.lxsdd.yeelightdj", "com.yeelight.cherry.MainActivity", false);
+        check("io.lxsdd.yeelightdj", "com.yeelight.cherry.WelcomeGuideNewActivity", false);
+        check("io.lxsdd.yeelightdj", "com.yeelight.cherry.LocaleSelectionLoginActivity", false);
+        check("io.lxsdd.yeelightdj", "com.yeelight.cherry.ui.MusicActivity$Wrapped", false);
+        check("io.lxsdd.yeelightdj", "com.other.MusicActivity", false);
+        check("com.yeelight.cherry", "com.yeelight.cherry.ui.MusicActivity", false);
+        check("io.lxsdd.yeelightdj", null, false);
+    }
+}""")
+                probe_build = subprocess.run(
+                    ['javac', '--release', '8', '-cp', str(root/'classes'),
+                     '-d', str(root/'classes'), str(probe)],
+                    text=True, capture_output=True, timeout=20)
+                self.assertEqual(probe_build.returncode, 0, probe_build.stderr)
+                check = subprocess.run(
+                    ['java', '-cp', str(root/'classes'),
+                     'io.github.lxsdd.yeelightclassicdj.ui.NativeMusicHostContract'],
+                    text=True, capture_output=True, timeout=15)
+                self.assertEqual(check.returncode, 0, check.stderr)
 
 if __name__ == '__main__':
     unittest.main()

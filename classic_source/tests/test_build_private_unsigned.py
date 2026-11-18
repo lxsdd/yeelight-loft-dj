@@ -71,39 +71,48 @@ class FirebaseFinalManifestGate(unittest.TestCase):
     def model(self, count, firebase=False, authority=False):
         ns = '{http://schemas.android.com/apk/res/android}'
         return {'elements': [{'tag': 'provider', 'attributes': {
-            ns+'name': 'com.google.firebase.provider.FirebaseInitProvider' if firebase and i == count-1 else f'com.yeelight.cherry.P{i}',
-            ns+'authorities': 'io.lxsdd.yeelightdj.firebaseinitprovider' if authority and i == count-1 else f'io.lxsdd.yeelightdj.p{i}'}}
+            ns+'name': ('com.google.firebase.provider.FirebaseInitProvider' if firebase and i == 0
+                        else 'io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider'
+                        if i == count-1 else f'com.yeelight.cherry.P{i}'),
+            ns+'authorities': ('io.lxsdd.yeelightdj.firebaseinitprovider' if authority and i == 0
+                else 'io.lxsdd.yeelightdj.loftdj.music' if i == count-1
+                else f'io.lxsdd.yeelightdj.p{i}'),
+            ns+'exported': 'false'}}
             for i in range(count)]}
 
-    def test_five_retained_providers_in_private_clone(self):
-        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5)):
+    def test_five_oem_plus_one_private_music_provider(self):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6)):
             r = verify_final_firebase_boundary(self.candidate)
         self.assertEqual(r['status'], 'PRIVATE_EARLY_STARTUP_PROVIDERS_RECONCILED')
         self.assertEqual(r['android_startup'], 'NOT_TESTED')
 
     def test_firebase_class_reintroduced_rejected(self):
-        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5, firebase=True)):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6, firebase=True)):
             with self.assertRaisesRegex(GateFailure, 'FINAL_FIREBASE_INIT_REINTRODUCED'):
                 verify_final_firebase_boundary(self.candidate)
 
     def test_firebase_authority_reintroduced_rejected(self):
-        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(5, authority=True)):
+        with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(6, authority=True)):
             with self.assertRaisesRegex(GateFailure, 'FINAL_FIREBASE_AUTHORITY_REINTRODUCED'):
                 verify_final_firebase_boundary(self.candidate)
 
     def test_legacy_device_provider_reintroduced_is_rejected(self):
-        names = [f'com.yeelight.cherry.P{i}' for i in range(4)] + ['com.yeelight.yeelib.data.DeviceInteractionProvider']
+        names = [f'com.yeelight.cherry.P{i}' for i in range(4)] + [
+            'com.yeelight.yeelib.data.DeviceInteractionProvider',
+            'io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider']
         with patch('build_private_unsigned.parse_binary_xml', return_value={
             'elements': [{'tag':'provider', 'attributes':{
                 '{http://schemas.android.com/apk/res/android}name': n,
-                '{http://schemas.android.com/apk/res/android}authorities': f'io.lxsdd.yeelightdj.p{i}'}}
+                '{http://schemas.android.com/apk/res/android}authorities': (
+                    'io.lxsdd.yeelightdj.loftdj.music' if i == 5
+                    else f'io.lxsdd.yeelightdj.p{i}')}}
                 for i,n in enumerate(names)]}):
             with self.assertRaisesRegex(GateFailure, 'FINAL_MISSING_DEVICE_PROVIDER_REINTRODUCED'):
                 verify_final_firebase_boundary(self.candidate)
 
     def test_wrong_original_provider_count_rejected(self):
         with patch('build_private_unsigned.parse_binary_xml', return_value=self.model(4)):
-            with self.assertRaisesRegex(GateFailure, 'FINAL_PROVIDER_COUNT_NOT_FIVE'):
+            with self.assertRaisesRegex(GateFailure, 'FINAL_PROVIDER_COUNT_NOT_SIX'):
                 verify_final_firebase_boundary(self.candidate)
 
     def test_corrupt_final_binary_xml_rejected(self):
@@ -120,7 +129,7 @@ class PrivateStartupClassResolutionGate(unittest.TestCase):
             for name in ("classes.dex","classes2.dex","classes3.dex"):
                 archive.writestr(name, b"synthetic-dex")
 
-    def manifest(self, missing=False, app_missing=False, providers=5):
+    def manifest(self, missing=False, app_missing=False, providers=6):
         ns = "{http://schemas.android.com/apk/res/android}name"
         app = "com.yeelight.cherry.App"
         names = [f"com.yeelight.cherry.Provider{i}" for i in range(providers)]
@@ -141,7 +150,7 @@ class PrivateStartupClassResolutionGate(unittest.TestCase):
              patch('build_private_unsigned.dex_descriptors', side_effect=[definitions, set(), set()]):
             result = verify_final_component_classes(self.candidate)
         self.assertEqual(result['status'], 'FINAL_PROVIDER_AND_APPLICATION_CLASSES_PRESENT')
-        self.assertEqual(result['verified_component_classes'], 6)
+        self.assertEqual(result['verified_component_classes'], 7)
         self.assertEqual(result['android_startup'], 'NOT_TESTED')
 
     def test_missing_oem_provider_fails_before_signing(self):

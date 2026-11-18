@@ -186,26 +186,26 @@ def patch_manifest(path: Path, *, identity_control=False) -> dict:
         A("exported"): "false",
         A("foregroundServiceType"): "microphone",
     })
-    # Original-identity-only, nonexported in-Classic entry. It registers a
-    # lifecycle callback to add a small DJ button to the actual visible OEM
-    # Activity, including initial screens that do not inflate activity_main_new.
-    # No OEM DEX, component, root layout, or provider authority is rewritten.
-    if identity_control:
-        entry_authority = OLD_PACKAGE + ".loftdj.entry"
-        require(not any(entry_authority in p.get(A("authorities"), "").split(";")
-                        for p in app.findall("provider")),
-                "CLASSIC_DJ_ENTRY_AUTHORITY_COLLISION")
-        ET.SubElement(app, "provider", {
-            A("name"): BRIDGE_NAMESPACE + ".ui.ClassicDjEntryProvider",
-            A("authorities"): entry_authority,
-            A("exported"): "false",
-            A("enabled"): "true",
-        })
+    # The clone registers an unexported lifecycle observer which acts ONLY
+    # within the real OEM MusicActivity. The original-identity QA control
+    # keeps its separate diagnostic entry; no OEM component is replaced.
+    entry_authority = ((OLD_PACKAGE + ".loftdj.entry") if identity_control
+                       else (NEW_PACKAGE + ".loftdj.music"))
+    require(not any(entry_authority in p.get(A("authorities"), "").split(";")
+                    for p in app.findall("provider")),
+            "CLASSIC_DJ_ENTRY_AUTHORITY_COLLISION")
+    ET.SubElement(app, "provider", {
+        A("name"): BRIDGE_NAMESPACE + ".ui.ClassicDjEntryProvider",
+        A("authorities"): entry_authority,
+        A("exported"): "false",
+        A("enabled"): "true",
+    })
     # No exported services, cloud API, or remote actor permissions are added.
     tree.write(path, encoding="utf-8", xml_declaration=True)
     return {"new_package": OLD_PACKAGE if identity_control else NEW_PACKAGE,
             "identity_control_offline_only": identity_control,
             "identity_native_entry_provider": identity_control,
+            "clone_native_music_provider": not identity_control,
             "canonicalized_component_refs": count, "providers": providers, "permissions_renamed": permissions, "min_sdk": 23, "activity_exported": False,
             "firebase_auto_init": "DISABLED_FOR_PRIVATE_CLONE",
             "cloud_login": "NOT_TESTED",
@@ -264,7 +264,7 @@ def prepare(original: Path, decoded: Path, dex: Path, output: Path,
     check_source_manifest(decoded / "AndroidManifest.xml")
     require(dex.is_file() and dex.stat().st_size > 110 and dex.read_bytes()[:8] in (b"dex\n035\0", b"dex\n037\0", b"dex\n038\0", b"dex\n039\0"), "BRIDGE_DEX_INVALID")
     bridge = dex.read_bytes()
-    for klass in (b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;", b"Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;"):
+    for klass in (b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;", b"Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;"):
         require(klass in bridge, "BRIDGE_DEX_MISSING_REQUIRED_CLASS")
     require(not output.exists(), "OUTPUT_ALREADY_EXISTS")
     require(output.parent.is_dir(), "OUTPUT_PARENT_NOT_FOUND")
@@ -276,8 +276,18 @@ def prepare(original: Path, decoded: Path, dex: Path, output: Path,
                                        identity_control=identity_control)
         layouts = [p for p in (tmp / "res").glob("layout*/activity_main_new.xml") if p.is_file()]
         require(bool(layouts), "MAIN_NAVIGATION_LAYOUT_NOT_FOUND")
-        for layout in layouts:
-            patch_layout(layout)
+        if identity_control:
+            for layout in layouts:
+                patch_layout(layout)
+        else:
+            # A normal Classic clone may not add a Home shortcut: the
+            # controls live in the original MusicActivity's view tree.
+            for layout in layouts:
+                check = ET.parse(layout).getroot()
+                require(check.tag == "LinearLayout",
+                        "CLASSIC_MAIN_LAYOUT_ROOT_CHANGED")
+                require(not any(n.tag == BRIDGE_BUTTON for n in check.iter()),
+                        "CLASSIC_CLONE_HOME_SHORTCUT_FORBIDDEN")
         old_dex = list(tmp.glob("classes*.dex"))
         require(bool(old_dex), "DECODED_HAS_NO_DEX")
         index = 2
@@ -309,7 +319,10 @@ def prepare(original: Path, decoded: Path, dex: Path, output: Path,
             "identity_control_offline_only": identity_control,
             "original": audit,
             "manifest": manifest_info,
-            "layout_variants_patched": [str(x.relative_to(tmp)) for x in layouts],
+            "layout_variants_patched": ([str(x.relative_to(tmp)) for x in layouts]
+                                        if identity_control else []),
+            "clone_music_in_place_source_wired": not identity_control,
+            "clone_music_in_place_runtime_verified": False,
             "sidecar_dex": dest.name,
             "oem_authority_remap": remap_audit,
             "original_oem_dex_intentionally_changed": any(remap_audit.values()),

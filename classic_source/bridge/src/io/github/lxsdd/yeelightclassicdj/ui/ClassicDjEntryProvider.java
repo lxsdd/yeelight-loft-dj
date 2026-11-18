@@ -30,6 +30,18 @@ import android.widget.FrameLayout;
 public final class ClassicDjEntryProvider extends ContentProvider
         implements Application.ActivityLifecycleCallbacks {
     private static final String ORIGINAL_PACKAGE = "com.yeelight.cherry";
+    private static final String CLONE_PACKAGE = "io.lxsdd.yeelightdj";
+
+    // Match only a trusted original OEM MusicActivity in the isolated clone.
+    // This is NOT an exported intent and never invokes an OEM private method.
+    static boolean isOriginalMusicHost(String appPackage, String activityClass) {
+        return CLONE_PACKAGE.equals(appPackage)
+            && activityClass != null
+            && activityClass.startsWith("com.yeelight.cherry.")
+            && activityClass.endsWith(".MusicActivity")
+            && activityClass.indexOf('/') == -1
+            && activityClass.indexOf('$') == -1;
+    }
     private static final String ENTRY_TAG = "io.github.lxsdd.yeelightclassicdj.entry.overlay";
     private static final String DIAG_TAG = "ClassicDjProbe";
     private static final AtomicInteger DIAG_EVENTS = new AtomicInteger();
@@ -45,6 +57,8 @@ public final class ClassicDjEntryProvider extends ContentProvider
     // bounded, cancelable in-Activity rechecks; no global overlay or OEM patch.
     private static final long[] LAYOUT_RECHECK_MS = {0L, 180L, 700L, 1600L, 2800L};
     private final java.util.WeakHashMap<Activity, java.util.List<Runnable>> pending =
+        new java.util.WeakHashMap<>();
+    private final java.util.WeakHashMap<Activity, ClassicMusicInlineControls> musicPanels =
         new java.util.WeakHashMap<>();
 
 
@@ -64,8 +78,15 @@ public final class ClassicDjEntryProvider extends ContentProvider
     }
 
     @Override public void onActivityResumed(final Activity activity) {
-        if (activity == null || !ORIGINAL_PACKAGE.equals(activity.getPackageName())
-                || activity instanceof ClassicDjActivity) return;
+        if (activity == null || activity instanceof ClassicDjActivity) return;
+        if (isOriginalMusicHost(activity.getPackageName(),
+                                activity.getClass().getName())) {
+            scheduleMusicPanel(activity);
+            return;
+        }
+        // Original-package identity control remains private and separate.
+        // No cloned welcome/login/home/activity receives the debug button.
+        if (!ORIGINAL_PACKAGE.equals(activity.getPackageName())) return;
         probe("ENTRY_ACTIVITY_RESUMED");
         cancelPending(activity);
         java.util.List<Runnable> tasks = new java.util.ArrayList<>();
@@ -89,6 +110,74 @@ public final class ClassicDjEntryProvider extends ContentProvider
             tasks.add(attempt);
             handler.postDelayed(attempt, delayMs);
         }
+    }
+
+    private void scheduleMusicPanel(final Activity activity) {
+        cancelPending(activity);
+        java.util.List<Runnable> tasks = new java.util.ArrayList<>();
+        pending.put(activity, tasks);
+        for (long delayMs : LAYOUT_RECHECK_MS) {
+            Runnable attempt = new Runnable() {
+                @Override public void run() {
+                    if (activity.isFinishing() || activity.isDestroyed()) return;
+                    attachMusicPanel(activity);
+                }
+            };
+            tasks.add(attempt);
+            handler.postDelayed(attempt, delayMs);
+        }
+    }
+
+    private void attachMusicPanel(Activity activity) {
+        if (!isOriginalMusicHost(activity.getPackageName(),
+                                 activity.getClass().getName())) return;
+        try {
+            View content = activity.findViewById(android.R.id.content);
+            if (!(content instanceof FrameLayout)) return;
+            FrameLayout root = (FrameLayout) content;
+            ClassicMusicInlineControls existing = findMusicPanel(root, 0);
+            if (existing != null) {
+                musicPanels.put(activity, existing);
+                existing.onHostResumed();
+                return;
+            }
+            // Inline child in OEM MusicActivity's own window, not a global
+            // overlay, a replacement DiscoFragment or separate Music player.
+            ClassicMusicInlineControls controls =
+                new ClassicMusicInlineControls(activity);
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            int margin = (int) (6 * activity.getResources().getDisplayMetrics().density + 0.5f);
+            params.setMargins(margin, margin, margin, margin);
+            root.addView(controls, params);
+            controls.bringToFront();
+            musicPanels.put(activity, controls);
+            controls.onHostResumed();
+            probe("CLASSIC_MUSIC_INLINE_CONTROLS_ATTACHED");
+        } catch (RuntimeException ignored) {
+            // Optional music controls cannot take down the OEM MusicActivity.
+        }
+    }
+
+    private static ClassicMusicInlineControls findMusicPanel(View view, int depth) {
+        if (view instanceof ClassicMusicInlineControls)
+            return (ClassicMusicInlineControls) view;
+        if (!(view instanceof ViewGroup) || depth >= 12) return null;
+        ViewGroup group = (ViewGroup) view;
+        if (group.getChildCount() > 300) return null;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            ClassicMusicInlineControls match =
+                findMusicPanel(group.getChildAt(i), depth + 1);
+            if (match != null) return match;
+        }
+        return null;
+    }
+
+    private void pauseMusicPanel(Activity activity) {
+        ClassicMusicInlineControls panel = musicPanels.remove(activity);
+        if (panel != null) panel.onHostPaused();
     }
 
     private void cancelPending(Activity activity) {
@@ -168,10 +257,16 @@ public final class ClassicDjEntryProvider extends ContentProvider
 
     @Override public void onActivityCreated(Activity a, Bundle savedInstanceState) {}
     @Override public void onActivityStarted(Activity a) {}
-    @Override public void onActivityPaused(Activity a) { cancelPending(a); }
+    @Override public void onActivityPaused(Activity a) {
+        cancelPending(a);
+        pauseMusicPanel(a);
+    }
     @Override public void onActivityStopped(Activity a) {}
     @Override public void onActivitySaveInstanceState(Activity a, Bundle state) {}
-    @Override public void onActivityDestroyed(Activity a) { cancelPending(a); }
+    @Override public void onActivityDestroyed(Activity a) {
+        cancelPending(a);
+        pauseMusicPanel(a);
+    }
 
     // No queryable state or remote control surface. Manifest exported=false.
     @Override public Cursor query(Uri uri, String[] projection, String selection,

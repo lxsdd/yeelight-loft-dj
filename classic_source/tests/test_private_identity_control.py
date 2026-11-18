@@ -85,9 +85,13 @@ class IdentityAblationTests(unittest.TestCase):
             c.patch_manifest(f)
             root=ET.parse(f).getroot()
             self.assertEqual(root.get("package"),c.NEW_PACKAGE)
-            self.assertFalse(any(p.get(c.A("name")) ==
-                "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider"
-                for p in root.find("application").findall("provider")))
+            music = [p for p in root.find("application").findall("provider")
+                     if p.get(c.A("name")) ==
+                     "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider"]
+            self.assertEqual(len(music), 1)
+            self.assertEqual(music[0].get(c.A("authorities")),
+                             c.NEW_PACKAGE + ".loftdj.music")
+            self.assertEqual(music[0].get(c.A("exported")), "false")
             self.assertEqual(root.find("application").find("provider")
                              .get(c.A("authorities")),c.NEW_PACKAGE+".device")
 

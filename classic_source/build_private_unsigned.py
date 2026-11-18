@@ -148,20 +148,18 @@ def verify_final_firebase_boundary(candidate: Path, *, identity_control=False) -
     except (AxmlError, KeyError, zipfile.BadZipFile) as exc:
         raise GateFailure("FINAL_BINARY_MANIFEST_INVALID") from exc
     providers = [e["attributes"] for e in root["elements"] if e["tag"] == "provider"]
-    if len(providers) != (6 if identity_control else 5):
-        raise GateFailure("FINAL_PROVIDER_COUNT_NOT_SIX" if identity_control
-                          else "FINAL_PROVIDER_COUNT_NOT_FIVE")
+    if len(providers) != 6:
+        raise GateFailure("FINAL_PROVIDER_COUNT_NOT_SIX")
     dj = [p for p in providers if p.get(
         "{http://schemas.android.com/apk/res/android}name") ==
         "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider"]
-    if identity_control:
-        if len(dj) != 1 or dj[0].get(
-                "{http://schemas.android.com/apk/res/android}authorities") != (
-                "com.yeelight.cherry.loftdj.entry") or dj[0].get(
-                "{http://schemas.android.com/apk/res/android}exported") != "false":
-            raise GateFailure("FINAL_IDENTITY_ENTRY_PROVIDER_INVALID")
-    elif dj:
-        raise GateFailure("FINAL_CLONE_HAS_IDENTITY_ENTRY_PROVIDER")
+    expected_authority = ("com.yeelight.cherry.loftdj.entry" if identity_control
+                          else "io.lxsdd.yeelightdj.loftdj.music")
+    if (len(dj) != 1 or dj[0].get(
+            "{http://schemas.android.com/apk/res/android}authorities") != expected_authority
+            or dj[0].get(
+            "{http://schemas.android.com/apk/res/android}exported") != "false"):
+        raise GateFailure("FINAL_NATIVE_MUSIC_ENTRY_PROVIDER_INVALID")
     for p in providers:
         if p.get("{http://schemas.android.com/apk/res/android}name") == \
                 "com.google.firebase.provider.FirebaseInitProvider":
@@ -171,7 +169,7 @@ def verify_final_firebase_boundary(candidate: Path, *, identity_control=False) -
         if p.get("{http://schemas.android.com/apk/res/android}name") == \
                 "com.yeelight.yeelib.data.DeviceInteractionProvider":
             raise GateFailure("FINAL_MISSING_DEVICE_PROVIDER_REINTRODUCED")
-    return {"status": "PRIVATE_EARLY_STARTUP_PROVIDERS_RECONCILED", "remaining_oem_providers": 5, "identity_dj_entry_provider": bool(identity_control),
+    return {"status": "PRIVATE_EARLY_STARTUP_PROVIDERS_RECONCILED", "remaining_oem_providers": 5, "identity_dj_entry_provider": bool(identity_control), "clone_native_music_provider": not identity_control,
             "android_startup": "NOT_TESTED", "cloud_login": "NOT_TESTED"}
 
 
@@ -202,7 +200,7 @@ def verify_final_component_classes(candidate: Path, *, identity_control=False) -
     declarations = [e for e in manifest["elements"] if e["tag"] in ("application", "provider")]
     apps = [e for e in declarations if e["tag"] == "application"]
     providers = [e for e in declarations if e["tag"] == "provider"]
-    if len(apps) != 1 or len(providers) != (6 if identity_control else 5):
+    if len(apps) != 1 or len(providers) != 6:
         raise GateFailure("FINAL_COMPONENT_DECLARATIONS_CHANGED")
     verified = 0
     for e in declarations:
