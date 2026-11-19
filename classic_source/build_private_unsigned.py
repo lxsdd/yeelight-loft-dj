@@ -318,6 +318,10 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
                 }
             build_diagnostics.phase('OEM_SMALI_REASSEMBLY')
             smali_report = stage_reassembled_oem(original, codeonly, staged)
+            # The removed legacy provider may yield a null read-only Cursor;
+            # only the exact OEM device callback is guarded in this clone.
+            from clone_legacy_cursor_guard import patch_staged_clone as patch_legacy_cursor
+            smali_report['legacy_cursor_guard'] = patch_legacy_cursor(staged)
         build_diagnostics.phase('APKTOOL_REBUILD')
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         build_diagnostics.phase('MULTIDEX_LAYOUT')
