@@ -225,6 +225,23 @@ def filter_runtime_jars(inputs, original_apk, output):
     return result, {'filtered_duplicate_kotlin_classes':skipped,
                     'source_classes':len(kept),'oem_classes':len(owned)}
 
+def verify_compiled_checkpoint_abi(jar):
+    """Verify the actual owner bridge JAR in both Python invocation modes.
+
+    The private APK builder imports bridge.build_bridge as a package, whereas
+    this file can also run directly with bridge/ on sys.path. Resolve the
+    same exact ABI validator without depending on a caller-specific sys.path.
+    """
+    if __package__:
+        from .checkpoint_abi import verify_bridge_jar, AbiGateError
+    else:
+        from checkpoint_abi import verify_bridge_jar, AbiGateError
+    try:
+        return verify_bridge_jar(jar)
+    except AbiGateError:
+        raise ToolError("CLASSIC_CHECKPOINT_RESULT_ABI_UNVERIFIED") from None
+
+
 def build(sdk, out, original_apk=None):
     sdk, out = Path(sdk), Path(out)
     if out.exists(): raise ToolError('OUTPUT_ALREADY_EXISTS')
@@ -261,14 +278,10 @@ def build(sdk, out, original_apk=None):
     # Before D8, verify the true compiled CheckpointRuntime classfile. Original
     # Classic can carry older Kotlin stdlib definitions; a getstatic on
     # kotlin.Result.Companion must never reach the private clone.
-    from checkpoint_abi import verify_bridge_jar, AbiGateError
     owner_jars = [jar for jar in inputs if jar.name in ("classic-bridge.jar", "bridge.jar")]
     if len(owner_jars) != 1:
         raise ToolError("CLASSIC_CHECKPOINT_BRIDGE_JAR_NOT_UNIQUE")
-    try:
-        verify_bridge_jar(owner_jars[0])
-    except AbiGateError:
-        raise ToolError("CLASSIC_CHECKPOINT_RESULT_ABI_UNVERIFIED") from None
+    verify_compiled_checkpoint_abi(owner_jars[0])
     inputs, runtime_report = filter_runtime_jars(inputs, original_apk, out / 'filtered-runtime')
     import json
     (out / 'runtime_resolution.json').write_text(json.dumps(runtime_report, indent=2)+'\n', encoding='utf-8')
