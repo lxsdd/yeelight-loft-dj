@@ -322,6 +322,11 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             # only the exact OEM device callback is guarded in this clone.
             from clone_legacy_cursor_guard import patch_staged_clone as patch_legacy_cursor
             smali_report['legacy_cursor_guard'] = patch_legacy_cursor(staged)
+            # The real Pixel6a normal-start crash is in the OEM BLE stop helper.
+            # Guard only a missing scanner in this private clone; existing scanner
+            # behavior, original identity control, and actual device state stay intact.
+            from clone_ble_stop_guard import patch_staged_clone as patch_ble_stop
+            smali_report['ble_stop_guard'] = patch_ble_stop(staged)
         build_diagnostics.phase('APKTOOL_REBUILD')
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         build_diagnostics.phase('MULTIDEX_LAYOUT')
