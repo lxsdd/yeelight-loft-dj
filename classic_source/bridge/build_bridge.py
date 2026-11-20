@@ -258,6 +258,17 @@ def build(sdk, out, original_apk=None):
         maybe = [kbin.parent.parent/'lib/kotlin-stdlib.jar', kbin.parent.parent/'lib/kotlin-stdlib-jdk8.jar']
         if not maybe[0].is_file(): raise ToolError('KOTLIN_STDLIB_UNAVAILABLE')
         inputs += [i for i in maybe if i.is_file()]
+    # Before D8, verify the true compiled CheckpointRuntime classfile. Original
+    # Classic can carry older Kotlin stdlib definitions; a getstatic on
+    # kotlin.Result.Companion must never reach the private clone.
+    from checkpoint_abi import verify_bridge_jar, AbiGateError
+    owner_jars = [jar for jar in inputs if jar.name in ("classic-bridge.jar", "bridge.jar")]
+    if len(owner_jars) != 1:
+        raise ToolError("CLASSIC_CHECKPOINT_BRIDGE_JAR_NOT_UNIQUE")
+    try:
+        verify_bridge_jar(owner_jars[0])
+    except AbiGateError:
+        raise ToolError("CLASSIC_CHECKPOINT_RESULT_ABI_UNVERIFIED") from None
     inputs, runtime_report = filter_runtime_jars(inputs, original_apk, out / 'filtered-runtime')
     import json
     (out / 'runtime_resolution.json').write_text(json.dumps(runtime_report, indent=2)+'\n', encoding='utf-8')

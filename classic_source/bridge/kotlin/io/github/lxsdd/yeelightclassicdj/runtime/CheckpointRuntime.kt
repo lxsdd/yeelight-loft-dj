@@ -63,9 +63,18 @@ class CheckpointRuntime : DjRuntime {
         rgb: Int, beatSync: Boolean, bpm: Int, minimum: Int, maximum: Int,
         attackMs: Int, decayMs: Int, gamma: Double
     ): Boolean {
-        val proposed = runCatching {
+        // Avoid Kotlin Result.Companion field references. The original Classic
+        // APK supplies an older Kotlin runtime, and the private clone excludes
+        // duplicate stdlib classes. An inline runCatching block compiles to
+        // getstatic kotlin.Result.Companion and can crash with NoSuchFieldError
+        // before the microphone session even begins.
+        val proposed = try {
             ClassicPulseScene.Options(rgb, beatSync, bpm, minimum, maximum, attackMs, decayMs, gamma)
-        }.getOrNull() ?: return false
+        } catch (invalid: IllegalArgumentException) {
+            // ClassicPulseScene.Options uses require() for invalid user values.
+            // Do not swallow LinkageError or other unexpected runtime failures.
+            return false
+        }
         synchronized(lock) {
             if (state == State.STOPPING || state == State.CLOSED) return false
             if (engine?.configurePulse(proposed) == false) return false
