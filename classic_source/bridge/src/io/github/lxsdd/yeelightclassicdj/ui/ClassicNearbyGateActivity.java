@@ -105,7 +105,7 @@ public final class ClassicNearbyGateActivity extends Activity {
         if (launched || !nearbyGranted() || originalTarget == null) return;
         launched = true;
         try {
-            Intent original = new Intent(Intent.ACTION_MAIN);
+            Intent original = new Intent().setAction(Intent.ACTION_MAIN);
             original.addCategory(Intent.CATEGORY_LAUNCHER);
             original.setClassName(getPackageName(), originalTarget);
             startActivity(original);
