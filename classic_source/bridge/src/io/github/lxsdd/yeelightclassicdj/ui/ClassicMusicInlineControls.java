@@ -2,7 +2,6 @@ package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.Dialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -10,7 +9,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Gravity;
-import android.view.Window;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -36,9 +34,22 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final TextView status;
     private final LinearLayout expanded;
-    // Original MusicActivity retains its content; only this compact entry sits
-    // in its tree. A bounded Activity-owned dialog holds all detailed controls.
-    private final Dialog controlSheet;
+    // In-place bounded controls. They reserve the OEM player's real viewport
+    // instead of opening a modal dialog or overlapping the player.
+    private final ScrollView inlineSheet;
+    private final int compactHeightPx;
+    private final int detailsHeightPx;
+    interface DockHeightListener { void onHeightChanged(int pixels); }
+    private DockHeightListener dockHeightListener;
+    void setDockHeightListener(DockHeightListener callback) {
+        dockHeightListener = callback;
+        notifyDockHeight();
+    }
+    private void notifyDockHeight() {
+        if (dockHeightListener != null)
+            dockHeightListener.onHeightChanged(compactHeightPx +
+                (inlineSheet.getVisibility() == View.VISIBLE ? detailsHeightPx : 0));
+    }
     private final Button entryButton;
     private final Button startButton;
     private final TextView sourceHelp;
@@ -47,7 +58,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final ProgressBar[] bandMeters = new ProgressBar[4];
     private final ProgressBar effectMeter;
     private boolean consentFlowPending;
-    private final Button sceneButton;
+    private final TextView sceneButton;
     private final Button sourceButton;
     private boolean preferInternal;
     private boolean internalOwned;
@@ -116,24 +127,31 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         setPadding(pad, pad, pad, pad);
         setTag("io.github.lxsdd.yeelightclassicdj.music.inline");
 
+        android.util.DisplayMetrics dm = activity.getResources().getDisplayMetrics();
+        compactHeightPx = (int) (56f * dm.density + 0.5f) + pad * 2;
+        detailsHeightPx = Math.max((int) (180f * dm.density + 0.5f),
+            Math.min((int) (dm.heightPixels * 0.42f), (int) (360f * dm.density + 0.5f)));
         entryButton = new Button(activity);
         entryButton.setText("Loft DJ");
         entryButton.setAllCaps(false);
-        entryButton.setContentDescription("Loft DJ im vorhandenen Classic-Musikmodus öffnen");
+        entryButton.setContentDescription("Loft DJ Steuerung in Classic-Musik einblenden");
+        entryButton.setLayoutParams(new LinearLayout.LayoutParams(
+            -1, (int) (56f * dm.density + 0.5f), 0f));
         addView(entryButton);
 
-        // No expanded button-stack in android.R.id.content. The original OEM
-        // player, its music-flow animation, title and transport remain visible.
+        // The original OEM view remains the direct child of android.R.id.content.
         expanded = new LinearLayout(activity);
         expanded.setOrientation(VERTICAL);
         expanded.setPadding(pad * 2, pad * 2, pad * 2, pad * 2);
-        ScrollView scroll = new ScrollView(activity);
-        scroll.setFillViewport(false);
-        scroll.addView(expanded);
-        controlSheet = new Dialog(activity);
-        controlSheet.setTitle("Loft DJ · Musik");
-        controlSheet.setContentView(scroll);
-        entryButton.setOnClickListener(v -> openControlSheet());
+        inlineSheet = new ScrollView(activity);
+        inlineSheet.setFillViewport(false);
+        inlineSheet.addView(expanded);
+        inlineSheet.setVisibility(View.GONE);
+        addView(inlineSheet, new LinearLayout.LayoutParams(-1, detailsHeightPx, 0f));
+        entryButton.setOnClickListener(v -> {
+            if (inlineSheet.getVisibility() == View.VISIBLE) closeControlSheet();
+            else openControlSheet();
+        });
 
         status = new TextView(activity);
         status.setText("Quelle wählen · keine Loft-DJ-Lampen freigegeben");
@@ -212,19 +230,26 @@ public final class ClassicMusicInlineControls extends LinearLayout {
 
         LinearLayout settings = new LinearLayout(activity);
         settings.setOrientation(HORIZONTAL);
-        sceneButton = new Button(activity);
-        sceneButton.setText("Effekt: " + SCENE_LABELS[scene]);
-        sceneButton.setOnClickListener(v -> {
-            scene = (scene + 1) % SCENES.length;
-            sceneButton.setText("Effekt: " + SCENE_LABELS[scene]);
-            pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
-            pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
-            effectFeedback.setText("Vorschau: " +
-                ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
-            renderLiveFeedback();
-            configureIfOwned();
-        });
+        sceneButton = new TextView(activity);
+        sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
         settings.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        // Seven directly selectable effects in two rows; no cyclic guesswork.
+        for (int rowIndex = 0; rowIndex < 2; rowIndex++) {
+            LinearLayout choices = new LinearLayout(activity);
+            choices.setOrientation(HORIZONTAL);
+            int first = rowIndex == 0 ? 0 : 4;
+            int limit = rowIndex == 0 ? 4 : SCENES.length;
+            for (int index = first; index < limit; index++) {
+                final int selectedScene = index;
+                Button choice = new Button(activity);
+                choice.setText(SCENE_LABELS[index]);
+                choice.setAllCaps(false);
+                choice.setContentDescription("Lichtszene " + SCENE_LABELS[index] + " wählen");
+                choice.setOnClickListener(v -> selectScene(selectedScene));
+                choices.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+            }
+            expanded.addView(choices);
+        }
 
         gainButton = new Button(activity);
         gainButton.setText("Empfindlichkeit: 1×");
@@ -291,6 +316,18 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         expanded.addView(pulseShapeControls);
     }
 
+    private void selectScene(int requested) {
+        if (requested < 0 || requested >= SCENES.length) return;
+        scene = requested;
+        sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
+        pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
+        pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
+        effectFeedback.setText("Vorschau: " +
+            ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
+        renderLiveFeedback();
+        configureIfOwned();
+    }
+
     /** Poll only this session's fresh source-local measurements. */
     private void renderLiveFeedback() {
         ClassicDjLiveFrame frame = ClassicDjService.frameForOwner(sessionOwner);
@@ -306,20 +343,17 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             SystemClock.elapsedRealtime()));
     }
 
-    /** A bounded, scrollable native surface; never hide original OEM controls. */
+    /** No dialog or new Activity; the embedded view reserves OEM viewport space. */
     private void openControlSheet() {
-        if (host.isFinishing() || host.isDestroyed() || controlSheet.isShowing()) return;
-        controlSheet.show();
-        Window window = controlSheet.getWindow();
-        if (window != null) {
-            android.util.DisplayMetrics dm = host.getResources().getDisplayMetrics();
-            int horizontal = (int) (20f * dm.density + 0.5f);
-            int width = Math.max(1, dm.widthPixels - horizontal * 2);
-            int height = Math.max(1, Math.min((int) (dm.heightPixels * 0.65f),
-                (int) (470f * dm.density)));
-            window.setGravity(Gravity.BOTTOM);
-            window.setLayout(width, height);
-        }
+        if (host.isFinishing() || host.isDestroyed() ||
+            inlineSheet.getVisibility() == View.VISIBLE) return;
+        inlineSheet.setVisibility(View.VISIBLE);
+        notifyDockHeight();
+    }
+    private void closeControlSheet() {
+        if (inlineSheet.getVisibility() == View.GONE) return;
+        inlineSheet.setVisibility(View.GONE);
+        notifyDockHeight();
     }
 
     public void onHostResumed() {
@@ -368,9 +402,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         // PlaybackCapture must remain alive while the foreground app plays
         // permitted audio. Microphone analysis still stops with MusicActivity.
         if (!internalOwned) stopOwned();
-        // No stale Activity-owned window across the Android consent broker
-        // or a player app in the foreground.
-        if (controlSheet.isShowing()) controlSheet.dismiss();
+        // Collapse only our embedded controls while the original host pauses.
+        closeControlSheet();
     }
 
     private void startAnalysisOnly() {

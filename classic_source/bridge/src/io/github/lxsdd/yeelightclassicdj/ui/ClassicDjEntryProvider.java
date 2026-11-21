@@ -75,6 +75,53 @@ public final class ClassicDjEntryProvider extends ContentProvider
         new java.util.WeakHashMap<>();
     private final java.util.WeakHashMap<Activity, ClassicMusicInlineControls> musicPanels =
         new java.util.WeakHashMap<>();
+    private final java.util.WeakHashMap<Activity, MusicDockLease> musicDocks =
+        new java.util.WeakHashMap<>();
+
+    /** Preserve the OEM root and reserve an actual viewport below it. */
+    private static final class MusicDockLease {
+        final FrameLayout root;
+        final View original;
+        final ClassicMusicInlineControls controls;
+        final int baseline;
+        int reserved;
+        MusicDockLease(FrameLayout root, View original,
+                       ClassicMusicInlineControls controls, int baseline) {
+            this.root = root;
+            this.original = original;
+            this.controls = controls;
+            this.baseline = baseline;
+        }
+        void resize(int requested) {
+            if (original.getParent() != root || controls.getParent() != root ||
+                !(original.getLayoutParams() instanceof FrameLayout.LayoutParams))
+                return;
+            FrameLayout.LayoutParams lp =
+                (FrameLayout.LayoutParams) original.getLayoutParams();
+            if (lp.width != ViewGroup.LayoutParams.MATCH_PARENT ||
+                lp.height != ViewGroup.LayoutParams.MATCH_PARENT ||
+                lp.bottomMargin != baseline + reserved ||
+                requested < 0 ||
+                requested > root.getResources().getDisplayMetrics().heightPixels * 0.6f)
+                return;
+            lp.bottomMargin = baseline + requested;
+            original.setLayoutParams(lp);
+            reserved = requested;
+        }
+        void detach() {
+            controls.setDockHeightListener(null);
+            if (original.getParent() == root &&
+                original.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+                FrameLayout.LayoutParams lp =
+                    (FrameLayout.LayoutParams) original.getLayoutParams();
+                if (lp.bottomMargin == baseline + reserved) {
+                    lp.bottomMargin = baseline;
+                    original.setLayoutParams(lp);
+                }
+            }
+            if (controls.getParent() == root) root.removeView(controls);
+        }
+    }
 
 
     @Override public boolean onCreate() {
@@ -153,28 +200,35 @@ public final class ClassicDjEntryProvider extends ContentProvider
             if (!(content instanceof FrameLayout)) return;
             FrameLayout root = (FrameLayout) content;
             ClassicMusicInlineControls existing = findMusicPanel(root, 0);
+            MusicDockLease prior = musicDocks.get(activity);
             if (existing != null) {
+                if (prior == null || prior.root != root || prior.controls != existing)
+                    return;
                 musicPanels.put(activity, existing);
                 existing.onHostResumed();
                 return;
             }
-            // Inline child in OEM MusicActivity's own window, not a global
-            // overlay, a replacement DiscoFragment or separate Music player.
-            ClassicMusicInlineControls controls =
-                new ClassicMusicInlineControls(activity);
+            // No arbitrary toolbar offsets, additional windows or OEM reparenting.
+            if (root.getChildCount() != 1) return;
+            View original = root.getChildAt(0);
+            if (original == null ||
+                !(original.getLayoutParams() instanceof FrameLayout.LayoutParams))
+                return;
+            FrameLayout.LayoutParams lp =
+                (FrameLayout.LayoutParams) original.getLayoutParams();
+            if (lp.width != ViewGroup.LayoutParams.MATCH_PARENT ||
+                lp.height != ViewGroup.LayoutParams.MATCH_PARENT ||
+                lp.bottomMargin < 0) return;
+            if (prior != null) { prior.detach(); musicDocks.remove(activity); }
+            ClassicMusicInlineControls controls = new ClassicMusicInlineControls(activity);
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.END);
-            // Compact entry in the empty upper area of the OEM music player;
-            // detailed controls are in the Activity-owned bounded sheet, not
-            // on top of the OEM bottom play/volume/music-flow controls.
-            float density = activity.getResources().getDisplayMetrics().density;
-            int margin = (int) (8f * density + 0.5f);
-            int belowToolbar = (int) (74f * density + 0.5f);
-            params.setMargins(margin, belowToolbar, margin, 0);
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
             root.addView(controls, params);
-            controls.bringToFront();
+            MusicDockLease lease = new MusicDockLease(root, original, controls,
+                lp.bottomMargin);
+            musicDocks.put(activity, lease);
+            controls.setDockHeightListener(lease::resize);
             musicPanels.put(activity, controls);
             controls.onHostResumed();
             probe("CLASSIC_MUSIC_INLINE_CONTROLS_ATTACHED");
@@ -315,6 +369,8 @@ public final class ClassicDjEntryProvider extends ContentProvider
     @Override public void onActivityDestroyed(Activity a) {
         cancelPending(a);
         pauseMusicPanel(a);
+        MusicDockLease lease = musicDocks.remove(a);
+        if (lease != null) lease.detach();
         // A previous host must not invalidate a newer configuration-change host.
         if (observedMusicHost.get() == a)
             observedMusicHost = new WeakReference<>(null);

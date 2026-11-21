@@ -200,14 +200,18 @@ public abstract class ContentProvider {
  public int getWidth(){return 1;} public int getHeight(){return 1;}
  public void setElevation(float v){} public void bringToFront(){}
  public boolean getGlobalVisibleRect(android.graphics.Rect r){return true;}
+ public android.view.ViewGroup getParent(){return null;}
+ public android.view.ViewGroup.LayoutParams getLayoutParams(){return null;}
+ public void setLayoutParams(android.view.ViewGroup.LayoutParams p){}
  public interface OnClickListener {void onClick(View v);}
 }''',
 'android/view/ViewGroup.java': '''package android.view; public class ViewGroup extends View {
  public ViewGroup(android.content.Context c){super(c);}
  public int getChildCount(){return 0;} public View getChildAt(int i){return null;}
  public static class LayoutParams {
-  public static final int WRAP_CONTENT=-2;
-  public LayoutParams(int width,int height){}
+  public static final int WRAP_CONTENT=-2, MATCH_PARENT=-1;
+  public int width,height;
+  public LayoutParams(int width,int height){this.width=width;this.height=height;}
  }
 }''',
 'android/view/Gravity.java': '''package android.view; public class Gravity {
@@ -217,9 +221,11 @@ public abstract class ContentProvider {
 public class FrameLayout extends android.view.ViewGroup {
  public FrameLayout(android.content.Context c){super(c);}
  public void addView(android.view.View v,LayoutParams params){}
+ public void removeView(android.view.View v){}
  public static class LayoutParams extends android.view.ViewGroup.LayoutParams {
+  public int bottomMargin;
   public LayoutParams(int w,int h,int gravity){super(w,h);}
-  public void setMargins(int left,int top,int right,int bottom){}
+  public void setMargins(int left,int top,int right,int bottom){bottomMargin=bottom;}
  }
 }''',
 })

@@ -43,7 +43,9 @@ class NativePulseControlsTest(unittest.TestCase):
         self.assertIn("{12, 90, 90, 600}", INLINE)
         self.assertNotIn("set_power", INLINE)
         self.assertNotIn("set_bright", INLINE)
-        self.assertIn("controlSheet.setContentView(scroll);", INLINE)
+        self.assertIn("inlineSheet.addView(expanded);", INLINE)
+        self.assertIn("choice.setOnClickListener(v -> selectScene(selectedScene));", INLINE)
+        self.assertNotIn("new Dialog(", INLINE)
         self.assertNotIn("host.setContentView(", INLINE)
         self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", INLINE)
 

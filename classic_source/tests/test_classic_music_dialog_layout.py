@@ -14,18 +14,25 @@ BROKER = (UI / "ClassicInternalAudioConsentActivity.java").read_text(encoding="u
 
 
 class ClassicMusicSheetRegression(unittest.TestCase):
-    def test_full_panel_not_inserted_into_oem_player_frame(self):
+    def test_original_music_uses_reserved_in_place_panel_and_direct_modes(self):
         self.assertIn("new ClassicMusicInlineControls(activity)", PROVIDER)
+        self.assertIn("root.getChildCount() != 1", PROVIDER)
+        self.assertIn("ViewGroup.LayoutParams.MATCH_PARENT", PROVIDER)
+        self.assertIn("controls.setDockHeightListener(lease::resize)", PROVIDER)
+        self.assertIn("lp.bottomMargin = baseline + requested", PROVIDER)
+        self.assertIn("lp.bottomMargin = baseline", PROVIDER)
+        self.assertIn("if (lease != null) lease.detach();", PROVIDER)
+        self.assertNotIn("Gravity.TOP | Gravity.END", PROVIDER)
+        self.assertNotIn("belowToolbar", PROVIDER)
         self.assertIn("root.addView(controls, params);", PROVIDER)
-        self.assertIn("Gravity.TOP | Gravity.END", PROVIDER)
-        self.assertNotIn("Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL", PROVIDER)
-        self.assertIn("entryButton.setText(\"Loft DJ\")", INLINE)
-        self.assertIn("controlSheet.setContentView(scroll)", INLINE)
-        self.assertIn("ScrollView scroll = new ScrollView(activity)", INLINE)
-        self.assertIn("window.setLayout(width, height)", INLINE)
-        self.assertIn("dm.heightPixels * 0.65f", INLINE)
-        self.assertNotIn("\n        addView(expanded);", INLINE)
-        self.assertIn("scroll.addView(expanded);", INLINE)
+        self.assertIn("inlineSheet = new ScrollView(activity)", INLINE)
+        self.assertIn("inlineSheet.addView(expanded)", INLINE)
+        self.assertIn("inlineSheet.setVisibility(View.GONE)", INLINE)
+        self.assertIn("addView(inlineSheet,", INLINE)
+        self.assertIn("choice.setOnClickListener(v -> selectScene(selectedScene))", INLINE)
+        self.assertNotIn("scene = (scene + 1) % SCENES.length", INLINE)
+        self.assertNotIn("new Dialog(", INLINE)
+        self.assertNotIn("controlSheet", INLINE)
         self.assertNotIn("host.setContentView(", INLINE)
         self.assertNotIn("new Intent(host, ClassicDjActivity.class)", INLINE)
         self.assertIn("ClassicDjService.frameForOwner(sessionOwner)", INLINE)
@@ -45,7 +52,8 @@ class ClassicMusicSheetRegression(unittest.TestCase):
         self.assertIn("resultCode != RESULT_OK", BROKER)
         self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", INLINE)
         self.assertIn("if (returnFromConsent) openControlSheet();", INLINE)
-        self.assertIn("if (controlSheet.isShowing()) controlSheet.dismiss();", INLINE)
+        self.assertIn("closeControlSheet();", INLINE)
+        self.assertIn("inlineSheet.setVisibility(View.VISIBLE)", INLINE)
 
     def test_source_failure_classification_is_sanitized_and_owner_fenced(self):
         self.assertIn("private static String classifyStartError(boolean internal, Throwable failure)", SERVICE)
