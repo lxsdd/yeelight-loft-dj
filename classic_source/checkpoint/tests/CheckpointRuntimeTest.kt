@@ -86,6 +86,27 @@ fun main() {
     check(cb.error.await(4, TimeUnit.SECONDS)) { "Capture exception not delivered" }
     failure.stop()
     check(broken.closed)
+    // Source-open failures reach the real DjRuntime boundary as safe categories.
+    // No initial microphone, playback or lamp callback may claim a live session.
+    val sourceFailures: List<Pair<() -> ClassicPcmCaptureSession.Input, DjRuntime.CaptureFailureKind>> = listOf(
+        Pair({ throw SecurityException("private diagnostic only") }, DjRuntime.CaptureFailureKind.PERMISSION),
+        Pair({ throw IllegalArgumentException("private format") }, DjRuntime.CaptureFailureKind.FORMAT),
+        Pair({ throw IllegalStateException("private state") }, DjRuntime.CaptureFailureKind.STATE),
+        Pair({ throw NoSuchMethodError("private ABI") }, DjRuntime.CaptureFailureKind.ABI),
+        Pair({ throw RuntimeException("private unknown") }, DjRuntime.CaptureFailureKind.UNKNOWN)
+    )
+    for ((source, expected) in sourceFailures) {
+        val rejected = CheckpointRuntime()
+        rejected.inputFactory = source
+        val thrown = runCatching {
+            rejected.start(Context(), "microphone", emptyList(), Listener())
+        }.exceptionOrNull()
+        check(thrown is DjRuntime.CaptureStartFailure && thrown.kind == expected) {
+            "Microphone source failure should be classified $expected, got $thrown"
+        }
+        check(thrown.cause != null)
+        rejected.stop()
+    }
     // Integration acceptance: user-picked one Color4 is registered, owned and stopped.
     // No sockets or actual lamp writes: injected in-memory reverse transport.
     val selected = CheckpointRuntime()
