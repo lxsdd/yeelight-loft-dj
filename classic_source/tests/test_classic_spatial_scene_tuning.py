@@ -54,10 +54,16 @@ class SceneTuningWiringTest(unittest.TestCase):
         self.assertIn("if (!intent.hasExtra(EXTRA_SPATIAL_RGB)) return -1", SERVICE)
         self.assertIn("return -2;", SERVICE)
         self.assertLess(SERVICE.index("if (spatialRgb < -1"),
-                        SERVICE.index("target.configurePulse(rgb,"))
+                        SERVICE.index("target.applySceneSettings("))
         self.assertLess(SERVICE.index("if (rgb < 0 || rgb > 0xFFFFFF"),
-                        SERVICE.index("target.configurePulse(rgb,"))
-        self.assertIn("target.configureSpatial(spatialRgb, speed,", SERVICE)
+                        SERVICE.index("target.applySceneSettings("))
+        self.assertIn("new DjRuntime.SceneSettings(", SERVICE)
+        self.assertIn("return target.applySceneSettings(", SERVICE)
+        self.assertNotIn("target.configurePulse(rgb,", SERVICE)
+        self.assertNotIn("target.configureSpatial(spatialRgb, speed,", SERVICE)
+        self.assertIn("boolean applySceneSettings(SceneSettings settings)", INTERFACE)
+        self.assertIn("override fun applySceneSettings(settings: DjRuntime.SceneSettings)", RUNTIME)
+        self.assertIn("(clockOnly && !clockSceneAllowed(settings.scene, nextPulse))", RUNTIME)
         self.assertIn("catch (RuntimeException | LinkageError incompatible)", SERVICE)
         self.assertIn("uiOwner.owns(intent.getStringExtra(EXTRA_UI_OWNER))", SERVICE)
         # No guessed OEM selection or unapproved Lamp-to-RGB shortcut.

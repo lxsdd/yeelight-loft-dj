@@ -117,6 +117,45 @@ class CheckpointRuntime : DjRuntime {
         }
     }
 
+    /**
+     * A rejected scene-editor update must not change *any* existing pulse,
+     * geometry, gain or mode. Validate all fields before touching the engine.
+     * The engine's individual setters accept every prevalidated proposal and
+     * this lock serializes the update with ongoing capture/clock callbacks.
+     */
+    override fun applySceneSettings(settings: DjRuntime.SceneSettings): Boolean {
+        if (!settings.sensitivity.isFinite() || settings.sensitivity !in 0.25..4.0 ||
+            settings.scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE",
+                                    "SCANNER", "METEOR", "WAVE")) return false
+        val nextPulse = try {
+            ClassicPulseScene.Options(settings.pulseRgb, settings.beatSync,
+                settings.pulseBpm, settings.pulseMin, settings.pulseMax,
+                settings.attackMs, settings.decayMs, settings.gamma)
+        } catch (invalid: IllegalArgumentException) { return false }
+        val nextSpatial = try {
+            ClassicSpatialChoreography.Options(settings.spatialRgb, settings.spatialSpeed,
+                settings.reverse, settings.trailLength, settings.spatialMin, settings.spatialMax)
+        } catch (invalid: IllegalArgumentException) { return false }
+        synchronized(lock) {
+            if (state == State.STOPPING || state == State.CLOSED ||
+                (clockOnly && !clockSceneAllowed(settings.scene, nextPulse))) return false
+            val activeEngine = engine
+            if (activeEngine != null) {
+                if (!activeEngine.configurePulse(nextPulse)) return false
+                if (!activeEngine.configureSpatial(nextSpatial.rgb, nextSpatial.speedPercent,
+                        nextSpatial.reverse, nextSpatial.trailLength,
+                        nextSpatial.minBrightness, nextSpatial.maxBrightness)) return false
+                if (!activeEngine.setScene(settings.scene)) return false
+            }
+            if (inputBridge?.setSensitivity(settings.sensitivity) == false) return false
+            sensitivity = settings.sensitivity
+            scene = settings.scene
+            pulse = nextPulse
+            spatialSettings = nextSpatial
+            return true
+        }
+    }
+
     override fun start(context: Context, source: String, selectedLampIps: List<String>, listener: DjRuntime.Listener) {
         require(source == "microphone") { "Unapproved microphone source" }
         startCapture(selectedLampIps, listener) { inputFactory() }

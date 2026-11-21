@@ -310,6 +310,35 @@ fun main() {
     check(!independent.configure(1.0, "BEAT"))
     check(!independent.configure(1.0, "SPECTRUM"))
     check(!independent.configure(1.0, "PULSE")) // Default pulse requires beats.
+    // Regression: a rejected combined scene edit may not half-apply pulse or
+    // geometry. The same owned socket must keep the old scanner and colour.
+    val rejectedBundle = DjRuntime.SceneSettings(
+        1.0, "PULSE", 0xF0A012, true, 120, 12, 90, 90, 600, 2.0,
+        0x111122, 200, true, 4, 8, 88)
+    check(!independent.applySceneSettings(rejectedBundle))
+    Thread.sleep(360L)
+    check(autonomousWire.lastRgb == 0x445566)
+    check(!independent.configure(1.0, "PULSE")) // Beat-only still forbidden.
+    check(autonomousWire.starts == previousStarts)
+    // Even a bad pulse envelope or spatial bound must reject the WHOLE update.
+    check(!independent.applySceneSettings(DjRuntime.SceneSettings(
+        1.0, "METEOR", 0xFF00FF, false, 120, 12, 90, 90, 600, 2.0,
+        0x123456, 200, false, 4, 80, 8)))
+    check(!independent.applySceneSettings(DjRuntime.SceneSettings(
+        1.0, "METEOR", 0xFF00FF, false, 120, 12, 90, 90, 600, Double.NaN,
+        0x123456, 200, false, 4, 8, 80)))
+    Thread.sleep(360L)
+    check(autonomousWire.lastRgb == 0x445566)
+    // Positive: colour+direction+effect+gain+pulse travel as ONE snapshot,
+    // without new participant handshake or changing the audio-source owner.
+    check(independent.applySceneSettings(DjRuntime.SceneSettings(
+        1.5, "METEOR", 0xF0A012, false, 120, 12, 90, 90, 600, 2.0,
+        0x226688, 175, true, 3, 6, 72)))
+    Thread.sleep(360L)
+    check(autonomousWire.lastRgb == 0x226688 &&
+          autonomousWire.lastBrightness in 6..72)
+    check(autonomousWire.starts == previousStarts)
+    check(independent.configure(1.0, "PULSE")) // Bundle explicitly enabled timer pulse.
     check(independent.configurePulse(0xF0A012, false, 120, 12, 90, 90, 600, 2.0))
     check(independent.configure(1.0, "PULSE"))
     check(!independent.configurePulse(0xF0A012, true, 120, 12, 90, 90, 600, 2.0))

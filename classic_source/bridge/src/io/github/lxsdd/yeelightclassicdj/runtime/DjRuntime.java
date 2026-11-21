@@ -35,6 +35,44 @@ public interface DjRuntime {
      */
     boolean configureSpatial(int rgb, int speedPercent, boolean reverse,
                              int trailLength, int minBrightness, int maxBrightness);
+    /**
+     * Immutable scene-editor snapshot shared by the original Classic Music and
+     * future verified SceneFragment routes. No device identifiers or OEM data.
+     * Call applySceneSettings ONCE; never partially apply its 3 sub-settings.
+     */
+    final class SceneSettings {
+        public final double sensitivity;
+        public final String scene;
+        public final int pulseRgb, pulseBpm, pulseMin, pulseMax, attackMs, decayMs;
+        public final boolean beatSync;
+        public final double gamma;
+        public final int spatialRgb, spatialSpeed, trailLength, spatialMin, spatialMax;
+        public final boolean reverse;
+        public SceneSettings(double sensitivity, String scene,
+                int pulseRgb, boolean beatSync, int pulseBpm, int pulseMin,
+                int pulseMax, int attackMs, int decayMs, double gamma,
+                int spatialRgb, int spatialSpeed, boolean reverse,
+                int trailLength, int spatialMin, int spatialMax) {
+            this.sensitivity = sensitivity;
+            this.scene = scene;
+            this.pulseRgb = pulseRgb;
+            this.beatSync = beatSync;
+            this.pulseBpm = pulseBpm;
+            this.pulseMin = pulseMin;
+            this.pulseMax = pulseMax;
+            this.attackMs = attackMs;
+            this.decayMs = decayMs;
+            this.gamma = gamma;
+            this.spatialRgb = spatialRgb;
+            this.spatialSpeed = spatialSpeed;
+            this.reverse = reverse;
+            this.trailLength = trailLength;
+            this.spatialMin = spatialMin;
+            this.spatialMax = spatialMax;
+        }
+    }
+    /** Validate scene+gain+pulse+geometry together, then commit one owned-session edit. */
+    boolean applySceneSettings(SceneSettings settings);
     /** Stable allowlisted capture-open result. Never expose raw OEM/Android exceptions in UI. */
     enum CaptureFailureKind { PERMISSION, FORMAT, STATE, ABI, UNKNOWN }
     final class CaptureStartFailure extends Exception {

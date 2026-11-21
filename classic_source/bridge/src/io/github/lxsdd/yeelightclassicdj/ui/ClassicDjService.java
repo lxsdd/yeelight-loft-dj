@@ -486,12 +486,13 @@ public final class ClassicDjService extends Service {
         if (spatialRgb < -1 || spatialRgb > 0xFFFFFF || speed < 25 || speed > 400 ||
             trail < 1 || trail > 8 || min < 1 || min > 99 ||
             max <= min || max > 100) return false;
-        if (!target.configurePulse(rgb, "BEAT".equals(mode), bpm, minimum,
-                                    maximum, attack, decay, gamma)) return false;
-        if (!target.configureSpatial(spatialRgb, speed,
-                intent.getBooleanExtra(EXTRA_SPATIAL_REVERSE, false), trail, min, max))
-            return false;
-        return target.configure(gain, scene);
+        // Commit one validated snapshot. Previously three sequential setters
+        // could change Pulse or colour before a clock-only scene rejected BEAT.
+        return target.applySceneSettings(new DjRuntime.SceneSettings(
+                gain, scene, rgb, "BEAT".equals(mode), bpm, minimum,
+                maximum, attack, decay, gamma, spatialRgb, speed,
+                intent.getBooleanExtra(EXTRA_SPATIAL_REVERSE, false),
+                trail, min, max));
     }
 
     private static int spatialColor(Intent intent) {
