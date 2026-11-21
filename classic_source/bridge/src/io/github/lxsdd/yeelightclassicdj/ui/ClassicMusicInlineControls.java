@@ -59,6 +59,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final ProgressBar effectMeter;
     private boolean consentFlowPending;
     private final TextView sceneButton;
+    private final Button[] sceneChoices = new Button[SCENES.length];
+    // UI-only controls of the SAME atomic SceneSettings transaction.
+    private final LinearLayout spatialControls;
+    private final Button spatialSpeedButton, spatialDirectionButton;
+    private final Button spatialTrailButton, spatialRangeButton;
+    private static final int[] SPATIAL_SPEEDS = {50, 75, 100, 150, 200};
+    private static final int[] SPATIAL_TRAILS = {1, 2, 4, 6, 8};
+    private static final int[][] SPATIAL_RANGES = {{1, 100}, {5, 60}, {20, 85}};
+    private int spatialSpeedIndex = 2, spatialTrailIndex = 2, spatialRangeIndex = 0;
+    private boolean spatialReverse;
     private final Button sourceButton;
     private boolean preferInternal;
     private boolean internalOwned;
@@ -132,7 +142,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         detailsHeightPx = Math.max((int) (180f * dm.density + 0.5f),
             Math.min((int) (dm.heightPixels * 0.42f), (int) (360f * dm.density + 0.5f)));
         entryButton = new Button(activity);
-        entryButton.setText("Loft DJ");
+        entryButton.setText("Licht & Musik");
         entryButton.setAllCaps(false);
         entryButton.setContentDescription("Loft DJ Steuerung in Classic-Musik einblenden");
         entryButton.setLayoutParams(new LinearLayout.LayoutParams(
@@ -224,7 +234,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 "Eine Freigabe ist pro Sitzung erforderlich." :
                 "Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
             startButton.setText(preferInternal ? "Audio freigeben" : "Analyse starten");
-            entryButton.setText("Loft DJ");
+            entryButton.setText("Licht & Musik");
         });
         actions.addView(startButton, new LinearLayout.LayoutParams(0, -2, 1f));
 
@@ -233,23 +243,83 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         sceneButton = new TextView(activity);
         sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
         settings.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        // Seven directly selectable effects in two rows; no cyclic guesswork.
-        for (int rowIndex = 0; rowIndex < 2; rowIndex++) {
+        // Readable two-column choices within the OEM MusicActivity viewport.
+        // No second scene database or lamp selection.
+        for (int rowIndex = 0; rowIndex < 4; rowIndex++) {
+            if (rowIndex == 0 || rowIndex == 2) {
+                TextView heading = new TextView(activity);
+                heading.setText(rowIndex == 0 ? "Musikreaktionen" : "Räumliche Lichtszene");
+                expanded.addView(heading);
+            }
             LinearLayout choices = new LinearLayout(activity);
             choices.setOrientation(HORIZONTAL);
-            int first = rowIndex == 0 ? 0 : 4;
-            int limit = rowIndex == 0 ? 4 : SCENES.length;
+            int first = rowIndex * 2;
+            int limit = Math.min(first + 2, SCENES.length);
             for (int index = first; index < limit; index++) {
                 final int selectedScene = index;
                 Button choice = new Button(activity);
-                choice.setText(SCENE_LABELS[index]);
                 choice.setAllCaps(false);
-                choice.setContentDescription("Lichtszene " + SCENE_LABELS[index] + " wählen");
                 choice.setOnClickListener(v -> selectScene(selectedScene));
+                sceneChoices[index] = choice;
                 choices.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
             }
             expanded.addView(choices);
         }
+        refreshSceneChoices();
+
+        spatialControls = new LinearLayout(activity);
+        spatialControls.setOrientation(VERTICAL);
+        spatialControls.setVisibility(View.GONE);
+        TextView hint = new TextView(activity);
+        hint.setText("Szenenparameter · Farbe bleibt beim Classic-Effekt. " +
+            "Ohne verifizierte Lampenauswahl nur Vorschau.");
+        spatialControls.addView(hint);
+
+        LinearLayout top = new LinearLayout(activity);
+        top.setOrientation(HORIZONTAL);
+        spatialSpeedButton = new Button(activity);
+        spatialSpeedButton.setAllCaps(false);
+        spatialSpeedButton.setContentDescription("Szenengeschwindigkeit einstellen");
+        spatialSpeedButton.setOnClickListener(v -> {
+            spatialSpeedIndex = (spatialSpeedIndex + 1) % SPATIAL_SPEEDS.length;
+            updateSpatialLabels();
+            configureIfOwned();
+        });
+        top.addView(spatialSpeedButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        spatialDirectionButton = new Button(activity);
+        spatialDirectionButton.setAllCaps(false);
+        spatialDirectionButton.setContentDescription("Richtung der Lichtszene umschalten");
+        spatialDirectionButton.setOnClickListener(v -> {
+            spatialReverse = !spatialReverse;
+            updateSpatialLabels();
+            configureIfOwned();
+        });
+        top.addView(spatialDirectionButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        spatialControls.addView(top);
+
+        LinearLayout bottom = new LinearLayout(activity);
+        bottom.setOrientation(HORIZONTAL);
+        spatialTrailButton = new Button(activity);
+        spatialTrailButton.setAllCaps(false);
+        spatialTrailButton.setContentDescription("Schweiflänge der Lichtszene einstellen");
+        spatialTrailButton.setOnClickListener(v -> {
+            spatialTrailIndex = (spatialTrailIndex + 1) % SPATIAL_TRAILS.length;
+            updateSpatialLabels();
+            configureIfOwned();
+        });
+        bottom.addView(spatialTrailButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        spatialRangeButton = new Button(activity);
+        spatialRangeButton.setAllCaps(false);
+        spatialRangeButton.setContentDescription("Helligkeitsbereich der Lichtszene einstellen");
+        spatialRangeButton.setOnClickListener(v -> {
+            spatialRangeIndex = (spatialRangeIndex + 1) % SPATIAL_RANGES.length;
+            updateSpatialLabels();
+            configureIfOwned();
+        });
+        bottom.addView(spatialRangeButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        spatialControls.addView(bottom);
+        expanded.addView(spatialControls);
+        updateSpatialLabels();
 
         gainButton = new Button(activity);
         gainButton.setText("Empfindlichkeit: 1×");
@@ -316,10 +386,32 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         expanded.addView(pulseShapeControls);
     }
 
+    private void refreshSceneChoices() {
+        for (int i = 0; i < sceneChoices.length; i++) {
+            Button choice = sceneChoices[i];
+            if (choice == null) continue;
+            boolean selected = i == scene;
+            choice.setText((selected ? "✓ " : "") + SCENE_LABELS[i]);
+            choice.setContentDescription(SCENE_LABELS[i] +
+                (selected ? ", ausgewählte Lichtszene" : ", Lichtszene auswählen"));
+        }
+    }
+
+    private void updateSpatialLabels() {
+        spatialSpeedButton.setText("Tempo " + SPATIAL_SPEEDS[spatialSpeedIndex] + "%");
+        spatialDirectionButton.setText(spatialReverse ? "Rückwärts" : "Vorwärts");
+        spatialTrailButton.setText("Schweif " + SPATIAL_TRAILS[spatialTrailIndex]);
+        spatialRangeButton.setText("Helligkeit " +
+            SPATIAL_RANGES[spatialRangeIndex][0] + "–" +
+            SPATIAL_RANGES[spatialRangeIndex][1] + "%");
+    }
+
     private void selectScene(int requested) {
         if (requested < 0 || requested >= SCENES.length) return;
         scene = requested;
+        refreshSceneChoices();
         sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
+        spatialControls.setVisibility(scene >= 4 ? View.VISIBLE : View.GONE);
         pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
         pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
         effectFeedback.setText("Vorschau: " +
@@ -445,6 +537,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
         intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
         addPulseSettings(intent);
+        addSpatialSettings(intent);
         try {
             if (preferInternal) {
                 if (Build.VERSION.SDK_INT < 29) {
@@ -483,6 +576,20 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         intent.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, PULSE_GAMMAS[pulseShape]);
     }
 
+    private void addSpatialSettings(Intent intent) {
+        // The Service reads these as doubles, validates the complete snapshot
+        // and applies it ONCE. Do not supply a fake original picker colour.
+        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_SPEED,
+            (double) SPATIAL_SPEEDS[spatialSpeedIndex]);
+        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_REVERSE, spatialReverse);
+        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_TRAIL,
+            (double) SPATIAL_TRAILS[spatialTrailIndex]);
+        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_MIN,
+            (double) SPATIAL_RANGES[spatialRangeIndex][0]);
+        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_MAX,
+            (double) SPATIAL_RANGES[spatialRangeIndex][1]);
+    }
+
     private void configureIfOwned() {
         if (!locallyStarted || sessionOwner == null ||
                 !ClassicDjService.hasActiveSession()) return;
@@ -492,6 +599,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
         intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
         addPulseSettings(intent);
+        addSpatialSettings(intent);
         try {
             host.startService(intent);
         } catch (RuntimeException error) {
@@ -522,6 +630,6 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             }
         }
         status.setText("Analyse wird beendet · Classic-Musik unverändert");
-        entryButton.setText("Loft DJ");
+        entryButton.setText("Licht & Musik");
     }
 }
