@@ -50,7 +50,7 @@ class LiveDJConfigurationContract(unittest.TestCase):
     def test_live_config_does_not_restart_mic_or_music_network(self):
         service = self.sources["service"]
         start = service.index('if (ACTION_CONFIG.equals(action))')
-        end = service.index('final boolean internal = ACTION_INTERNAL.equals(action);', start)
+        end = service.index('final boolean projectionRequired = ACTION_INTERNAL.equals(action);', start)
         cfg = service[start:end]
         self.assertIn("configureRuntime(runtime, intent, gain, scene)", cfg)
         for invalid in ("startForeground(", "startMusicMode", "set_music", "set_power",

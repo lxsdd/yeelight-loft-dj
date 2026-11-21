@@ -110,7 +110,7 @@ STUBS.update({
  public Intent putExtra(String k,double v){return this;} public Intent putExtra(String k,int v){return this;} public Intent putExtra(String k,Intent v){return this;}
  public String[] getStringArrayExtra(String k){return null;}
  public String getStringExtra(String k){return null;}
- public double getDoubleExtra(String k,double fallback){return fallback;} public int getIntExtra(String k,int fallback){return fallback;} public <T> T getParcelableExtra(String k,Class<T> c){return null;} public <T> T getParcelableExtra(String k){return null;}
+ public double getDoubleExtra(String k,double fallback){return fallback;} public int getIntExtra(String k,int fallback){return fallback;} public <T> T getParcelableExtra(String k,Class<T> c){return null;} public <T> T getParcelableExtra(String k){return null;} public boolean hasExtra(String k){return false;}
 }''',
 'android/widget/LinearLayout.java': '''package android.widget;
 public class LinearLayout extends android.view.View {
@@ -233,6 +233,7 @@ STUBS.update({
  public static final String BLUETOOTH_SCAN="android.permission.BLUETOOTH_SCAN";
  public static final String BLUETOOTH_CONNECT="android.permission.BLUETOOTH_CONNECT";
  public static final String NEARBY_WIFI_DEVICES="android.permission.NEARBY_WIFI_DEVICES";
+ public static final String MODIFY_AUDIO_SETTINGS="android.permission.MODIFY_AUDIO_SETTINGS";
  }}''',
 'android/content/pm/ActivityInfo.java': '''package android.content.pm; public class ActivityInfo {
  public android.os.Bundle metaData=new android.os.Bundle();
