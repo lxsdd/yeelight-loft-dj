@@ -25,6 +25,7 @@ BRIDGE_NAMESPACE = "io.github.lxsdd.yeelightclassicdj"
 BRIDGE_ACTIVITY = BRIDGE_NAMESPACE + ".ui.ClassicDjActivity"
 BRIDGE_SERVICE = BRIDGE_NAMESPACE + ".ui.ClassicDjService"
 BRIDGE_NEARBY_GATE = BRIDGE_NAMESPACE + ".ui.ClassicNearbyGateActivity"
+BRIDGE_INTERNAL_CONSENT = BRIDGE_NAMESPACE + ".ui.ClassicInternalAudioConsentActivity"
 BRIDGE_OEM_LAUNCHER_META = BRIDGE_NAMESPACE + ".OEM_LAUNCHER"
 BRIDGE_BUTTON = BRIDGE_NAMESPACE + ".ui.ClassicDjEntryView"
 ANDROID = "http://schemas.android.com/apk/res/android"
@@ -221,6 +222,16 @@ def patch_manifest(path: Path, *, identity_control=False) -> dict:
             if not any(e.tag.startswith("uses-permission") and e.get(A("name")) == name for e in root):
                 ET.SubElement(root, "uses-permission", {A("name"): name})
         nearby_entry = route_clone_launcher_through_permission_gate(app)
+        media_permission = "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+        if not any(e.tag.startswith("uses-permission") and
+                   e.get(A("name")) == media_permission for e in root):
+            ET.SubElement(root, "uses-permission", {A("name"): media_permission})
+        ET.SubElement(app, "activity", {
+            A("name"): BRIDGE_INTERNAL_CONSENT,
+            A("exported"): "false",
+            A("theme"): "@android:style/Theme.Translucent.NoTitleBar",
+            A("label"): "Internes Android-Audio freigeben",
+        })
     require(not any(e.tag == "activity" and e.get(A("name")) == BRIDGE_ACTIVITY for e in app), "BRIDGE_ALREADY_PRESENT")
     ET.SubElement(app, "activity", {
         A("name"): BRIDGE_ACTIVITY,
@@ -231,7 +242,8 @@ def patch_manifest(path: Path, *, identity_control=False) -> dict:
     ET.SubElement(app, "service", {
         A("name"): BRIDGE_SERVICE,
         A("exported"): "false",
-        A("foregroundServiceType"): "microphone",
+        A("foregroundServiceType"): ("microphone" if identity_control
+                                    else "microphone|mediaProjection"),
     })
     # The clone registers an unexported lifecycle observer which acts ONLY
     # within the real OEM MusicActivity. The original-identity QA control
@@ -312,7 +324,7 @@ def prepare(original: Path, decoded: Path, dex: Path, output: Path,
     check_source_manifest(decoded / "AndroidManifest.xml")
     require(dex.is_file() and dex.stat().st_size > 110 and dex.read_bytes()[:8] in (b"dex\n035\0", b"dex\n037\0", b"dex\n038\0", b"dex\n039\0"), "BRIDGE_DEX_INVALID")
     bridge = dex.read_bytes()
-    for klass in (b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;", b"Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;"):
+    for klass in (b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicInternalAudioConsentActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;", b"Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;"):
         require(klass in bridge, "BRIDGE_DEX_MISSING_REQUIRED_CLASS")
     require(not output.exists(), "OUTPUT_ALREADY_EXISTS")
     require(output.parent.is_dir(), "OUTPUT_PARENT_NOT_FOUND")

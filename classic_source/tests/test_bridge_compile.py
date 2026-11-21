@@ -31,6 +31,7 @@ STUBS = {
  public int onStartCommand(android.content.Intent i,int f,int s){return 0;}
  public void onDestroy(){} public void stopSelf(){} public void startForeground(int id,Notification n){}
  public void stopForeground(boolean remove){}
+ public void startForeground(int id,Notification notice,int types){}
 }''',
 'android/app/PendingIntent.java': '''package android.app; public class PendingIntent {
  public static final int FLAG_UPDATE_CURRENT=1, FLAG_IMMUTABLE=2, FLAG_NO_CREATE=4;
@@ -106,10 +107,10 @@ STUBS.update({
  public Intent addCategory(String c){return this;} public Intent setAction(String a){return this;} public String getAction(){return "";}
  public Intent putExtra(String k,String[] a){return this;}
  public Intent putExtra(String k,String v){return this;}
- public Intent putExtra(String k,double v){return this;}
+ public Intent putExtra(String k,double v){return this;} public Intent putExtra(String k,int v){return this;} public Intent putExtra(String k,Intent v){return this;}
  public String[] getStringArrayExtra(String k){return null;}
  public String getStringExtra(String k){return null;}
- public double getDoubleExtra(String k,double fallback){return fallback;}
+ public double getDoubleExtra(String k,double fallback){return fallback;} public int getIntExtra(String k,int fallback){return fallback;} public <T> T getParcelableExtra(String k,Class<T> c){return null;} public <T> T getParcelableExtra(String k){return null;}
 }''',
 'android/widget/LinearLayout.java': '''package android.widget;
 public class LinearLayout extends android.view.View {
@@ -148,6 +149,10 @@ STUBS.update({
  public void setContentView(android.view.View v){} public boolean isFinishing(){return false;}
  public boolean isDestroyed(){return false;} public boolean hasWindowFocus(){return true;}
  public void finish(){} public android.content.ComponentName getComponentName(){return new android.content.ComponentName();}
+ public static final int RESULT_OK=-1;
+ public android.content.Intent getIntent(){return new android.content.Intent();}
+ public void startActivityForResult(android.content.Intent intent,int request){}
+ protected void onActivityResult(int request,int result,android.content.Intent data){}
  public android.view.View findViewById(int id){return null;}
  public void requestPermissions(String[] p,int r){} public void onRequestPermissionsResult(int code,String[] p,int[] results){}
 }''',
@@ -237,6 +242,26 @@ STUBS.update({
 'android/content/ComponentName.java': '''package android.content; public class ComponentName {}''',
 'android/os/Bundle.java': '''package android.os; public class Bundle {
  public String getString(String key){return null;}
+}''',
+})
+
+# Synthetic compile support for Android MediaProjection.
+STUBS.update({
+'android/media/projection/MediaProjection.java': '''package android.media.projection;
+public class MediaProjection {
+ public static abstract class Callback { public void onStop(){} }
+ public void registerCallback(Callback callback,android.os.Handler handler){}
+ public void unregisterCallback(Callback callback){}
+ public void stop(){}
+}''',
+'android/media/projection/MediaProjectionManager.java': '''package android.media.projection;
+public class MediaProjectionManager {
+ public android.content.Intent createScreenCaptureIntent(){return new android.content.Intent();}
+ public MediaProjection getMediaProjection(int result,android.content.Intent data){return new MediaProjection();}
+}''',
+'android/content/pm/ServiceInfo.java': '''package android.content.pm; public class ServiceInfo {
+ public static final int FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION=32;
+ public static final int FOREGROUND_SERVICE_TYPE_MICROPHONE=128;
 }''',
 })
 

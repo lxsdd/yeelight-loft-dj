@@ -37,6 +37,7 @@ DEX = b'dex\n039\0' + b'X'*200 + (b'Lio/github/lxsdd/yeelightclassicdj/ui/Classi
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;'
+        + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicInternalAudioConsentActivity;'
         + b'Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;')
 
 class ClassicTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightclassicdj.runtime
 
 import android.content.Context
+import android.media.projection.MediaProjection
 import android.os.SystemClock
 import loftdj.classic.ClassicAndroidAudioRecordInput
 import loftdj.classic.ClassicDjEngine
@@ -84,7 +85,19 @@ class CheckpointRuntime : DjRuntime {
     }
 
     override fun start(context: Context, source: String, selectedLampIps: List<String>, listener: DjRuntime.Listener) {
-        require(source == "microphone") { "Only explicit microphone capture is supported" }
+        require(source == "microphone") { "Unapproved microphone source" }
+        startCapture(selectedLampIps, listener) { inputFactory() }
+    }
+
+    override fun startInternal(context: Context, projection: MediaProjection,
+                               selectedLampIps: List<String>, listener: DjRuntime.Listener) {
+        startCapture(selectedLampIps, listener) {
+            ClassicPlaybackCaptureInput.open(projection, sampleRate = SAMPLE_RATE)
+        }
+    }
+
+    private fun startCapture(selectedLampIps: List<String>, listener: DjRuntime.Listener,
+                             sourceInput: () -> ClassicPcmCaptureSession.Input) {
         require(selectedLampIps.size <= 4 && selectedLampIps.distinct().size == selectedLampIps.size)
         require(selectedLampIps.all(ClassicYeelightMusicTransport::validLanIp))
         synchronized(lock) {
@@ -115,7 +128,7 @@ class CheckpointRuntime : DjRuntime {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
             synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
-            createdInput = inputFactory()
+            createdInput = sourceInput()
             val bridge = ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = ClassicPcmCaptureSession(bridge, createdInput, clock) { output ->
                 val current = synchronized(lock) {

@@ -26,7 +26,8 @@ SYSTEM=("Ljava/","Ljavax/","Landroid/","Ldalvik/","Lorg/json/","Lorg/xmlpull/",
 REMOVED=("com.google.firebase.provider.FirebaseInitProvider","com.yeelight.yeelib.data.DeviceInteractionProvider")
 ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity"),
        ("service","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjService"))
-CLONE_ONLY_ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicNearbyGateActivity"),)
+CLONE_ONLY_ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicNearbyGateActivity"),
+                  ("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicInternalAudioConsentActivity"))
 
 FRAMEWORK_MANIFEST=("Landroid/","Lcom/android/")
 REQUIRED_MANIFEST_ROLES=("application","activity","service","receiver","provider",

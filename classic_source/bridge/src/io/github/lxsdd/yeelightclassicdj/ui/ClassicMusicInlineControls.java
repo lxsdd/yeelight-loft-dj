@@ -33,6 +33,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final TextView status;
     private final LinearLayout expanded;
     private final Button sceneButton;
+    private final Button sourceButton;
+    private boolean preferInternal;
+    private boolean internalOwned;
     private final Button gainButton;
     private final Button pulseModeButton;
     private Button pulseTempoButton;
@@ -107,6 +110,20 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         status.setText("Loft DJ · Classic-Musik · nur Mikrofonanalyse, keine Lampen");
         status.setContentDescription("Loft DJ Status innerhalb Classic Music");
         expanded.addView(status);
+
+        sourceButton = new Button(activity);
+        sourceButton.setText("Quelle: Mikrofon");
+        sourceButton.setContentDescription("Analysequelle zwischen Mikrofon und internem Android-Audio wählen");
+        sourceButton.setOnClickListener(v -> {
+            if (locallyStarted || ClassicDjService.hasActiveSession()) {
+                status.setText("Quelle nur nach Stopp wechseln");
+                return;
+            }
+            preferInternal = !preferInternal;
+            sourceButton.setText(preferInternal ?
+                "Quelle: Internes Android-Audio" : "Quelle: Mikrofon");
+        });
+        expanded.addView(sourceButton);
 
         LinearLayout controls = new LinearLayout(activity);
         controls.setOrientation(HORIZONTAL);
@@ -189,6 +206,30 @@ public final class ClassicMusicInlineControls extends LinearLayout {
 
     public void onHostResumed() {
         attached = true;
+        ClassicInternalAudioConsentActivity.Result result =
+            ClassicInternalAudioConsentActivity.takeResult();
+        if (result != null && internalOwned && result.owner.equals(sessionOwner)) {
+            if (result.started) {
+                status.setText("Internes Audio freigegeben · Analyse startet");
+            } else {
+                locallyStarted = false;
+                internalOwned = false;
+                sessionOwner = null;
+                status.setText("Interne Android-Audiofreigabe nicht erteilt");
+            }
+        }
+        // A MediaProjection service may continue while the owner opens a
+        // separate music app. Only reattach the exact same-process owned session.
+        if (!locallyStarted) {
+            String owned = ClassicDjService.ownerForInternal();
+            if (owned != null) {
+                locallyStarted = true;
+                internalOwned = true;
+                preferInternal = true;
+                sessionOwner = owned;
+                sourceButton.setText("Quelle: Internes Android-Audio");
+            }
+        }
         handler.removeCallbacks(refresh);
         handler.post(refresh);
     }
@@ -197,7 +238,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     public void onHostPaused() {
         attached = false;
         handler.removeCallbacks(refresh);
-        stopOwned();
+        // PlaybackCapture must remain alive while the foreground app plays
+        // permitted audio. Microphone analysis still stops with MusicActivity.
+        if (!internalOwned) stopOwned();
         expanded.setVisibility(View.GONE);
     }
 
@@ -231,20 +274,34 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             return;
         }
         String newOwner = java.util.UUID.randomUUID().toString();
-        Intent intent = new Intent(host, ClassicDjService.class);
-        intent.setAction(ClassicDjService.ACTION_MIC);
+        Intent intent = new Intent(host, preferInternal ?
+            ClassicInternalAudioConsentActivity.class : ClassicDjService.class);
+        intent.setAction(preferInternal ?
+            ClassicDjService.ACTION_INTERNAL : ClassicDjService.ACTION_MIC);
         intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, newOwner);
         intent.putExtra(ClassicDjActivity.EXTRA_SELECTED_IPS, new String[0]);
         intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
         intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
         addPulseSettings(intent);
         try {
-            if (Build.VERSION.SDK_INT >= 26) host.startForegroundService(intent);
-            else host.startService(intent);
+            if (preferInternal) {
+                if (Build.VERSION.SDK_INT < 29) {
+                    status.setText("Internes Audio erfordert Android 10 oder neuer");
+                    return;
+                }
+                host.startActivity(intent); // transient Android consent broker; no DJ screen
+            } else if (Build.VERSION.SDK_INT >= 26) {
+                host.startForegroundService(intent);
+            } else {
+                host.startService(intent);
+            }
             sessionOwner = newOwner;
+            internalOwned = preferInternal;
             locallyStarted = true;
             requestedAtMs = SystemClock.elapsedRealtime();
-            status.setText("Mikrofonanalyse angefordert · keine Lampenbefehle");
+            status.setText(preferInternal ?
+                "Interne Android-Audiofreigabe angefordert · keine Lampen" :
+                "Mikrofonanalyse angefordert · keine Lampenbefehle");
         } catch (RuntimeException error) {
             status.setText("Analyse nicht gestartet · keine Lampenbefehle");
         }
@@ -282,6 +339,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         if (!locallyStarted) return;
         String oldOwner = sessionOwner;
         locallyStarted = false;
+        internalOwned = false;
         sessionOwner = null;
         if (oldOwner == null) return;
         // This same-process path fences an already-running session before

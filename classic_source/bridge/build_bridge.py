@@ -171,6 +171,7 @@ def no_oem_class_collisions(original_apk, sidecar_dex):
     expected = {'Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;',
+                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicInternalAudioConsentActivity;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;',

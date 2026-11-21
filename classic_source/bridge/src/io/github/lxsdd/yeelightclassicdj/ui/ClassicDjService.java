@@ -8,6 +8,9 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
@@ -16,6 +19,9 @@ import io.github.lxsdd.yeelightclassicdj.runtime.DjRuntime;
 /** One foreground owner for music. Never falls back to regular TCP-RGB on failure. */
 public final class ClassicDjService extends Service {
     public static final String ACTION_MIC = "io.github.lxsdd.yeelightclassicdj.MIC";
+    public static final String ACTION_INTERNAL = "io.github.lxsdd.yeelightclassicdj.INTERNAL";
+    public static final String EXTRA_CONSENT_CODE = "io.github.lxsdd.yeelightclassicdj.CONSENT_CODE";
+    public static final String EXTRA_CONSENT_DATA = "io.github.lxsdd.yeelightclassicdj.CONSENT_DATA";
     public static final String ACTION_STOP = "io.github.lxsdd.yeelightclassicdj.STOP";
     public static final String ACTION_CONFIG = "io.github.lxsdd.yeelightclassicdj.CONFIG";
     public static final String EXTRA_UI_OWNER = "io.github.lxsdd.yeelightclassicdj.UI_SESSION_OWNER";
@@ -45,6 +51,20 @@ public final class ClassicDjService extends Service {
     private static volatile double lastBpm = 0.0;
     private static volatile float lastLevel = 0f;
     private static volatile boolean activeSession = false;
+    private boolean currentInternal;
+    private MediaProjection activeProjection;
+    private MediaProjection.Callback activeProjectionCallback;
+
+    /** Exact process-local owner of a real internal capture, never an OEM lamp. */
+    static String ownerForInternal() {
+        ClassicDjService service = liveService;
+        if (service == null) return null;
+        synchronized (service.sessionGuard) {
+            return activeSession && service.currentInternal &&
+                   service.sessionFence.owns(service.currentToken) ?
+                service.uiOwner.current() : null;
+        }
+    }
     private static final ClassicAnalysisStartResult startResults =
         new ClassicAnalysisStartResult();
 
@@ -128,7 +148,8 @@ public final class ClassicDjService extends Service {
             }
             return START_NOT_STICKY;
         }
-        if (!ACTION_MIC.equals(action)) return START_NOT_STICKY;
+        final boolean internal = ACTION_INTERNAL.equals(action);
+        if (!ACTION_MIC.equals(action) && !internal) return START_NOT_STICKY;
         // Reject duplicate or stale UI starts BEFORE their invalid settings
         // can call stopSelf() on an already-owned running DJ session.
         synchronized (sessionGuard) {
@@ -142,6 +163,11 @@ public final class ClassicDjService extends Service {
             return START_NOT_STICKY;
         }
         startResults.begin(requestedOwner);
+        if (internal && Build.VERSION.SDK_INT < 29) {
+            rejectStart(requestedOwner, "Internes Audio benötigt Android 10 oder neuer");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         final double requestedGain = intent.getDoubleExtra(EXTRA_GAIN, 1.0);
         final String requestedScene = intent.getStringExtra(EXTRA_SCENE) == null ?
             "SPECTRUM" : intent.getStringExtra(EXTRA_SCENE);
@@ -204,6 +230,7 @@ public final class ClassicDjService extends Service {
                 return START_NOT_STICKY;
             }
             currentToken = token;
+            currentInternal = internal;
             runtime = session;
             activeSession = true;
             liveService = this;
@@ -215,7 +242,43 @@ public final class ClassicDjService extends Service {
                 if (nm != null) nm.createNotificationChannel(
                     new NotificationChannel(CHANNEL, "Loft DJ", NotificationManager.IMPORTANCE_LOW));
             }
-            startForeground(NOTIFICATION_ID, notification());
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIFICATION_ID, notification(),
+                    internal ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION :
+                               ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+            } else {
+                startForeground(NOTIFICATION_ID, notification());
+            }
+            final MediaProjection mediaProjection;
+            if (internal) {
+                @SuppressWarnings("deprecation")
+                Intent data = Build.VERSION.SDK_INT >= 33 ?
+                    intent.getParcelableExtra(EXTRA_CONSENT_DATA, Intent.class) :
+                    (Intent) intent.getParcelableExtra(EXTRA_CONSENT_DATA);
+                if (data == null ||
+                    intent.getIntExtra(EXTRA_CONSENT_CODE, Integer.MIN_VALUE)
+                        != android.app.Activity.RESULT_OK) {
+                    throw new SecurityException("Android playback capture consent missing");
+                }
+                MediaProjectionManager manager = getSystemService(MediaProjectionManager.class);
+                if (manager == null) throw new SecurityException("MediaProjection unavailable");
+                mediaProjection = manager.getMediaProjection(
+                    android.app.Activity.RESULT_OK, data);
+                if (mediaProjection == null)
+                    throw new SecurityException("Android rejected media projection");
+                activeProjection = mediaProjection;
+                final long ownedToken = token;
+                MediaProjection.Callback revoked = new MediaProjection.Callback() {
+                    @Override public void onStop() {
+                        stopSession(ownedToken, "Android-Audiofreigabe beendet", true);
+                    }
+                };
+                activeProjectionCallback = revoked;
+                mediaProjection.registerCallback(revoked,
+                    new android.os.Handler(android.os.Looper.getMainLooper()));
+            } else {
+                mediaProjection = null;
+            }
             final DjRuntime.Listener callback = new DjRuntime.Listener() {
                 @Override public void onState(String value) {
                     synchronized (sessionGuard) {
@@ -234,7 +297,8 @@ public final class ClassicDjService extends Service {
             };
             Thread thread = new Thread(() -> {
                 try {
-                    session.start(this, "microphone", ips, callback);
+                    if (internal) session.startInternal(this, mediaProjection, ips, callback);
+                    else session.start(this, "microphone", ips, callback);
                 } catch (Throwable error) {
                     if (sessionFence.owns(token)) {
                         Log.e("ClassicDJ", "Music handshake or microphone start failed", error);
@@ -339,7 +403,8 @@ public final class ClassicDjService extends Service {
             sessionFence.cancel(); // fence callbacks before touching any session/socket
             String completedOwner = uiOwner.current();
             if (finalState.startsWith("DJ-Start fehlgeschlagen") ||
-                    finalState.startsWith("Mikrofonfehler")) {
+                    finalState.startsWith("Mikrofonfehler") ||
+                    finalState.startsWith("Android-Audiofreigabe")) {
                 startResults.fail(completedOwner, finalState);
             } else {
                 startResults.clear(completedOwner);
@@ -347,6 +412,7 @@ public final class ClassicDjService extends Service {
             uiOwner.clear(); // revoke all stale panel/notification actions
             currentToken = 0L;
             activeSession = false;
+            currentInternal = false;
             instance = runtime;
             runtime = null;
             startupWorker = null;
@@ -379,11 +445,28 @@ public final class ClassicDjService extends Service {
     }
 
     private boolean closeOwnedRuntime(DjRuntime instance) {
-        try { instance.stop(); return true; }
+        boolean clean = true;
+        try { instance.stop(); }
         catch (Exception | LinkageError error) {
             Log.e("ClassicDJ", "Owned Music cleanup unconfirmed; manual check required", error);
-            return false;
+            clean = false;
+        } finally {
+            // A projection obtained after foreground start is single-use.
+            // Release even if this session failed before a PCM input was made.
+            MediaProjection projection = activeProjection;
+            MediaProjection.Callback callback = activeProjectionCallback;
+            activeProjection = null;
+            activeProjectionCallback = null;
+            if (projection != null) {
+                if (callback != null) {
+                    try { projection.unregisterCallback(callback); }
+                    catch (RuntimeException ignored) { clean = false; }
+                }
+                try { projection.stop(); }
+                catch (RuntimeException ignored) { clean = false; }
+            }
         }
+        return clean;
     }
 
     private void finishSessionStop(String finalState, boolean clean, boolean requestStopSelf) {
@@ -401,7 +484,9 @@ public final class ClassicDjService extends Service {
     // Only called while holding sessionGuard for the confirmed current session.
     private void acceptState(String value) {
         if (value == null) return;
-        if ("MIC_ANALYSIS_ONLY_NO_LAMPS".equals(value)) currentState = "Mikrofonanalyse · keine Lampensteuerung";
+        if ("MIC_ANALYSIS_ONLY_NO_LAMPS".equals(value)) currentState =
+            currentInternal ? "Internes Android-Audio · keine Lampensteuerung" :
+                "Mikrofonanalyse · keine Lampensteuerung";
         else if (value.startsWith("DJ_ACTIVE_")) currentState = "Music-Rückkanal aktiv · " +
             value.substring(10).replace('_', ' ').toLowerCase(java.util.Locale.ROOT);
         else if ("STOPPED".equals(value)) currentState = "Gestoppt";

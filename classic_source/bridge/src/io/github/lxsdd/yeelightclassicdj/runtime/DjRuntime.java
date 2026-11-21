@@ -1,12 +1,16 @@
 package io.github.lxsdd.yeelightclassicdj.runtime;
 
 import android.content.Context;
+import android.media.projection.MediaProjection;
 import java.util.List;
 
 /** Implemented by the previously tested private Kotlin Classic DJ checkpoint, NOT by Classic internals. */
 public interface DjRuntime {
     /** Must fail closed if no participants/mic permission or any session remains ambiguous. */
     void start(Context context, String source, List<String> selectedLampIps, Listener listener) throws Exception;
+    /** Explicitly consented Android playback capture, using the same PCM/DSP pipeline. */
+    void startInternal(Context context, MediaProjection projection,
+                       List<String> selectedLampIps, Listener listener) throws Exception;
     /** Idempotent, per-bulb safe stop/close; must not send blind recovery retries. */
     void stop();
     /** Update DSP sensitivity and visual scene without reconnecting owned Music sockets. */
