@@ -126,6 +126,44 @@ fun main() {
     check(!touchedNetwork) { "Source denied but network/participant was touched" }
     rejectedParticipant.stop()
 
+    // The OEM-Visualizer route must reuse the production PCM/FFT/beat bridge,
+    // without a MediaProjection token or any additional lamp participant.
+    val vizSource = MockMic()
+    val vizRuntime = CheckpointRuntime()
+    vizRuntime.visualizerFactory = { id ->
+        check(id == 17) { "The exact OEM-owned session ID must be forwarded" }
+        vizSource
+    }
+    val vizListener = Listener()
+    check(runCatching {
+        vizRuntime.startVisualizer(Context(), -1, emptyList(), Listener())
+    }.isFailure)
+    vizRuntime.startVisualizer(Context(), 17, emptyList(), vizListener)
+    check(vizListener.spectrum.await(4, TimeUnit.SECONDS)) {
+        "Original-Visualizer route did not reach shared measured DSP"
+    }
+    check(vizListener.lastBands.size == 4 && vizListener.lastBands.any { it > 0f })
+    check(vizListener.states.contains("MIC_ANALYSIS_ONLY_NO_LAMPS"))
+    vizRuntime.stop()
+    check(vizSource.closed)
+
+    val visualizerDenied = CheckpointRuntime()
+    var visualizerNetworkTouched = false
+    visualizerDenied.visualizerFactory = { throw SecurityException("synthetic Visualizer deny") }
+    visualizerDenied.wifiAddress = {
+        visualizerNetworkTouched = true; "192.168.1.2"
+    }
+    visualizerDenied.transportFactory = { _, _ ->
+        visualizerNetworkTouched = true
+        error("No Music socket permitted")
+    }
+    val visualizerError = runCatching {
+        visualizerDenied.startVisualizer(Context(), 0, listOf("192.168.55.42"), Listener())
+    }.exceptionOrNull()
+    check(visualizerError is DjRuntime.CaptureStartFailure &&
+          visualizerError.kind == DjRuntime.CaptureFailureKind.PERMISSION)
+    check(!visualizerNetworkTouched)
+    visualizerDenied.stop()
     // Integration acceptance: user-picked one Color4 is registered, owned and stopped.
     // No sockets or actual lamp writes: injected in-memory reverse transport.
     val selected = CheckpointRuntime()

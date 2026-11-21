@@ -21,6 +21,9 @@ import io.github.lxsdd.yeelightclassicdj.runtime.DjRuntime;
 public final class ClassicDjService extends Service {
     public static final String ACTION_MIC = "io.github.lxsdd.yeelightclassicdj.MIC";
     public static final String ACTION_INTERNAL = "io.github.lxsdd.yeelightclassicdj.INTERNAL";
+    /** Internal-only entry point: requires OEM-verified audio-session ID. NOT wired to UI yet. */
+    public static final String ACTION_VISUALIZER = "io.github.lxsdd.yeelightclassicdj.VISUALIZER";
+    public static final String EXTRA_AUDIO_SESSION_ID = "io.github.lxsdd.yeelightclassicdj.AUDIO_SESSION_ID";
     public static final String EXTRA_CONSENT_CODE = "io.github.lxsdd.yeelightclassicdj.CONSENT_CODE";
     public static final String EXTRA_CONSENT_DATA = "io.github.lxsdd.yeelightclassicdj.CONSENT_DATA";
     public static final String ACTION_STOP = "io.github.lxsdd.yeelightclassicdj.STOP";
@@ -175,7 +178,9 @@ public final class ClassicDjService extends Service {
             }
             return START_NOT_STICKY;
         }
-        final boolean internal = ACTION_INTERNAL.equals(action);
+        final boolean projectionRequired = ACTION_INTERNAL.equals(action);
+        final boolean visualizer = ACTION_VISUALIZER.equals(action);
+        final boolean internal = projectionRequired || visualizer;
         if (!ACTION_MIC.equals(action) && !internal) return START_NOT_STICKY;
         // Reject duplicate or stale UI starts BEFORE their invalid settings
         // can call stopSelf() on an already-owned running DJ session.
@@ -190,8 +195,39 @@ public final class ClassicDjService extends Service {
             return START_NOT_STICKY;
         }
         startResults.begin(requestedOwner);
-        if (internal && Build.VERSION.SDK_INT < 29) {
+        if (projectionRequired && Build.VERSION.SDK_INT < 29) {
             rejectStart(requestedOwner, "Internes Audio benötigt Android 10 oder neuer");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        // A Visualizer is not a general-purpose, secretly authorized internal
+        // recording mode. Its original audio-session ID must be explicitly
+        // obtained from a verified OEM Music source callback. No implicit 0.
+        final int audioSessionId = visualizer ?
+            intent.getIntExtra(EXTRA_AUDIO_SESSION_ID, -1) : -1;
+        if (visualizer && !intent.hasExtra(EXTRA_AUDIO_SESSION_ID)) {
+            rejectStart(requestedOwner, "Original-Audiositzung nicht bestätigt [AUDIO_SESSION]");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (visualizer && audioSessionId < 0) {
+            rejectStart(requestedOwner, "Ungültige Original-Audiositzung [AUDIO_SESSION]");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        // Android explicitly requires this permission for output-mix session 0.
+        // It is a normal manifest permission, not a bypass of RECORD_AUDIO.
+        if (visualizer && audioSessionId == 0 && Build.VERSION.SDK_INT >= 23 &&
+                checkSelfPermission(Manifest.permission.MODIFY_AUDIO_SETTINGS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            rejectStart(requestedOwner, "Classic-Audiomix nicht freigegeben [AUDIO_PERMISSION]");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        // A verified, currently resumed ORIGINAL MusicActivity is mandatory;
+        // an arbitrary service Intent is not an OEM-audio authorization.
+        if (visualizer && ClassicDjEntryProvider.verifiedMusicReturnIntent(this) == null) {
+            rejectStart(requestedOwner, "Classic-Musikquelle nicht bestätigt [AUDIO_SESSION]");
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -269,7 +305,8 @@ public final class ClassicDjService extends Service {
             lastBpm = 0.0;
             lastLevel = 0f;
             liveService = this;
-            currentState = internal ? "Internes Android-Audio wird vorbereitet" :
+            currentState = visualizer ? "Classic-Visualizer-Analyse wird vorbereitet" :
+                internal ? "Internes Android-Audio wird vorbereitet" :
                 "Mikrofon-Analyse wird vorbereitet";
         }
         try {
@@ -280,13 +317,13 @@ public final class ClassicDjService extends Service {
             }
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(NOTIFICATION_ID, notification(),
-                    internal ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION :
-                               ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+                    projectionRequired ? ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION :
+                                         ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             } else {
                 startForeground(NOTIFICATION_ID, notification());
             }
             final MediaProjection mediaProjection;
-            if (internal) {
+            if (projectionRequired) {
                 @SuppressWarnings("deprecation")
                 Intent data = Build.VERSION.SDK_INT >= 33 ?
                     intent.getParcelableExtra(EXTRA_CONSENT_DATA, Intent.class) :
@@ -343,7 +380,8 @@ public final class ClassicDjService extends Service {
             };
             Thread thread = new Thread(() -> {
                 try {
-                    if (internal) session.startInternal(this, mediaProjection, ips, callback);
+                    if (projectionRequired) session.startInternal(this, mediaProjection, ips, callback);
+                    else if (visualizer) session.startVisualizer(this, audioSessionId, ips, callback);
                     else session.start(this, "microphone", ips, callback);
                 } catch (Throwable error) {
                     if (sessionFence.owns(token)) {

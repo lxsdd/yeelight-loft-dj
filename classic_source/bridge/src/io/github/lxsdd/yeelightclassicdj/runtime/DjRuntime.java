@@ -11,6 +11,12 @@ public interface DjRuntime {
     /** Explicitly consented Android playback capture, using the same PCM/DSP pipeline. */
     void startInternal(Context context, MediaProjection projection,
                        List<String> selectedLampIps, Listener listener) throws Exception;
+    /** A verified original Classic audio-session Visualizer, not MediaProjection or a raw OEM source dump.
+     * The call site must supply the actual, independently qualified session ID;
+     * no implicit output-mix fallback is permitted.
+     */
+    void startVisualizer(Context context, int audioSessionId,
+                         List<String> selectedLampIps, Listener listener) throws Exception;
     /** Idempotent, per-bulb safe stop/close; must not send blind recovery retries. */
     void stop();
     /** Update DSP sensitivity and visual scene without reconnecting owned Music sockets. */

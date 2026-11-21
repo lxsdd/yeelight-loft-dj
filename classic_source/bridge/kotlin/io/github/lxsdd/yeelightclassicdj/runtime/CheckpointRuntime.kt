@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.projection.MediaProjection
 import android.os.SystemClock
 import loftdj.classic.ClassicAndroidAudioRecordInput
+import loftdj.classic.ClassicAndroidVisualizerInput
 import loftdj.classic.ClassicDjEngine
 import loftdj.classic.ClassicMusicCoordinator
 import loftdj.classic.ClassicPulseScene
@@ -38,6 +39,10 @@ class CheckpointRuntime : DjRuntime {
     /** For JVM-only deterministic regression tests; never a production remote adapter. */
     internal var inputFactory: () -> ClassicPcmCaptureSession.Input = {
         ClassicAndroidAudioRecordInput.open(sampleRate = SAMPLE_RATE)
+    }
+    /** Verifiable original Classic session only; no guessed 0/mix capture. */
+    internal var visualizerFactory: (Int) -> ClassicPcmCaptureSession.Input = {
+        sessionId -> ClassicAndroidVisualizerInput.open(sessionId, sampleRate = SAMPLE_RATE)
     }
     internal var clock: () -> Long = { SystemClock.elapsedRealtime() }
     internal var idle: () -> Unit = { Thread.sleep(12L) }
@@ -95,6 +100,15 @@ class CheckpointRuntime : DjRuntime {
         startCapture(selectedLampIps, listener) {
             ClassicPlaybackCaptureInput.open(projection, sampleRate = SAMPLE_RATE)
         }
+    }
+
+    /** The original OEM Music source must verify the concrete session ID
+     * before exposing this entry point. This does not start a second music UI.
+     */
+    override fun startVisualizer(context: Context, audioSessionId: Int,
+                                 selectedLampIps: List<String>, listener: DjRuntime.Listener) {
+        require(audioSessionId >= 0) { "Unverified original audio-session ID" }
+        startCapture(selectedLampIps, listener) { visualizerFactory(audioSessionId) }
     }
 
     private fun startCapture(selectedLampIps: List<String>, listener: DjRuntime.Listener,
