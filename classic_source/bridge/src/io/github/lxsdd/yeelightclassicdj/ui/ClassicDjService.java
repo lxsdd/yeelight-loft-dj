@@ -13,6 +13,7 @@ import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.util.Log;
 import io.github.lxsdd.yeelightclassicdj.runtime.DjRuntime;
 
@@ -54,6 +55,11 @@ public final class ClassicDjService extends Service {
     private boolean currentInternal;
     private MediaProjection activeProjection;
     private MediaProjection.Callback activeProjectionCallback;
+    private final float[] analyzedBands = new float[4];
+    private float latestConfidence;
+    private long analyzedFrames;
+    private long lastFrameElapsedMs = -1L;
+    private long lastBeatElapsedMs = -1L;
 
     /** Exact process-local owner of a real internal capture, never an OEM lamp. */
     static String ownerForInternal() {
@@ -86,6 +92,27 @@ public final class ClassicDjService extends Service {
 
     /** Same-process observation only; not a device power-state assertion. */
     public static boolean hasActiveSession() { return activeSession; }
+
+    /** Source-owned data only; stale, paused and foreign sessions see no PCM. */
+    static ClassicDjLiveFrame frameForOwner(String owner) {
+        ClassicDjService current = liveService;
+        if (current == null) return ClassicDjLiveFrame.none();
+        synchronized (current.sessionGuard) {
+            if (current.shuttingDown || !current.sessionFence.owns(current.currentToken) ||
+                    !current.uiOwner.owns(owner))
+                return ClassicDjLiveFrame.none();
+            long now = SystemClock.elapsedRealtime();
+            long frameAge = current.lastFrameElapsedMs < 0 ? Long.MAX_VALUE :
+                Math.max(0, now - current.lastFrameElapsedMs);
+            long beatAge = current.lastBeatElapsedMs < 0 ? Long.MAX_VALUE :
+                Math.max(0, now - current.lastBeatElapsedMs);
+            return new ClassicDjLiveFrame(true, current.currentInternal,
+                current.analyzedFrames, frameAge, beatAge, lastBpm, lastLevel,
+                current.analyzedBands[0], current.analyzedBands[1],
+                current.analyzedBands[2], current.analyzedBands[3],
+                current.latestConfidence);
+        }
+    }
 
     /**
      * The OEM MusicActivity can pause after Android disallows startService.
@@ -233,6 +260,13 @@ public final class ClassicDjService extends Service {
             currentInternal = internal;
             runtime = session;
             activeSession = true;
+            analyzedFrames = 0L;
+            lastFrameElapsedMs = -1L;
+            lastBeatElapsedMs = -1L;
+            java.util.Arrays.fill(analyzedBands, 0f);
+            latestConfidence = 0f;
+            lastBpm = 0.0;
+            lastLevel = 0f;
             liveService = this;
             currentState = internal ? "Internes Android-Audio wird vorbereitet" :
                 "Mikrofon-Analyse wird vorbereitet";
@@ -289,6 +323,14 @@ public final class ClassicDjService extends Service {
                 @Override public void onBeat(double bpm, float level) {
                     synchronized (sessionGuard) {
                         if (sessionFence.owns(token)) acceptBeat(bpm, level);
+                    }
+                }
+                @Override public void onSpectrum(float bass, float mid,
+                        float presence, float treble, boolean beat, float confidence) {
+                    synchronized (sessionGuard) {
+                        if (sessionFence.owns(token)) {
+                            acceptSpectrum(bass, mid, presence, treble, beat, confidence);
+                        }
                     }
                 }
                 @Override public void onError(String error) {
@@ -435,6 +477,11 @@ public final class ClassicDjService extends Service {
             startupWorker = null;
             lastBpm = 0.0;
             lastLevel = 0f;
+            analyzedFrames = 0L;
+            lastFrameElapsedMs = -1L;
+            lastBeatElapsedMs = -1L;
+            latestConfidence = 0f;
+            java.util.Arrays.fill(analyzedBands, 0f);
             currentState = instance == null ? finalState : "DJ wird beendet · Verbindungen schließen";
         }
         if (instance == null) {
@@ -514,5 +561,20 @@ public final class ClassicDjService extends Service {
         lastBpm = (!Double.isNaN(bpm) && !Double.isInfinite(bpm)) && bpm > 0 ? bpm : 0.0;
         lastLevel = (!Float.isNaN(level) && !Float.isInfinite(level))
             ? Math.max(0f, Math.min(level, 1f)) : 0f;
+    }
+
+    private void acceptSpectrum(float bass, float mid, float presence,
+                                float treble, boolean beat, float confidence) {
+        if (!Float.isFinite(bass) || !Float.isFinite(mid) ||
+                !Float.isFinite(presence) || !Float.isFinite(treble) ||
+                !Float.isFinite(confidence)) return;
+        analyzedBands[0] = Math.max(0f, Math.min(bass, 1f));
+        analyzedBands[1] = Math.max(0f, Math.min(mid, 1f));
+        analyzedBands[2] = Math.max(0f, Math.min(presence, 1f));
+        analyzedBands[3] = Math.max(0f, Math.min(treble, 1f));
+        latestConfidence = Math.max(0f, Math.min(confidence, 1f));
+        lastFrameElapsedMs = SystemClock.elapsedRealtime();
+        if (analyzedFrames < Long.MAX_VALUE) analyzedFrames++;
+        if (beat) lastBeatElapsedMs = lastFrameElapsedMs;
     }
 }

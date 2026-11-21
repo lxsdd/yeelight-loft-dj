@@ -21,6 +21,11 @@ public interface DjRuntime {
     interface Listener {
         void onState(String state);
         void onBeat(double bpm, float level);
+        /** Source-local FFT telemetry; optional for older listeners. Zero device I/O.
+         * Only the exact owner of the capture session may display it.
+         */
+        default void onSpectrum(float bass, float mid, float presence,
+                                float treble, boolean beat, float confidence) {}
         void onError(String error);
     }
 }

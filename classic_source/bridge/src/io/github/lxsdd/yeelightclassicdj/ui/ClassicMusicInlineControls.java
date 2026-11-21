@@ -14,6 +14,7 @@ import android.view.Window;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -41,6 +42,10 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final Button entryButton;
     private final Button startButton;
     private final TextView sourceHelp;
+    private final TextView liveFeedback;
+    private final TextView effectFeedback;
+    private final ProgressBar[] bandMeters = new ProgressBar[4];
+    private final ProgressBar effectMeter;
     private boolean consentFlowPending;
     private final Button sceneButton;
     private final Button sourceButton;
@@ -96,6 +101,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                         "Mikrofonanalyse") + " wird vorbereitet · keine Lampenbefehle");
                 }
             }
+            // Genuine FFT/beat-derived data, never synthetic device state.
+            renderLiveFeedback();
             handler.postDelayed(this, 650L);
         }
     };
@@ -145,6 +152,36 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             "Keine zusätzlichen Lampen freigegeben; Original-Musikfluss bleibt unabhängig.");
         expanded.addView(zeroTargets);
 
+        // These four bars display real FFT bands from the existing DSP.
+        // No made-up frequency bins, scanning, AudioRecord or lamp side effects.
+        liveFeedback = new TextView(activity);
+        liveFeedback.setText("PCM-Analyse noch nicht gestartet");
+        liveFeedback.setContentDescription("Tatsächlich gemessener Audiostatus");
+        expanded.addView(liveFeedback);
+        String[] labels = {"Bass", "Mitten", "Präsenz", "Höhen"};
+        for (int i = 0; i < labels.length; i++) {
+            TextView caption = new TextView(activity);
+            caption.setText(labels[i]);
+            expanded.addView(caption);
+            ProgressBar meter = new ProgressBar(activity, null,
+                android.R.attr.progressBarStyleHorizontal);
+            meter.setMax(100);
+            meter.setProgress(0);
+            meter.setContentDescription("Echtes FFT-Band " + labels[i]);
+            bandMeters[i] = meter;
+            expanded.addView(meter);
+        }
+        effectFeedback = new TextView(activity);
+        effectFeedback.setText("Vorschau: Spektrum · vier tatsächlich gemessene Frequenzbänder");
+        expanded.addView(effectFeedback);
+        effectMeter = new ProgressBar(activity, null,
+            android.R.attr.progressBarStyleHorizontal);
+        effectMeter.setMax(100);
+        effectMeter.setProgress(0);
+        effectMeter.setContentDescription(
+            "Nur berechnete Effektvorschau, keine Steuerung von Lampen");
+        expanded.addView(effectMeter);
+
         // Two readable rows instead of four tightly packed action buttons.
         LinearLayout actions = new LinearLayout(activity);
         actions.setOrientation(HORIZONTAL);
@@ -182,6 +219,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             sceneButton.setText("Effekt: " + SCENE_LABELS[scene]);
             pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
             pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
+            effectFeedback.setText("Vorschau: " +
+                ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
+            renderLiveFeedback();
             configureIfOwned();
         });
         settings.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -215,6 +255,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             beatPulse = !beatPulse;
             pulseModeButton.setText(beatPulse ? "Puls: Beat" : "Puls: Timer");
             pulseTempoButton.setEnabled(!beatPulse);
+            effectFeedback.setText("Vorschau: " +
+                ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
+            renderLiveFeedback();
             configureIfOwned();
         });
         pulseControls.addView(pulseModeButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -225,6 +268,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         pulseTempoButton.setOnClickListener(v -> {
             pulseTempo = (pulseTempo + 1) % PULSE_TEMPOS.length;
             pulseTempoButton.setText(PULSE_TEMPOS[pulseTempo] + " BPM");
+            renderLiveFeedback();
             configureIfOwned();
         });
         pulseControls.addView(pulseTempoButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -245,6 +289,21 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         });
         pulseShapeControls.addView(pulseShapeButton);
         expanded.addView(pulseShapeControls);
+    }
+
+    /** Poll only this session's fresh source-local measurements. */
+    private void renderLiveFeedback() {
+        ClassicDjLiveFrame frame = ClassicDjService.frameForOwner(sessionOwner);
+        liveFeedback.setText(frame.summary());
+        float[] bands = frame.fresh() ? frame.bands() : new float[4];
+        for (int i = 0; i < bandMeters.length; i++) {
+            bandMeters[i].setProgress(Math.round(bands[i] * 100f));
+        }
+        effectFeedback.setText("Nur Vorschau · " +
+            ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
+        effectMeter.setProgress(ClassicDjEffectPreview.intensity(
+            SCENES[scene], frame, beatPulse, PULSE_TEMPOS[pulseTempo],
+            SystemClock.elapsedRealtime()));
     }
 
     /** A bounded, scrollable native surface; never hide original OEM controls. */
@@ -289,10 +348,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 preferInternal = true;
                 sessionOwner = owned;
                 sourceButton.setText("Quelle: Internes Android-Audio");
+                startButton.setText("Audio freigeben");
+                sourceHelp.setText(
+                    "Interner Ton: Start öffnet die Android-Bildschirmfreigabe. " +
+                    "Wir verarbeiten nur erlaubtes App-Audio, kein Bildschirmvideo. " +
+                    "Eine Freigabe ist pro Sitzung erforderlich.");
             }
         }
         handler.removeCallbacks(refresh);
         handler.post(refresh);
+        renderLiveFeedback();
         if (returnFromConsent) openControlSheet();
     }
 

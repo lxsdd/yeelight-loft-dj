@@ -48,6 +48,13 @@ class ClassicPlaybackContract(unittest.TestCase):
         self.assertIn("stopSession(ownedToken", SERVICE)
         self.assertIn("sessionFence.cancel();", SERVICE)
         self.assertIn("if (!ips.isEmpty())", SERVICE)
+        self.assertIn("void onSpectrum(float bass, float mid,", SERVICE)
+        self.assertIn("acceptSpectrum(bass, mid, presence, treble, beat, confidence)", SERVICE)
+        self.assertIn("private void acceptSpectrum(", SERVICE)
+        self.assertIn("ClassicDjLiveFrame frameForOwner(String owner)", SERVICE)
+        self.assertIn("if (current.shuttingDown || !current.sessionFence.owns(", SERVICE)
+        self.assertIn("current.uiOwner.owns(owner)", SERVICE)
+        self.assertIn("latestConfidence = 0f;", SERVICE)
         self.assertIn("microphone|mediaProjection", MANIFEST)
         self.assertIn("android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION", MANIFEST)
 

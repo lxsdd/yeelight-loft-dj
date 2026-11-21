@@ -28,6 +28,13 @@ class ClassicMusicSheetRegression(unittest.TestCase):
         self.assertIn("scroll.addView(expanded);", INLINE)
         self.assertNotIn("host.setContentView(", INLINE)
         self.assertNotIn("new Intent(host, ClassicDjActivity.class)", INLINE)
+        self.assertIn("ClassicDjService.frameForOwner(sessionOwner)", INLINE)
+        self.assertIn("ClassicDjEffectPreview.intensity(", INLINE)
+        self.assertIn("PCM-Analyse noch nicht gestartet", INLINE)
+        self.assertIn("new ProgressBar(activity, null,", INLINE)
+        for name in ("Bass", "Mitten", "Präsenz", "Höhen"):
+            self.assertIn(name, INLINE)
+        self.assertNotIn("Math.random()", INLINE)
 
     def test_explains_internal_audio_dialog_without_claiming_screen_video_capture(self):
         self.assertIn("Quelle: Internes Android-Audio", INLINE)

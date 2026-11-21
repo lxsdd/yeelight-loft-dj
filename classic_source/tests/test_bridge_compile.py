@@ -131,6 +131,7 @@ STUBS.update({
 'android/R.java': '''package android; public final class R {
  public static class drawable { public static final int ic_media_play=1, ic_media_pause=2; }
  public static class id { public static final int content=16908290; }
+ public static class attr { public static final int progressBarStyleHorizontal=16842872; }
 }''',
 'android/content/Context.java': '''package android.content; public class Context {
  public void startActivity(Intent i) {} public void startService(Intent i){} public void startForegroundService(Intent i){}
@@ -274,6 +275,16 @@ public interface SharedPreferences {
  String getString(String key,String fallback);
  Editor edit();
  interface Editor { Editor putString(String key,String value); boolean commit(); }
+}''',
+})
+
+# Native Level/FFT meters are always based on a real PCM callback.
+STUBS.update({
+'android/widget/ProgressBar.java': '''package android.widget;
+public class ProgressBar extends android.view.View {
+ public ProgressBar(android.content.Context context,android.util.AttributeSet attrs,int style){super(context);}
+ public void setMax(int max){}
+ public void setProgress(int value){}
 }''',
 })
 

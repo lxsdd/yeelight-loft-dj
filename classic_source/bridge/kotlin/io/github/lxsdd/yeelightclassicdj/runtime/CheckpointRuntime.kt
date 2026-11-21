@@ -135,6 +135,9 @@ class CheckpointRuntime : DjRuntime {
                     if (state == State.RUNNING) this.listener else null
                 }
                 current?.onBeat(output.bpm ?: 0.0, output.level.toFloat())
+                current?.onSpectrum(output.bass.toFloat(), output.mid.toFloat(),
+                    output.presence.toFloat(), output.treble.toFloat(),
+                    output.beat, output.confidence.toFloat())
             }
             newCapture.start()
             synchronized(lock) {

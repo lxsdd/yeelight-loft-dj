@@ -20,12 +20,23 @@ private class MockMic(private val throwRead: Boolean = false) : ClassicPcmCaptur
 
 private class Listener : DjRuntime.Listener {
     val beat = CountDownLatch(1)
+    val spectrum = CountDownLatch(1)
     val error = CountDownLatch(1)
+    @Volatile var lastBands = floatArrayOf()
+    @Volatile var lastConfidence = -1.0f
+    @Volatile var lastBeatFlag = false
     val states = mutableListOf<String>()
     @Volatile var lastBpm = -1.0
     @Volatile var lastLevel = -1.0f
     override fun onState(state: String) { synchronized(states) { states.add(state) } }
     override fun onBeat(bpm: Double, level: Float) { lastBpm = bpm; lastLevel = level; beat.countDown() }
+    override fun onSpectrum(bass: Float, mid: Float, presence: Float, treble: Float,
+                            beat: Boolean, confidence: Float) {
+        lastBands = floatArrayOf(bass, mid, presence, treble)
+        lastBeatFlag = beat
+        lastConfidence = confidence
+        spectrum.countDown()
+    }
     override fun onError(message: String) { error.countDown() }
 }
 
@@ -48,6 +59,10 @@ fun main() {
     check(runCatching { runtime.start(Context(), "internal", emptyList(), result) }.isFailure)
     runtime.start(Context(), "microphone", emptyList(), result)
     check(result.beat.await(4, TimeUnit.SECONDS)) { "No PCM output" }
+    check(result.spectrum.await(4, TimeUnit.SECONDS)) { "No actual FFT output" }
+    check(result.lastBands.size == 4 && result.lastBands.all { it.isFinite() && it in 0f..1f })
+    check(result.lastConfidence in 0f..1f)
+    check(result.lastBands.any { it > 0f }) { "Measured sine-wave FFT was all zeros" }
     check(result.lastLevel.isFinite() && result.lastLevel in 0f..1f)
     check(runtime.configure(2.0, "BEAT"))
     check(runtime.configure(2.0, "PULSE"))

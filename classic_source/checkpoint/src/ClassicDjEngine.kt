@@ -6,7 +6,10 @@ class ClassicDjEngine(
     private val analyzer: ClassicBeatAnalyzer = ClassicBeatAnalyzer()
 ) {
     data class Output(val beat: Boolean, val bpm: Double?, val confidence: Double,
-                      val sent: Set<String>, val failed: Set<String>, val level: Double = 0.0)
+                      val sent: Set<String>, val failed: Set<String>, val level: Double = 0.0,
+                      // Actual normalized FFT/beat-analyzer bands, not inferred UI bars.
+                      val bass: Double = 0.0, val mid: Double = 0.0,
+                      val presence: Double = 0.0, val treble: Double = 0.0)
     private val active = linkedMapOf<String, Long>()
     private var lastAudioMs = -1L
     private val lighting = ClassicLiveLightStyle()
@@ -48,7 +51,8 @@ class ClassicDjEngine(
             }
         }
         return Output(result.beat, result.bpm, result.confidence, sent, failed,
-                      (0.5 * result.bass + 0.25 * result.mid + 0.15 * result.presence + 0.10 * result.treble).coerceIn(0.0, 1.0))
+                      (0.5 * result.bass + 0.25 * result.mid + 0.15 * result.presence + 0.10 * result.treble).coerceIn(0.0, 1.0),
+                      result.bass, result.mid, result.presence, result.treble)
     }
 
     /** Pure pulse envelope configuration: no socket, power command or new session. */
