@@ -29,6 +29,11 @@ public final class ClassicDragDropController {
         try {
             List<String> actual = adapter.originalStableIds();
             List<String> shown = adapter.displayedStableIds();
+            // Check the exact OEM adapter snapshot even for an apparent no-op.
+            // A stale drag event must never silently succeed or overwrite state.
+            if (!ClassicOrderPolicy.project(actual,
+                    store.read(adapter.surface(), adapter.stableScope())).equals(shown))
+                return false;
             List<String> revised = ClassicOrderPolicy.moveToIndex(shown, dragged, index);
             if (shown.equals(revised)) return true;
             if (!store.applyUserDropAtIndex(adapter.surface(), adapter.stableScope(),
@@ -47,6 +52,9 @@ public final class ClassicDragDropController {
         try {
             List<String> actual = adapter.originalStableIds();
             List<String> shown = adapter.displayedStableIds();
+            if (!ClassicOrderPolicy.project(actual,
+                    store.read(adapter.surface(), adapter.stableScope())).equals(shown))
+                return false;
             List<String> revised = ClassicOrderPolicy.move(shown, dragged, before);
             if (shown.equals(revised)) return true;
             if (!store.applyUserDrop(adapter.surface(), adapter.stableScope(),
