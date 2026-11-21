@@ -337,8 +337,8 @@ public final class ClassicDjService extends Service {
                 @Override public void onError(String error) {
                     Log.w("ClassicDJ", "Capture failure; session halted");
                     stopSession(token, internal ?
-                        "DJ-Start fehlgeschlagen · internes Audio [AUDIO_READ]" :
-                        "Mikrofonfehler · keine Lampen betroffen", true);
+                        "Interne Audioaufnahme beendet [AUDIO_READ]" :
+                        "Mikrofonaufnahme beendet [MIC_READ]", true);
                 }
             };
             Thread thread = new Thread(() -> {
