@@ -89,6 +89,20 @@ class ClassicAnalysisStartResultTest(unittest.TestCase):
         self.assertNotIn("set_music", ui)
         self.assertIn("new String[0]", ui)
 
+    def test_mic_start_failure_is_classified_at_real_runtime_and_service_boundary(self):
+        interface = (ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj/runtime/DjRuntime.java").read_text("utf-8")
+        runtime = (ROOT / "bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.kt").read_text("utf-8")
+        service = (UI / "ClassicDjService.java").read_text("utf-8")
+        self.assertIn("enum CaptureFailureKind", interface)
+        self.assertIn("CaptureStartFailure extends Exception", interface)
+        self.assertIn("createdInput = try {", runtime)
+        self.assertIn("throw DjRuntime.CaptureStartFailure(kind, failure)", runtime)
+        self.assertIn("failure instanceof DjRuntime.CaptureStartFailure", service)
+        for code in ("MIC_PERMISSION", "MIC_FORMAT", "MIC_STATE", "MIC_ABI",
+                     "AUDIO_PERMISSION", "AUDIO_FORMAT", "AUDIO_STATE", "AUDIO_ABI"):
+            self.assertIn(code, service)
+        self.assertNotIn("failure.getMessage()", service)
+
     def test_binary_incompatibility_does_not_crash_original_oem_music_ui(self):
         service = (UI / "ClassicDjService.java").read_text("utf-8")
         self.assertIn("catch (RuntimeException | LinkageError failure)", service)
