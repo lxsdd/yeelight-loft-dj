@@ -43,7 +43,8 @@ class VerifiedOemSelectionGateTest(unittest.TestCase):
         self.assertIn("ClassicDjService.ACTION_MIC", INLINE)
         self.assertIn("ClassicDjService.ACTION_STOP", INLINE)
         self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", INLINE)
-        self.assertNotIn("setContentView(", INLINE)
+        self.assertIn("controlSheet.setContentView(scroll);", INLINE)
+        self.assertNotIn("host.setContentView(", INLINE)
         self.assertNotIn("set_power", INLINE)
         self.assertNotIn("set_music", INLINE)
 

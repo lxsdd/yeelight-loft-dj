@@ -234,7 +234,8 @@ public final class ClassicDjService extends Service {
             runtime = session;
             activeSession = true;
             liveService = this;
-            currentState = "Mikrofon-Analyse wird vorbereitet";
+            currentState = internal ? "Internes Android-Audio wird vorbereitet" :
+                "Mikrofon-Analyse wird vorbereitet";
         }
         try {
             if (Build.VERSION.SDK_INT >= 26) {
@@ -292,7 +293,9 @@ public final class ClassicDjService extends Service {
                 }
                 @Override public void onError(String error) {
                     Log.w("ClassicDJ", "Capture failure; session halted");
-                    stopSession(token, "Mikrofonfehler · keine Lampen betroffen", true);
+                    stopSession(token, internal ?
+                        "DJ-Start fehlgeschlagen · internes Audio [AUDIO_READ]" :
+                        "Mikrofonfehler · keine Lampen betroffen", true);
                 }
             };
             Thread thread = new Thread(() -> {
@@ -301,8 +304,8 @@ public final class ClassicDjService extends Service {
                     else session.start(this, "microphone", ips, callback);
                 } catch (Throwable error) {
                     if (sessionFence.owns(token)) {
-                        Log.e("ClassicDJ", "Music handshake or microphone start failed", error);
-                        stopSession(token, "DJ-Start fehlgeschlagen · keine Lampen betroffen", true);
+                        Log.w("ClassicDJ", "Music capture start rejected; no device command");
+                        stopSession(token, classifyStartError(internal, error), true);
                     }
                 }
             }, "Classic-DJ-Session-Start");
@@ -314,10 +317,24 @@ public final class ClassicDjService extends Service {
                 }
             }
         } catch (Exception | LinkageError error) {
-            Log.e("ClassicDJ", "Session start failed; stopping safely", error);
-            stopSession(token, "DJ-Start fehlgeschlagen · keine Lampen betroffen", true);
+            Log.w("ClassicDJ", "Session start rejected; stopping safely");
+            stopSession(token, classifyStartError(internal, error), true);
         }
         return START_NOT_STICKY;
+    }
+
+    /** Report a stable, non-sensitive reason instead of raw OEM/Android logs. */
+    private static String classifyStartError(boolean internal, Throwable failure) {
+        if (!internal) return "DJ-Start fehlgeschlagen · Mikrofon [MIC_START]";
+        if (failure instanceof SecurityException)
+            return "DJ-Start fehlgeschlagen · Audioberechtigung [AUDIO_PERMISSION]";
+        if (failure instanceof LinkageError)
+            return "DJ-Start fehlgeschlagen · Audio-Laufzeit [AUDIO_ABI]";
+        if (failure instanceof IllegalStateException)
+            return "DJ-Start fehlgeschlagen · Audioeingang nicht bereit [AUDIO_STATE]";
+        if (failure instanceof IllegalArgumentException)
+            return "DJ-Start fehlgeschlagen · Audioformat [AUDIO_FORMAT]";
+        return "DJ-Start fehlgeschlagen · internes Audio [AUDIO_START]";
     }
 
     /**

@@ -2,6 +2,7 @@ package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -9,9 +10,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Gravity;
+import android.view.Window;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
@@ -32,6 +35,13 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final TextView status;
     private final LinearLayout expanded;
+    // Original MusicActivity retains its content; only this compact entry sits
+    // in its tree. A bounded Activity-owned dialog holds all detailed controls.
+    private final Dialog controlSheet;
+    private final Button entryButton;
+    private final Button startButton;
+    private final TextView sourceHelp;
+    private boolean consentFlowPending;
     private final Button sceneButton;
     private final Button sourceButton;
     private boolean preferInternal;
@@ -71,15 +81,19 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     // A service start can be accepted by Android but fail later.
                     // Only the exact owner may clear its UI state; never restart implicitly.
                     locallyStarted = false;
+                    internalOwned = false;
                     sessionOwner = null;
-                    status.setText(failure + " · nach Ende erneut starten");
+                    status.setText(failure + " · erneut starten möglich");
+                    entryButton.setText("Loft DJ · Fehler");
                 } else if (ClassicDjService.hasActiveSession()) {
-                    status.setText(ClassicDjService.uiStatus());
+                    status.setText((internalOwned ? "Internes Audio" : "Mikrofon") +
+                        " · " + ClassicDjService.uiStatus());
                 } else if (SystemClock.elapsedRealtime() - requestedAtMs >= START_ACK_TIMEOUT_MS) {
                     // Do not drop ownership of a start still queued by Android.
                     status.setText("Analyse-Start nicht bestätigt · erst Stopp, dann erneut");
                 } else {
-                    status.setText("Mikrofonanalyse wird vorbereitet · keine Lampenbefehle");
+                    status.setText((internalOwned ? "Interne Audiofreigabe" :
+                        "Mikrofonanalyse") + " wird vorbereitet · keine Lampenbefehle");
                 }
             }
             handler.postDelayed(this, 650L);
@@ -95,19 +109,27 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         setPadding(pad, pad, pad, pad);
         setTag("io.github.lxsdd.yeelightclassicdj.music.inline");
 
-        Button toggle = new Button(activity);
-        toggle.setText("Loft DJ");
-        toggle.setContentDescription("Loft DJ Steuerung in Classic-Musik einblenden");
-        addView(toggle);
+        entryButton = new Button(activity);
+        entryButton.setText("Loft DJ");
+        entryButton.setAllCaps(false);
+        entryButton.setContentDescription("Loft DJ im vorhandenen Classic-Musikmodus öffnen");
+        addView(entryButton);
+
+        // No expanded button-stack in android.R.id.content. The original OEM
+        // player, its music-flow animation, title and transport remain visible.
         expanded = new LinearLayout(activity);
         expanded.setOrientation(VERTICAL);
-        expanded.setVisibility(View.GONE);
-        toggle.setOnClickListener(v -> expanded.setVisibility(
-            expanded.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
-        addView(expanded);
+        expanded.setPadding(pad * 2, pad * 2, pad * 2, pad * 2);
+        ScrollView scroll = new ScrollView(activity);
+        scroll.setFillViewport(false);
+        scroll.addView(expanded);
+        controlSheet = new Dialog(activity);
+        controlSheet.setTitle("Loft DJ · Musik");
+        controlSheet.setContentView(scroll);
+        entryButton.setOnClickListener(v -> openControlSheet());
 
         status = new TextView(activity);
-        status.setText("Loft DJ · Classic-Musik · nur Mikrofonanalyse, keine Lampen");
+        status.setText("Quelle wählen · keine Loft-DJ-Lampen freigegeben");
         status.setContentDescription("Loft DJ Status innerhalb Classic Music");
         expanded.addView(status);
 
@@ -122,43 +144,62 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             preferInternal = !preferInternal;
             sourceButton.setText(preferInternal ?
                 "Quelle: Internes Android-Audio" : "Quelle: Mikrofon");
+            sourceHelp.setText(preferInternal ?
+                "Interner Ton: Start öffnet die Android-Bildschirmfreigabe. " +
+                "Wir verarbeiten nur erlaubtes App-Audio, kein Bildschirmvideo. " +
+                "Eine Freigabe ist pro Sitzung erforderlich." :
+                "Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
+            startButton.setText(preferInternal ? "Audio freigeben" : "Analyse starten");
+            entryButton.setText("Loft DJ");
         });
         expanded.addView(sourceButton);
+        sourceHelp = new TextView(activity);
+        sourceHelp.setText("Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
+        expanded.addView(sourceHelp);
+        TextView zeroTargets = new TextView(activity);
+        zeroTargets.setText("Effekte wirken hier zunächst nur auf die Auswertung. " +
+            "Keine zusätzlichen Lampen freigegeben; Original-Musikfluss bleibt unabhängig.");
+        expanded.addView(zeroTargets);
 
-        LinearLayout controls = new LinearLayout(activity);
-        controls.setOrientation(HORIZONTAL);
-        Button start = new Button(activity);
-        start.setText("Analyse");
-        start.setContentDescription("Mikrofonanalyse starten, ohne Lampen");
-        start.setOnClickListener(v -> startAnalysisOnly());
-        controls.addView(start, new LinearLayout.LayoutParams(0, -2, 1f));
+        // Two readable rows instead of four tightly packed action buttons.
+        LinearLayout actions = new LinearLayout(activity);
+        actions.setOrientation(HORIZONTAL);
+        startButton = new Button(activity);
+        startButton.setText("Analyse starten");
+        startButton.setAllCaps(false);
+        startButton.setContentDescription("Gewählte Audioquelle starten, ohne Lampen");
+        startButton.setOnClickListener(v -> startAnalysisOnly());
+        actions.addView(startButton, new LinearLayout.LayoutParams(0, -2, 1f));
 
+        LinearLayout settings = new LinearLayout(activity);
+        settings.setOrientation(HORIZONTAL);
         sceneButton = new Button(activity);
-        sceneButton.setText(SCENE_LABELS[scene]);
+        sceneButton.setText("Effekt: " + SCENE_LABELS[scene]);
         sceneButton.setOnClickListener(v -> {
             scene = (scene + 1) % SCENES.length;
-            sceneButton.setText(SCENE_LABELS[scene]);
+            sceneButton.setText("Effekt: " + SCENE_LABELS[scene]);
             pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
             pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
             configureIfOwned();
         });
-        controls.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        settings.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
 
         gainButton = new Button(activity);
-        gainButton.setText("1×");
+        gainButton.setText("Empfindlichkeit: 1×");
         gainButton.setOnClickListener(v -> {
             gain = (gain + 1) % GAINS.length;
-            gainButton.setText(String.valueOf(GAINS[gain]) + "×");
+            gainButton.setText("Empfindlichkeit: " + GAINS[gain] + "×");
             configureIfOwned();
         });
-        controls.addView(gainButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        settings.addView(gainButton, new LinearLayout.LayoutParams(0, -2, 1f));
 
         Button stop = new Button(activity);
         stop.setText("Stopp");
-        stop.setContentDescription("Loft DJ Mikrofonanalyse stoppen");
+        stop.setContentDescription("Eigene Loft DJ Audioanalyse stoppen");
         stop.setOnClickListener(v -> stopOwned());
-        controls.addView(stop, new LinearLayout.LayoutParams(0, -2, 1f));
-        expanded.addView(controls);
+        actions.addView(stop, new LinearLayout.LayoutParams(0, -2, 1f));
+        expanded.addView(actions);
+        expanded.addView(settings);
 
         // DSP-only pulse controls in the original MusicActivity hierarchy.
         // Never create a second color picker or synthesize OEM device identities.
@@ -204,10 +245,28 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         expanded.addView(pulseShapeControls);
     }
 
+    /** A bounded, scrollable native surface; never hide original OEM controls. */
+    private void openControlSheet() {
+        if (host.isFinishing() || host.isDestroyed() || controlSheet.isShowing()) return;
+        controlSheet.show();
+        Window window = controlSheet.getWindow();
+        if (window != null) {
+            android.util.DisplayMetrics dm = host.getResources().getDisplayMetrics();
+            int horizontal = (int) (20f * dm.density + 0.5f);
+            int width = Math.max(1, dm.widthPixels - horizontal * 2);
+            int height = Math.max(1, Math.min((int) (dm.heightPixels * 0.65f),
+                (int) (470f * dm.density)));
+            window.setGravity(Gravity.BOTTOM);
+            window.setLayout(width, height);
+        }
+    }
+
     public void onHostResumed() {
         attached = true;
         ClassicInternalAudioConsentActivity.Result result =
             ClassicInternalAudioConsentActivity.takeResult();
+        boolean returnFromConsent = consentFlowPending && result != null;
+        if (result != null) consentFlowPending = false;
         if (result != null && internalOwned && result.owner.equals(sessionOwner)) {
             if (result.started) {
                 status.setText("Internes Audio freigegeben · Analyse startet");
@@ -232,6 +291,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         }
         handler.removeCallbacks(refresh);
         handler.post(refresh);
+        if (returnFromConsent) openControlSheet();
     }
 
     /** Do not wait for network/device state or keep an orphaned analyzer alive. */
@@ -241,7 +301,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         // PlaybackCapture must remain alive while the foreground app plays
         // permitted audio. Microphone analysis still stops with MusicActivity.
         if (!internalOwned) stopOwned();
-        expanded.setVisibility(View.GONE);
+        // No stale Activity-owned window across the Android consent broker
+        // or a player app in the foreground.
+        if (controlSheet.isShowing()) controlSheet.dismiss();
     }
 
     private void startAnalysisOnly() {
@@ -289,6 +351,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     status.setText("Internes Audio erfordert Android 10 oder neuer");
                     return;
                 }
+                consentFlowPending = true;
                 host.startActivity(intent); // transient Android consent broker; no DJ screen
             } else if (Build.VERSION.SDK_INT >= 26) {
                 host.startForegroundService(intent);
@@ -303,6 +366,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 "Interne Android-Audiofreigabe angefordert · keine Lampen" :
                 "Mikrofonanalyse angefordert · keine Lampenbefehle");
         } catch (RuntimeException error) {
+            consentFlowPending = false;
             status.setText("Analyse nicht gestartet · keine Lampenbefehle");
         }
     }
@@ -358,5 +422,6 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             }
         }
         status.setText("Analyse wird beendet · Classic-Musik unverändert");
+        entryButton.setText("Loft DJ");
     }
 }

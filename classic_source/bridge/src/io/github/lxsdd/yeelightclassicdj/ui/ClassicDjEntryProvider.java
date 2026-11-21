@@ -165,9 +165,14 @@ public final class ClassicDjEntryProvider extends ContentProvider
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-            int margin = (int) (6 * activity.getResources().getDisplayMetrics().density + 0.5f);
-            params.setMargins(margin, margin, margin, margin);
+                Gravity.TOP | Gravity.END);
+            // Compact entry in the empty upper area of the OEM music player;
+            // detailed controls are in the Activity-owned bounded sheet, not
+            // on top of the OEM bottom play/volume/music-flow controls.
+            float density = activity.getResources().getDisplayMetrics().density;
+            int margin = (int) (8f * density + 0.5f);
+            int belowToolbar = (int) (74f * density + 0.5f);
+            params.setMargins(margin, belowToolbar, margin, 0);
             root.addView(controls, params);
             controls.bringToFront();
             musicPanels.put(activity, controls);

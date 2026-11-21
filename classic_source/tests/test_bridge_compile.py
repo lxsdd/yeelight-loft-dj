@@ -277,6 +277,32 @@ public interface SharedPreferences {
 }''',
 })
 
+# The Activity-owned bounded DJ control sheet adds standard framework APIs,
+# not a second Activity or a new OEM adapter.
+STUBS.update({
+'android/app/Dialog.java': '''package android.app;
+public class Dialog {
+ public Dialog(android.content.Context c){}
+ public void setTitle(CharSequence t){}
+ public void setContentView(android.view.View v){}
+ public boolean isShowing(){return false;}
+ public void show(){}
+ public void dismiss(){}
+ public android.view.Window getWindow(){return null;}
+}''',
+'android/view/Window.java': '''package android.view;
+public class Window {
+ public void setGravity(int g){}
+ public void setLayout(int width,int height){}
+}''',
+'android/util/DisplayMetrics.java': '''package android.util;
+public class DisplayMetrics {
+ public float density=1.0f;
+ public int widthPixels=1080;
+ public int heightPixels=2200;
+}''',
+})
+
 class BridgeCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('javac'), 'javac not present')
     def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):
