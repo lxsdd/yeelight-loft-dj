@@ -49,9 +49,12 @@ class NativePulseControlsTest(unittest.TestCase):
         for forbidden in ("set_music", "set_power", "ColorSelectView(", "new EditText(", "startActivity("):
             self.assertNotIn(forbidden, INLINE)
 
-    def test_no_stale_preparing_status_after_runtime_stops(self):
-        self.assertIn("Analyse nicht aktiv · erneut starten oder stoppen", INLINE)
+    def test_owner_start_failure_replaces_stale_preparing_status(self):
+        self.assertIn("ClassicDjService.startFailureForOwner(sessionOwner)", INLINE)
+        self.assertIn("START_ACK_TIMEOUT_MS", INLINE)
         self.assertIn("ClassicDjService.hasActiveSession()", INLINE)
+        self.assertIn("erst Stopp, dann erneut", INLINE)
+        self.assertNotIn("Analyse nicht aktiv · erneut starten oder stoppen", INLINE)
 
 
 if __name__ == "__main__":

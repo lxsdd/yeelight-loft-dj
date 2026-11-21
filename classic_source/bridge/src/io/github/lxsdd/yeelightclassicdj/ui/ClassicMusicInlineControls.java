@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -52,14 +53,31 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private int gain = 1;
     private boolean locallyStarted = false;
     private String sessionOwner;
+    private long requestedAtMs;
+    private boolean micPermissionRequested;
+    private static final long START_ACK_TIMEOUT_MS = 8_000L;
+    // Local explicit-button request; the OEM permission callback is not our start trigger.
+    private static final int MICROPHONE_PERMISSION_REQUEST = 0x6D41;
     private boolean attached = false;
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             if (!attached) return;
             if (locallyStarted) {
-                status.setText(ClassicDjService.hasActiveSession() ?
-                    ClassicDjService.uiStatus() :
-                    "Analyse nicht aktiv · erneut starten oder stoppen");
+                String failure = ClassicDjService.startFailureForOwner(sessionOwner);
+                if (failure != null) {
+                    // A service start can be accepted by Android but fail later.
+                    // Only the exact owner may clear its UI state; never restart implicitly.
+                    locallyStarted = false;
+                    sessionOwner = null;
+                    status.setText(failure + " · nach Ende erneut starten");
+                } else if (ClassicDjService.hasActiveSession()) {
+                    status.setText(ClassicDjService.uiStatus());
+                } else if (SystemClock.elapsedRealtime() - requestedAtMs >= START_ACK_TIMEOUT_MS) {
+                    // Do not drop ownership of a start still queued by Android.
+                    status.setText("Analyse-Start nicht bestätigt · erst Stopp, dann erneut");
+                } else {
+                    status.setText("Mikrofonanalyse wird vorbereitet · keine Lampenbefehle");
+                }
             }
             handler.postDelayed(this, 650L);
         }
@@ -184,16 +202,32 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     private void startAnalysisOnly() {
-        if (locallyStarted || ClassicDjService.hasActiveSession()) {
-            status.setText("Eine DJ-Sitzung ist bereits aktiv");
+        if (locallyStarted) {
+            status.setText("Analyse bereits angefordert · bei Bedarf zuerst Stopp");
             return;
         }
-        // Do not request an unknown OEM permission request code and do not
-        // silently start on any subsequent permission grant.
+        if (ClassicDjService.hasActiveSession() || ClassicDjService.isStopping()) {
+            status.setText("Vorherige DJ-Sitzung noch aktiv oder wird beendet");
+            return;
+        }
+        // Explicit button gesture, no automatic start on a later permission result.
+        // Android owns the prompt; do not override any OEM Activity callback.
         if (Build.VERSION.SDK_INT >= 23 &&
                 host.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
                     PackageManager.PERMISSION_GRANTED) {
-            status.setText("Mikrofonberechtigung in Classic aktivieren, dann erneut starten");
+            if (!micPermissionRequested) {
+                micPermissionRequested = true;
+                try {
+                    host.requestPermissions(
+                        new String[]{Manifest.permission.RECORD_AUDIO},
+                        MICROPHONE_PERMISSION_REQUEST);
+                    status.setText("Mikrofon erlauben · danach Analyse erneut tippen");
+                } catch (RuntimeException blocked) {
+                    status.setText("Mikrofon-Anfrage nicht möglich · App-Berechtigungen prüfen");
+                }
+            } else {
+                status.setText("Mikrofon noch nicht erlaubt · App-Berechtigungen prüfen");
+            }
             return;
         }
         String newOwner = java.util.UUID.randomUUID().toString();
@@ -209,7 +243,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             else host.startService(intent);
             sessionOwner = newOwner;
             locallyStarted = true;
-            status.setText("Mikrofonanalyse startet · keine Lampenbefehle");
+            requestedAtMs = SystemClock.elapsedRealtime();
+            status.setText("Mikrofonanalyse angefordert · keine Lampenbefehle");
         } catch (RuntimeException error) {
             status.setText("Analyse nicht gestartet · keine Lampenbefehle");
         }

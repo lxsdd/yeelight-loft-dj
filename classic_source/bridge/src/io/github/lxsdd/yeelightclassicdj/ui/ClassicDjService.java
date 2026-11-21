@@ -45,6 +45,24 @@ public final class ClassicDjService extends Service {
     private static volatile double lastBpm = 0.0;
     private static volatile float lastLevel = 0f;
     private static volatile boolean activeSession = false;
+    private static final ClassicAnalysisStartResult startResults =
+        new ClassicAnalysisStartResult();
+
+    /** Only the same owner may observe its failed start, never a global stale error. */
+    static String startFailureForOwner(String owner) {
+        return startResults.failureFor(owner);
+    }
+
+    static boolean isStopping() {
+        ClassicDjService current = liveService;
+        if (current == null) return false;
+        synchronized (current.sessionGuard) { return current.shuttingDown; }
+    }
+
+    private static void rejectStart(String owner, String reason) {
+        currentState = reason;
+        startResults.fail(owner, reason);
+    }
 
     /** Same-process observation only; not a device power-state assertion. */
     public static boolean hasActiveSession() { return activeSession; }
@@ -123,19 +141,20 @@ public final class ClassicDjService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
+        startResults.begin(requestedOwner);
         final double requestedGain = intent.getDoubleExtra(EXTRA_GAIN, 1.0);
         final String requestedScene = intent.getStringExtra(EXTRA_SCENE) == null ?
             "SPECTRUM" : intent.getStringExtra(EXTRA_SCENE);
         if (!Double.isFinite(requestedGain) || requestedGain < 0.25 ||
             requestedGain > 4.0 ||
             !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT", "PULSE").contains(requestedScene)) {
-            currentState = "Ungültige DJ-Live-Einstellung";
+            rejectStart(requestedOwner, "Ungültige DJ-Live-Einstellung");
             stopSelf();
             return START_NOT_STICKY;
         }
         if (Build.VERSION.SDK_INT >= 23 &&
                 checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            currentState = "Mikrofonberechtigung fehlt";
+            rejectStart(requestedOwner, "Mikrofonberechtigung fehlt");
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -148,7 +167,7 @@ public final class ClassicDjService extends Service {
         // This remains zero-target until a separately qualified OEM adapter
         // provides a generation-fenced participant authorization.
         if (!ips.isEmpty()) {
-            currentState = "OEM-Lampenauswahl nicht verifiziert · keine Lampenbefehle";
+            rejectStart(requestedOwner, "OEM-Lampenauswahl nicht verifiziert · keine Lampenbefehle");
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -159,13 +178,22 @@ public final class ClassicDjService extends Service {
             if (sessionFence.owns(sessionFenceCurrent())) return START_NOT_STICKY;
             session = obtainExistingCheckpoint();
             if (session == null) {
-                currentState = "Runtime fehlt · keine Lampensteuerung";
+                rejectStart(requestedOwner, "Runtime fehlt · keine Lampensteuerung");
                 stopSelf();
                 return START_NOT_STICKY;
             }
             // Stage the user's settings BEFORE any microphone or lamp socket.
-            if (!configureRuntime(session, intent, requestedGain, requestedScene)) {
-                currentState = "DJ-Einstellungen nicht unterstützt";
+            boolean configured;
+            try {
+                configured = configureRuntime(session, intent, requestedGain, requestedScene);
+            } catch (RuntimeException | LinkageError failure) {
+                // A binary-incompatible host library must not crash the OEM Music UI.
+                // Fail closed and report only a source-owned status, not OEM internals.
+                Log.w("ClassicDJ", "Checkpoint configuration failed; no lamp commands");
+                configured = false;
+            }
+            if (!configured) {
+                rejectStart(requestedOwner, "DJ-Einstellungen nicht unterstützt");
                 stopSelf();
                 return START_NOT_STICKY;
             }
@@ -201,7 +229,7 @@ public final class ClassicDjService extends Service {
                 }
                 @Override public void onError(String error) {
                     Log.w("ClassicDJ", "Capture failure; session halted");
-                    stopSession(token, "Mikrofonfehler · bitte Lampenstatus prüfen", true);
+                    stopSession(token, "Mikrofonfehler · keine Lampen betroffen", true);
                 }
             };
             Thread thread = new Thread(() -> {
@@ -210,7 +238,7 @@ public final class ClassicDjService extends Service {
                 } catch (Throwable error) {
                     if (sessionFence.owns(token)) {
                         Log.e("ClassicDJ", "Music handshake or microphone start failed", error);
-                        stopSession(token, "DJ-Start fehlgeschlagen; Lampenstatus prüfen", true);
+                        stopSession(token, "DJ-Start fehlgeschlagen · keine Lampen betroffen", true);
                     }
                 }
             }, "Classic-DJ-Session-Start");
@@ -223,7 +251,7 @@ public final class ClassicDjService extends Service {
             }
         } catch (Exception | LinkageError error) {
             Log.e("ClassicDJ", "Session start failed; stopping safely", error);
-            stopSession(token, "DJ-Start fehlgeschlagen; Lampenstatus prüfen", true);
+            stopSession(token, "DJ-Start fehlgeschlagen · keine Lampen betroffen", true);
         }
         return START_NOT_STICKY;
     }
@@ -309,6 +337,13 @@ public final class ClassicDjService extends Service {
             if (shuttingDown || (expectedToken != 0L && !sessionFence.owns(expectedToken))) return;
             shuttingDown = true;
             sessionFence.cancel(); // fence callbacks before touching any session/socket
+            String completedOwner = uiOwner.current();
+            if (finalState.startsWith("DJ-Start fehlgeschlagen") ||
+                    finalState.startsWith("Mikrofonfehler")) {
+                startResults.fail(completedOwner, finalState);
+            } else {
+                startResults.clear(completedOwner);
+            }
             uiOwner.clear(); // revoke all stale panel/notification actions
             currentToken = 0L;
             activeSession = false;
@@ -352,7 +387,7 @@ public final class ClassicDjService extends Service {
     }
 
     private void finishSessionStop(String finalState, boolean clean, boolean requestStopSelf) {
-        currentState = clean ? finalState : "Stopp nicht bestätigt · Lampenstatus prüfen";
+        currentState = clean ? finalState : "Stopp nicht bestätigt · Mikrofonstatus prüfen";
         stopForeground(true);
         if (requestStopSelf) stopSelf();
     }
