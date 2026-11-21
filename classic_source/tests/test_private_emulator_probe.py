@@ -43,7 +43,7 @@ class EmulatorOnlyBaseline(unittest.TestCase):
         result = probe.pair_contract(self.o, self.c)
         self.assertEqual(result['status'], 'CANDIDATE_STATIC_PARITY_PROBE_ONLY_NOT_PRODUCT_QUALIFIED')
         self.assertIs(result['publishable'], False)
-        self.assertEqual(result['candidate_added_bridge_entries'], 2)
+        self.assertEqual(result['candidate_added_bridge_entries'], 3)
 
     def test_original_gap_count_changes_fail_in_both_directions(self):
         for count in (2, 4):

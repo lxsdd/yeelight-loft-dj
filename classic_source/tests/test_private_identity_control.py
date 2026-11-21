@@ -23,7 +23,9 @@ MANIFEST='''<manifest xmlns:android="http://schemas.android.com/apk/res/android"
   <permission android:name="com.yeelight.cherry.PERM"/>
   <uses-permission android:name="com.yeelight.cherry.PERM"/>
   <application android:name=".ClassicApp">
-    <activity android:name=".MainActivity" android:exported="true"/>
+    <activity android:name=".MainActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
     <provider android:name=".Provider" android:authorities="com.yeelight.cherry.device" android:exported="false"/>
     <provider android:name="com.google.firebase.provider.FirebaseInitProvider" android:authorities="com.yeelight.cherry.firebaseinitprovider" android:exported="false"/>
     <provider android:name="com.yeelight.yeelib.data.DeviceInteractionProvider" android:authorities="com.yeelight.cherry.database.interaction" android:exported="false"/>

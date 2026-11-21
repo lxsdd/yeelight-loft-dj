@@ -15,9 +15,9 @@ STUBS = {
   public <T> T getSystemService(Class<T> serviceClass){return null;} public int checkSelfPermission(String p){return 0;}
 }''',
 'android/content/Intent.java': '''package android.content; public class Intent {
- public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4;
+ public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4; public static final String ACTION_MAIN="android.intent.action.MAIN", CATEGORY_LAUNCHER="android.intent.category.LAUNCHER";
  public Intent(){} public Intent(Context c, Class<?> k){} public Intent setClassName(String p,String k){return this;} public Intent addFlags(int f){return this;}
- public Intent setAction(String a){return this;} public String getAction(){return "";}
+ public Intent addCategory(String c){return this;} public Intent setAction(String a){return this;} public String getAction(){return "";}
  public Intent putExtra(String k,String[] a){return this;} public String[] getStringArrayExtra(String k){return null;}
 }''',
 'android/content/pm/PackageManager.java': '''package android.content.pm; public class PackageManager { public static final int PERMISSION_GRANTED=0; }''',
@@ -101,9 +101,9 @@ STUBS = {
 # native control rows; the production Android SDK remains authoritative.
 STUBS.update({
 'android/content/Intent.java': '''package android.content; public class Intent {
- public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4;
+ public static final int FLAG_ACTIVITY_NEW_TASK=0x1, FLAG_ACTIVITY_CLEAR_TOP=0x2, FLAG_ACTIVITY_SINGLE_TOP=0x4; public static final String ACTION_MAIN="android.intent.action.MAIN", CATEGORY_LAUNCHER="android.intent.category.LAUNCHER";
  public Intent(){} public Intent(Context c, Class<?> k){} public Intent setClassName(String p,String k){return this;} public Intent addFlags(int f){return this;}
- public Intent setAction(String a){return this;} public String getAction(){return "";}
+ public Intent addCategory(String c){return this;} public Intent setAction(String a){return this;} public String getAction(){return "";}
  public Intent putExtra(String k,String[] a){return this;}
  public Intent putExtra(String k,String v){return this;}
  public Intent putExtra(String k,double v){return this;}
@@ -136,6 +136,7 @@ STUBS.update({
  public boolean stopService(Intent i){return true;}
  public <T> T getSystemService(Class<T> serviceClass){return null;} public int checkSelfPermission(String p){return 0;}
  public Context getApplicationContext(){return null;} public String getPackageName(){return "";}
+ public android.content.pm.PackageManager getPackageManager(){return new android.content.pm.PackageManager();}
  public android.content.res.Resources getResources(){return new android.content.res.Resources();}
 }''',
 'android/content/res/Resources.java': '''package android.content.res; public class Resources {
@@ -146,6 +147,7 @@ STUBS.update({
  protected void onCreate(android.os.Bundle b){} protected void onResume(){} protected void onPause(){}
  public void setContentView(android.view.View v){} public boolean isFinishing(){return false;}
  public boolean isDestroyed(){return false;} public boolean hasWindowFocus(){return true;}
+ public void finish(){} public android.content.ComponentName getComponentName(){return new android.content.ComponentName();}
  public android.view.View findViewById(int id){return null;}
  public void requestPermissions(String[] p,int r){} public void onRequestPermissionsResult(int code,String[] p,int[] results){}
 }''',
@@ -211,6 +213,30 @@ public class FrameLayout extends android.view.ViewGroup {
   public LayoutParams(int w,int h,int gravity){super(w,h);}
   public void setMargins(int left,int top,int right,int bottom){}
  }
+}''',
+})
+
+
+# New first-launch clone-only Activity requires platform APIs that the
+# previous minimal Activity/PackageManager stubs did not model.
+STUBS.update({
+'android/Manifest.java': '''package android; public class Manifest { public static class permission {
+ public static final String RECORD_AUDIO="android.permission.RECORD_AUDIO";
+ public static final String BLUETOOTH_SCAN="android.permission.BLUETOOTH_SCAN";
+ public static final String BLUETOOTH_CONNECT="android.permission.BLUETOOTH_CONNECT";
+ public static final String NEARBY_WIFI_DEVICES="android.permission.NEARBY_WIFI_DEVICES";
+ }}''',
+'android/content/pm/ActivityInfo.java': '''package android.content.pm; public class ActivityInfo {
+ public android.os.Bundle metaData=new android.os.Bundle();
+}''',
+'android/content/pm/PackageManager.java': '''package android.content.pm; public class PackageManager {
+ public static final int PERMISSION_GRANTED=0, GET_META_DATA=128;
+ public static class NameNotFoundException extends Exception {}
+ public ActivityInfo getActivityInfo(android.content.ComponentName c,int flags) throws NameNotFoundException {return new ActivityInfo();}
+}''',
+'android/content/ComponentName.java': '''package android.content; public class ComponentName {}''',
+'android/os/Bundle.java': '''package android.os; public class Bundle {
+ public String getString(String key){return null;}
 }''',
 })
 
