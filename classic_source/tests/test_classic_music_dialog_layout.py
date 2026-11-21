@@ -24,7 +24,8 @@ class ClassicMusicSheetRegression(unittest.TestCase):
         self.assertIn("ScrollView scroll = new ScrollView(activity)", INLINE)
         self.assertIn("window.setLayout(width, height)", INLINE)
         self.assertIn("dm.heightPixels * 0.65f", INLINE)
-        self.assertNotIn("addView(expanded)", INLINE)
+        self.assertNotIn("\n        addView(expanded);", INLINE)
+        self.assertIn("scroll.addView(expanded);", INLINE)
         self.assertNotIn("host.setContentView(", INLINE)
         self.assertNotIn("new Intent(host, ClassicDjActivity.class)", INLINE)
 

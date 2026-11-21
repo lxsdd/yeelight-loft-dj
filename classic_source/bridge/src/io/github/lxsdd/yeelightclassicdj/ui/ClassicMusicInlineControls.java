@@ -136,22 +136,6 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         sourceButton = new Button(activity);
         sourceButton.setText("Quelle: Mikrofon");
         sourceButton.setContentDescription("Analysequelle zwischen Mikrofon und internem Android-Audio wählen");
-        sourceButton.setOnClickListener(v -> {
-            if (locallyStarted || ClassicDjService.hasActiveSession()) {
-                status.setText("Quelle nur nach Stopp wechseln");
-                return;
-            }
-            preferInternal = !preferInternal;
-            sourceButton.setText(preferInternal ?
-                "Quelle: Internes Android-Audio" : "Quelle: Mikrofon");
-            sourceHelp.setText(preferInternal ?
-                "Interner Ton: Start öffnet die Android-Bildschirmfreigabe. " +
-                "Wir verarbeiten nur erlaubtes App-Audio, kein Bildschirmvideo. " +
-                "Eine Freigabe ist pro Sitzung erforderlich." :
-                "Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
-            startButton.setText(preferInternal ? "Audio freigeben" : "Analyse starten");
-            entryButton.setText("Loft DJ");
-        });
         expanded.addView(sourceButton);
         sourceHelp = new TextView(activity);
         sourceHelp.setText("Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
@@ -169,6 +153,24 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         startButton.setAllCaps(false);
         startButton.setContentDescription("Gewählte Audioquelle starten, ohne Lampen");
         startButton.setOnClickListener(v -> startAnalysisOnly());
+        // Listener registration must follow construction of both final views;
+        // otherwise javac correctly rejects uninitialized captured fields.
+        sourceButton.setOnClickListener(v -> {
+            if (locallyStarted || ClassicDjService.hasActiveSession()) {
+                status.setText("Quelle nur nach Stopp wechseln");
+                return;
+            }
+            preferInternal = !preferInternal;
+            sourceButton.setText(preferInternal ?
+                "Quelle: Internes Android-Audio" : "Quelle: Mikrofon");
+            sourceHelp.setText(preferInternal ?
+                "Interner Ton: Start öffnet die Android-Bildschirmfreigabe. " +
+                "Wir verarbeiten nur erlaubtes App-Audio, kein Bildschirmvideo. " +
+                "Eine Freigabe ist pro Sitzung erforderlich." :
+                "Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
+            startButton.setText(preferInternal ? "Audio freigeben" : "Analyse starten");
+            entryButton.setText("Loft DJ");
+        });
         actions.addView(startButton, new LinearLayout.LayoutParams(0, -2, 1f));
 
         LinearLayout settings = new LinearLayout(activity);
