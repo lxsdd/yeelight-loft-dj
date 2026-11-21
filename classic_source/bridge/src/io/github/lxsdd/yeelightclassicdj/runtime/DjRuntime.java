@@ -29,6 +29,12 @@ public interface DjRuntime {
     /** Beat or clock driven pulse, on the same generation-owned Music session. */
     boolean configurePulse(int rgb, boolean beatSync, int bpm, int minimum, int maximum,
                            int attackMs, int decayMs, double gamma);
+    /** Change current spatial scene colour, speed, direction, tail and bounded
+     * brightness on the EXISTING owned output. Does not start or select lamps.
+     * RGB -1 means keep the original effect colour.
+     */
+    boolean configureSpatial(int rgb, int speedPercent, boolean reverse,
+                             int trailLength, int minBrightness, int maxBrightness);
     /** Stable allowlisted capture-open result. Never expose raw OEM/Android exceptions in UI. */
     enum CaptureFailureKind { PERMISSION, FORMAT, STATE, ABI, UNKNOWN }
     final class CaptureStartFailure extends Exception {

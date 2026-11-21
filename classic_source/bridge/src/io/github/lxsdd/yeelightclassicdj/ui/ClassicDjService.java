@@ -39,6 +39,14 @@ public final class ClassicDjService extends Service {
     public static final String EXTRA_PULSE_ATTACK = "io.github.lxsdd.yeelightclassicdj.PULSE_ATTACK";
     public static final String EXTRA_PULSE_DECAY = "io.github.lxsdd.yeelightclassicdj.PULSE_DECAY";
     public static final String EXTRA_PULSE_GAMMA = "io.github.lxsdd.yeelightclassicdj.PULSE_GAMMA";
+    // A future verified ORIGINAL SceneFragment provides these through its one
+    // scene-editor route. No new controls or device selection are created here.
+    public static final String EXTRA_SPATIAL_RGB = "io.github.lxsdd.yeelightclassicdj.SPATIAL_RGB";
+    public static final String EXTRA_SPATIAL_SPEED = "io.github.lxsdd.yeelightclassicdj.SPATIAL_SPEED";
+    public static final String EXTRA_SPATIAL_REVERSE = "io.github.lxsdd.yeelightclassicdj.SPATIAL_REVERSE";
+    public static final String EXTRA_SPATIAL_TRAIL = "io.github.lxsdd.yeelightclassicdj.SPATIAL_TRAIL";
+    public static final String EXTRA_SPATIAL_MIN = "io.github.lxsdd.yeelightclassicdj.SPATIAL_MIN";
+    public static final String EXTRA_SPATIAL_MAX = "io.github.lxsdd.yeelightclassicdj.SPATIAL_MAX";
     private static final String CHANNEL = "classic-loft-dj";
     private static final int NOTIFICATION_ID = 4812;
     private DjRuntime runtime;
@@ -171,9 +179,15 @@ public final class ClassicDjService extends Service {
             String scene = intent.getStringExtra(EXTRA_SCENE);
             synchronized (sessionGuard) {
                 if (sessionFence.owns(currentToken) && !shuttingDown &&
-                    uiOwner.owns(intent.getStringExtra(EXTRA_UI_OWNER)) &&
-                    runtime != null && configureRuntime(runtime, intent, gain, scene)) {
-                    currentState = "DJ-Einstellung live aktualisiert";
+                    uiOwner.owns(intent.getStringExtra(EXTRA_UI_OWNER)) && runtime != null) {
+                    try {
+                        if (configureRuntime(runtime, intent, gain, scene))
+                            currentState = "DJ-Einstellung live aktualisiert";
+                    } catch (RuntimeException | LinkageError incompatible) {
+                        // Host Kotlin/DEX incompatibility on live settings must
+                        // not crash the original music app or lose this owner.
+                        Log.w("ClassicDJ", "Live settings rejected; owned session unchanged");
+                    }
                 }
             }
             return START_NOT_STICKY;
@@ -456,9 +470,37 @@ public final class ClassicDjService extends Service {
         int attack = pulseInt(intent, EXTRA_PULSE_ATTACK, 90);
         int decay = pulseInt(intent, EXTRA_PULSE_DECAY, 600);
         double gamma = intent.getDoubleExtra(EXTRA_PULSE_GAMMA, 2.0);
+        // Validate the entire transaction BEFORE invoking any mutable runtime
+        // setter. A bad colour/beat/tempo value cannot half-apply live tuning.
+        if (rgb < 0 || rgb > 0xFFFFFF || bpm < 40 || bpm > 240 ||
+            minimum < 1 || minimum > 99 || maximum <= minimum || maximum > 100 ||
+            attack < 50 || attack > 350 || decay < 200 || decay > 1800 ||
+            !Double.isFinite(gamma) || gamma < 0.75 || gamma > 4.0) return false;
+        // A shared scene contract for time- or music-driven spatial effects.
+        // Invalid options reject the whole request BEFORE any participant start.
+        int spatialRgb = spatialColor(intent);
+        int speed = pulseInt(intent, EXTRA_SPATIAL_SPEED, 100);
+        int trail = pulseInt(intent, EXTRA_SPATIAL_TRAIL, 4);
+        int min = pulseInt(intent, EXTRA_SPATIAL_MIN, 1);
+        int max = pulseInt(intent, EXTRA_SPATIAL_MAX, 100);
+        if (spatialRgb < -1 || spatialRgb > 0xFFFFFF || speed < 25 || speed > 400 ||
+            trail < 1 || trail > 8 || min < 1 || min > 99 ||
+            max <= min || max > 100) return false;
         if (!target.configurePulse(rgb, "BEAT".equals(mode), bpm, minimum,
                                     maximum, attack, decay, gamma)) return false;
+        if (!target.configureSpatial(spatialRgb, speed,
+                intent.getBooleanExtra(EXTRA_SPATIAL_REVERSE, false), trail, min, max))
+            return false;
         return target.configure(gain, scene);
+    }
+
+    private static int spatialColor(Intent intent) {
+        if (!intent.hasExtra(EXTRA_SPATIAL_RGB)) return -1; // unchanged mode colour
+        double value = intent.getDoubleExtra(EXTRA_SPATIAL_RGB, Double.NaN);
+        // Invalid supplied RGB must never alias the -1 default sentinel.
+        if (!Double.isFinite(value) || value < 0 || value > 0xFFFFFF ||
+                value != Math.rint(value)) return -2;
+        return (int) value;
     }
 
     private static int pulseInt(Intent intent, String key, int fallback) {

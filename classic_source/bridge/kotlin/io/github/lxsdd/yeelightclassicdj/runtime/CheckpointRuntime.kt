@@ -8,6 +8,7 @@ import loftdj.classic.ClassicAndroidVisualizerInput
 import loftdj.classic.ClassicDjEngine
 import loftdj.classic.ClassicMusicCoordinator
 import loftdj.classic.ClassicPulseScene
+import loftdj.classic.ClassicSpatialChoreography
 import loftdj.classic.ClassicPcmCaptureSession
 import loftdj.classic.ClassicPcmDjBridge
 import loftdj.classic.ClassicYeelightMusicTransport
@@ -32,6 +33,7 @@ class CheckpointRuntime : DjRuntime {
     private var sensitivity = 1.0
     private var scene = "SPECTRUM"
     private var pulse = ClassicPulseScene.Options()
+    private var spatialSettings = ClassicSpatialChoreography.Options()
     private var listener: DjRuntime.Listener? = null
     private var generation = 0L
 
@@ -94,6 +96,23 @@ class CheckpointRuntime : DjRuntime {
             if (clockOnly && scene == "PULSE" && proposed.beatSync) return false
             if (engine?.configurePulse(proposed) == false) return false
             pulse = proposed
+            return true
+        }
+    }
+
+    /** Safe live scene-editor parameters. No device, capture or socket acquisition. */
+    override fun configureSpatial(rgb: Int, speedPercent: Int, reverse: Boolean,
+                                  trailLength: Int, minBrightness: Int,
+                                  maxBrightness: Int): Boolean {
+        val proposed = try {
+            ClassicSpatialChoreography.Options(rgb, speedPercent, reverse, trailLength,
+                                               minBrightness, maxBrightness)
+        } catch (invalid: IllegalArgumentException) { return false }
+        synchronized(lock) {
+            if (state == State.STOPPING || state == State.CLOSED) return false
+            if (engine?.configureSpatial(rgb, speedPercent, reverse, trailLength,
+                                         minBrightness, maxBrightness) == false) return false
+            spatialSettings = proposed
             return true
         }
     }
@@ -201,6 +220,9 @@ class CheckpointRuntime : DjRuntime {
                 // Changes received while the network handshake was pending
                 // apply before the very first live PCM frame.
                 check(newEngine.configurePulse(pulse))
+                check(newEngine.configureSpatial(spatialSettings.rgb, spatialSettings.speedPercent,
+                    spatialSettings.reverse, spatialSettings.trailLength,
+                    spatialSettings.minBrightness, spatialSettings.maxBrightness))
                 check(newEngine.setScene(scene))
                 check(bridge?.setSensitivity(sensitivity) ?: true)
                 capture = newCapture

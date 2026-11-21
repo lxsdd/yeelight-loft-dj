@@ -78,6 +78,44 @@ fun main() {
         val loud=choreography.frame(ClassicSpatialChoreography.Mode.WAVE,it,14,1000,1.0,true)
         loud.brightness >= weak.brightness
     })
+    // A genuine scene editor can tune colour, direction, tempo, trail and
+    // brightness on all 14 simulation positions, without touching any lamp.
+    val reverseChase = ClassicSpatialChoreography()
+    reverseChase.configure(ClassicSpatialChoreography.Options(
+        rgb = 0x123456, speedPercent = 200, reverse = true,
+        trailLength = 2, minBrightness = 4, maxBrightness = 85))
+    val reverseStart = (0 until 14).map { index ->
+        reverseChase.frame(ClassicSpatialChoreography.Mode.SCANNER,index,14,0,.8,false)
+    }
+    check(reverseStart.indexOf(checkNotNull(reverseStart.maxByOrNull { it.brightness })) == 13) {
+        "Reverse scanner must begin at last selected participant"
+    }
+    check(reverseStart.all { it.rgb == 0x123456 && it.brightness in 4..85 })
+    val fastPhase = (0 until 14).map { index ->
+        reverseChase.frame(ClassicSpatialChoreography.Mode.SCANNER,index,14,1050,.8,false).brightness
+    }
+    val slowPhase = (0 until 14).map { index ->
+        choreography.frame(ClassicSpatialChoreography.Mode.SCANNER,index,14,1050,.8,false).brightness
+    }
+    check(fastPhase != slowPhase) { "Scene tempo setting must change actual geometry" }
+    for (mode in modes) {
+        check((0 until 14).all { i ->
+            val v = reverseChase.frame(mode,i,14,1500,.8,true)
+            v.rgb == 0x123456 && v.brightness in 4..85
+        })
+    }
+    val invalidSettings = listOf(
+        { ClassicSpatialChoreography.Options(rgb=-2) },
+        { ClassicSpatialChoreography.Options(rgb=0x1000000) },
+        { ClassicSpatialChoreography.Options(speedPercent=24) },
+        { ClassicSpatialChoreography.Options(speedPercent=401) },
+        { ClassicSpatialChoreography.Options(trailLength=0) },
+        { ClassicSpatialChoreography.Options(trailLength=9) },
+        { ClassicSpatialChoreography.Options(minBrightness=0) },
+        { ClassicSpatialChoreography.Options(minBrightness=50,maxBrightness=50) },
+        { ClassicSpatialChoreography.Options(maxBrightness=101) }
+    )
+    check(invalidSettings.all { runCatching { it() }.isFailure })
     for(mode in modes) {
         for(badIndex in listOf(-1,14)) {
             check(runCatching { choreography.frame(mode,badIndex,14,10,.1,false) }.isFailure)
@@ -118,6 +156,20 @@ fun main() {
             "Live scenes must not renegotiate"
         }
     }
+    // Reconfigure an already-owned spatial effect with no new Music start or
+    // foreign/extra participant, and no output from the setter itself.
+    val beforeTuning = transport.sent.size
+    check(engine.configureSpatial(0x123456,200,true,2,4,85))
+    check(!engine.configureSpatial(-2,200,true,2,4,85))
+    check(!engine.configureSpatial(0x123456,200,true,9,4,85))
+    check(transport.sent.size == beforeTuning)
+    check(engine.setScene("SCANNER"))
+    now += 350L
+    check(engine.clockTick(now).sent == ids.toSet())
+    check(transport.sent.drop(beforeTuning).all {
+        it.first in ids && it.second == 0x123456 && it.third in 4..85
+    })
+    check(transport.calls.count { it.startsWith("start:") } == 4)
     // The *same production engine* renders independent clock ticks while the
     // owned music channel remains unchanged (no capture callback or new socket).
     check(engine.setScene("SCANNER"))
@@ -133,6 +185,14 @@ fun main() {
     val beforeStale = transport.sent.size
     check(engine.audio(tickTime - 12L, doubleArrayOf(.9,.2,.1,.1)).sent.isEmpty())
     check(transport.sent.size == beforeStale)
+    // A duplicated/older *audio* timestamp used to reset the entire light
+    // renderer and could rewind a newer timer tick. The new clock must not
+    // regress, even if the PCM source discontinuously restarts behind it.
+    check(engine.audio(now - 650L, doubleArrayOf(.9,.2,.1,.1)).sent.isEmpty())
+    val afterRewind = tickTime + 350L
+    check(engine.clockTick(afterRewind).sent == ids.toSet())
+    check(transport.sent.drop(beforeStale).all { it.first in ids })
+    tickTime = afterRewind
     // Only truly timed pulse may animate without new audio: beat-pulse and
     // ordinary BEAT/SPECTRUM explicitly refuse unclocked fake music.
     check(engine.setScene("PULSE"))

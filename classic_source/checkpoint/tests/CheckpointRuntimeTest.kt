@@ -255,6 +255,8 @@ fun main() {
         var starts = 0
         var stops = 0
         @Volatile var frames = 0
+        @Volatile var lastRgb = -1
+        @Volatile var lastBrightness = -1
         override fun readMusic(id: String): Boolean? = active
         override fun requestStart(id: String): Boolean { active = true; starts++; return true }
         override fun reverseConnected(id: String) = true
@@ -262,6 +264,8 @@ fun main() {
         override fun closeReverse(id: String) {}
         override fun sendReverseFrame(id: String, generation: Long, rgb: Int, brightness: Int): Boolean {
             check(generation > 0 && rgb in 0..0xFFFFFF && brightness in 1..100)
+            lastRgb = rgb
+            lastBrightness = brightness
             frames++
             return true
         }
@@ -271,6 +275,9 @@ fun main() {
         autonomousWire
     }
     val independentStatus = Listener()
+    check(!independent.configureSpatial(-2,100,false,4,1,100))
+    check(!independent.configureSpatial(0x123456,100,false,4,1,1))
+    check(independent.configureSpatial(0x22BB33,200,true,3,5,67))
     check(independent.configure(1.0, "BEAT"))
     check(runCatching {
         independent.startTimedScene(Context(), listOf("192.168.55.42"), independentStatus)
@@ -288,6 +295,16 @@ fun main() {
     check(independentStatus.states.contains("SCENE_TIMED_1_LAMPS"))
     Thread.sleep(850L)
     check(autonomousWire.frames >= 2) { "Independent scanner did not animate" }
+    check(autonomousWire.lastRgb == 0x22BB33 && autonomousWire.lastBrightness in 5..67) {
+        "Production runtime lost pre-start spatial scene settings"
+    }
+    val previousStarts = autonomousWire.starts
+    check(independent.configureSpatial(0x445566,120,false,2,3,77))
+    Thread.sleep(360L)
+    check(autonomousWire.lastRgb == 0x445566 && autonomousWire.lastBrightness in 3..77) {
+        "Live scene tuning not applied to already-owned output"
+    }
+    check(autonomousWire.starts == previousStarts)
     check(!independentStatus.beat.await(10L, TimeUnit.MILLISECONDS))
     check(!independentStatus.spectrum.await(10L, TimeUnit.MILLISECONDS))
     check(!independent.configure(1.0, "BEAT"))
@@ -306,6 +323,7 @@ fun main() {
     check(autonomousWire.starts == 1 && autonomousWire.stops == 1 && !autonomousWire.active)
     check(independentStatus.states.contains("STOPPED"))
     check(!independent.configure(1.0, "SCANNER"))
+    check(!independent.configureSpatial(0xABCDEF,200,true,2,2,80))
     check(runCatching {
         independent.startTimedScene(Context(), listOf("192.168.55.42"), Listener())
     }.isFailure)

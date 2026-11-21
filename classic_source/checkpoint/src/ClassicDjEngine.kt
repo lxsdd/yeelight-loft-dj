@@ -39,9 +39,10 @@ class ClassicDjEngine(
         if (lastAudioMs >= 0 && timestampMs <= lastAudioMs) {
             // A discontinuity invalidates tempo and pending output, not remote ownership.
             analyzer.reset()
-            lighting.reset()
+            // Do NOT reset the light renderer or move its clock backwards.
+            // A timer frame may already be newer than this stale PCM sample;
+            // the next timer tick must continue the same animation and pacing.
             lastAudioMs = timestampMs
-            lastSceneInputMs = timestampMs
             return Output(false, null, 0.0, emptySet(), emptySet())
         }
         val result = analyzer.accept(timestampMs, bands, gain)
@@ -96,6 +97,20 @@ class ClassicDjEngine(
             else { failed.add(id); active.remove(id) }
         }
         return sent to failed
+    }
+
+    /** Spatial settings for the SAME owned scene light writer. Invalid options
+     * leave the last known-good geometry untouched and never send a frame.
+     */
+    @Synchronized fun configureSpatial(rgb: Int, speedPercent: Int,
+                                       reverse: Boolean, trailLength: Int,
+                                       minBrightness: Int, maxBrightness: Int): Boolean {
+        val proposed = try {
+            ClassicSpatialChoreography.Options(rgb, speedPercent, reverse, trailLength,
+                                               minBrightness, maxBrightness)
+        } catch (bad: IllegalArgumentException) { return false }
+        spatial.configure(proposed)
+        return true
     }
 
     /** Pure pulse envelope configuration: no socket, power command or new session. */
