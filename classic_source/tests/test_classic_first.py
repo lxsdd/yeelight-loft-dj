@@ -17,7 +17,9 @@ MANIFEST = '''<?xml version="1.0" encoding="utf-8"?>
   <permission android:name="com.yeelight.cherry.PERMISSION" android:protectionLevel="signature" />
   <uses-permission android:name="com.yeelight.cherry.PERMISSION"/>
   <application android:name=".ClassicApp" android:appComponentFactory=".Factories" android:allowBackup="false">
-    <activity android:name=".MainActivity" android:exported="true"/>
+    <activity android:name=".MainActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
     <activity-alias android:name=".Alias" android:targetActivity=".MainActivity" android:exported="false"/>
     <service android:name="com.yeelight.cherry.existing.Sync" android:exported="false"/>
     <provider android:name=".Provider" android:authorities="com.yeelight.cherry.device;com.yeelight.cherry.landevice" android:permission="com.yeelight.cherry.PERMISSION" android:exported="false"/>
@@ -34,6 +36,7 @@ DEX = b'dex\n039\0' + b'X'*200 + (b'Lio/github/lxsdd/yeelightclassicdj/ui/Classi
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;'
+        + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;'
         + b'Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;')
 
 class ClassicTests(unittest.TestCase):

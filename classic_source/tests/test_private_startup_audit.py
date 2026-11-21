@@ -29,10 +29,10 @@ def model():
     original[("application","com.yeelight.cherry.App")]=1
     clone=original.copy()
     for n in audit.REMOVED: del clone[("provider",n)]
-    for n in audit.ADDED: clone[n]+=1
+    for n in audit.ADDED + audit.CLONE_ONLY_ADDED: clone[n]+=1
     orig_desc={"L"+n.replace(".","/")+";" for n in names+all_activities+["com.yeelight.cherry.App"]}
     removed_desc={"L"+n.replace(".","/")+";" for n in audit.REMOVED}
-    clone_desc=(orig_desc - removed_desc) | {"L"+n.replace(".","/")+";" for _,n in audit.ADDED}
+    clone_desc=(orig_desc - removed_desc) | {"L"+n.replace(".","/")+";" for _,n in audit.ADDED + audit.CLONE_ONLY_ADDED}
     orefs=Counter({(kind,"L"+name.replace(".","/")+";"):n
                    for (kind,name),n in original.items()})
     crefs=Counter({(kind,"L"+name.replace(".","/")+";"):n

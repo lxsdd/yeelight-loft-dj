@@ -24,6 +24,8 @@ from dex_authority_remap import AUTHORITIES, OLD as OLD_PACKAGE, NEW as NEW_PACK
 BRIDGE_NAMESPACE = "io.github.lxsdd.yeelightclassicdj"
 BRIDGE_ACTIVITY = BRIDGE_NAMESPACE + ".ui.ClassicDjActivity"
 BRIDGE_SERVICE = BRIDGE_NAMESPACE + ".ui.ClassicDjService"
+BRIDGE_NEARBY_GATE = BRIDGE_NAMESPACE + ".ui.ClassicNearbyGateActivity"
+BRIDGE_OEM_LAUNCHER_META = BRIDGE_NAMESPACE + ".OEM_LAUNCHER"
 BRIDGE_BUTTON = BRIDGE_NAMESPACE + ".ui.ClassicDjEntryView"
 ANDROID = "http://schemas.android.com/apk/res/android"
 A = lambda name: "{" + ANDROID + "}" + name
@@ -76,6 +78,43 @@ def check_source_manifest(path: Path) -> None:
     root = ET.parse(path).getroot()
     require(root.tag == "manifest" and root.get("package") == OLD_PACKAGE, "DECODED_PACKAGE_NOT_ORIGINAL")
     require(root.find("application") is not None, "ORIGINAL_APPLICATION_MISSING")
+
+
+def route_clone_launcher_through_permission_gate(app: ET.Element) -> str:
+    """Clone-only: preserve OEM component but intercept its unique verified launcher."""
+    candidates = []
+    for component in list(app.findall("activity")) + list(app.findall("activity-alias")):
+        name = component.get(A("name"), "")
+        if not name.startswith(OLD_PACKAGE + "."):
+            continue
+        for filt in component.findall("intent-filter"):
+            actions = [n.get(A("name")) for n in filt.findall("action")]
+            launchers = [n for n in filt.findall("category")
+                         if n.get(A("name")) == "android.intent.category.LAUNCHER"]
+            if launchers:
+                require(actions == ["android.intent.action.MAIN"] and
+                        len(launchers) == 1 and not filt.findall("data"),
+                        "CLONE_NEARBY_LAUNCHER_FILTER_NOT_ISOLATED")
+                candidates.append((component, filt, launchers[0]))
+    require(len(candidates) == 1, "CLONE_NEARBY_LAUNCHER_NOT_UNIQUE")
+    owner, filt, cat = candidates[0]
+    target = owner.get(A("name"))
+    require(target.startswith(OLD_PACKAGE + ".") and len(target) <= 180
+            and "/" not in target and "$" not in target,
+            "CLONE_NEARBY_LAUNCHER_UNTRUSTED")
+    filt.remove(cat)
+    gate = ET.SubElement(app, "activity", {
+        A("name"): BRIDGE_NEARBY_GATE, A("exported"): "true",
+        A("theme"): "@android:style/Theme.Material.Light.NoActionBar",
+        A("label"): "Yeelight Classic",
+    })
+    ET.SubElement(gate, "meta-data", {
+        A("name"): BRIDGE_OEM_LAUNCHER_META, A("value"): target
+    })
+    launch = ET.SubElement(gate, "intent-filter")
+    ET.SubElement(launch, "action", {A("name"): "android.intent.action.MAIN"})
+    ET.SubElement(launch, "category", {A("name"): "android.intent.category.LAUNCHER"})
+    return "VERIFIED_ONE_ORIGINAL_LAUNCHER"
 
 
 def patch_manifest(path: Path, *, identity_control=False) -> dict:
@@ -174,6 +213,14 @@ def patch_manifest(path: Path, *, identity_control=False) -> dict:
     for perm in ("android.permission.RECORD_AUDIO", "android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_MICROPHONE", "android.permission.POST_NOTIFICATIONS"):
         if not any(e.tag.startswith("uses-permission") and e.get(A("name")) == perm for e in root):
             ET.SubElement(root, "uses-permission", {A("name"): perm})
+    nearby_entry = "IDENTITY_CONTROL_UNCHANGED"
+    if not identity_control:
+        for name in ("android.permission.BLUETOOTH_SCAN",
+                     "android.permission.BLUETOOTH_CONNECT",
+                     "android.permission.NEARBY_WIFI_DEVICES"):
+            if not any(e.tag.startswith("uses-permission") and e.get(A("name")) == name for e in root):
+                ET.SubElement(root, "uses-permission", {A("name"): name})
+        nearby_entry = route_clone_launcher_through_permission_gate(app)
     require(not any(e.tag == "activity" and e.get(A("name")) == BRIDGE_ACTIVITY for e in app), "BRIDGE_ALREADY_PRESENT")
     ET.SubElement(app, "activity", {
         A("name"): BRIDGE_ACTIVITY,
@@ -206,6 +253,7 @@ def patch_manifest(path: Path, *, identity_control=False) -> dict:
             "identity_control_offline_only": identity_control,
             "identity_native_entry_provider": identity_control,
             "clone_native_music_provider": not identity_control,
+            "nearby_first_launch_gate": nearby_entry,
             "canonicalized_component_refs": count, "providers": providers, "permissions_renamed": permissions, "min_sdk": 23, "activity_exported": False,
             "firebase_auto_init": "DISABLED_FOR_PRIVATE_CLONE",
             "cloud_login": "NOT_TESTED",
@@ -264,7 +312,7 @@ def prepare(original: Path, decoded: Path, dex: Path, output: Path,
     check_source_manifest(decoded / "AndroidManifest.xml")
     require(dex.is_file() and dex.stat().st_size > 110 and dex.read_bytes()[:8] in (b"dex\n035\0", b"dex\n037\0", b"dex\n038\0", b"dex\n039\0"), "BRIDGE_DEX_INVALID")
     bridge = dex.read_bytes()
-    for klass in (b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;", b"Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;"):
+    for klass in (b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;", b"Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;", b"Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;"):
         require(klass in bridge, "BRIDGE_DEX_MISSING_REQUIRED_CLASS")
     require(not output.exists(), "OUTPUT_ALREADY_EXISTS")
     require(output.parent.is_dir(), "OUTPUT_PARENT_NOT_FOUND")

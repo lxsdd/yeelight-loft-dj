@@ -170,6 +170,7 @@ def no_oem_class_collisions(original_apk, sidecar_dex):
     if clash: raise ToolError('SIDECAR_OEM_CLASS_COLLISION:'+','.join(clash[:5]))
     expected = {'Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;',
+                'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;',
                 'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;',
