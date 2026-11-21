@@ -124,7 +124,8 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("ClassicDjService.ACTION_CONFIG", inline)
         self.assertIn("ClassicDjService.ACTION_STOP", inline)
         self.assertIn("ClassicDjService.ACTION_MIC", inline)
-        for forbidden in ("startActivity(", "setContentView(", "set_music",
+        self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", inline)
+        for forbidden in ("setContentView(", "set_music",
                           "set_power", "Socket(", "HttpURLConnection",
                           "Color4-IP(s)", "getRemoteDeviceList"):
             self.assertNotIn(forbidden, inline)

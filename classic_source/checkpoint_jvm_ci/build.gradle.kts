@@ -35,7 +35,8 @@ val testMains = linkedMapOf(
     "CaptureSession" to "loftdj.classic.CaptureSessionTestKt",
     "AndroidAudioRecordInput" to "loftdj.classic.AndroidAudioRecordInputTestKt",
     "YeelightReverseMusicTransport" to "loftdj.classic.YeelightReverseMusicTransportTestKt",
-    "CheckpointRuntime" to "io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt"
+    "CheckpointRuntime" to "io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt",
+    "PlaybackCaptureInput" to "io.github.lxsdd.yeelightclassicdj.runtime.ClassicPlaybackCaptureInputTestKt"
 )
 val runTasks = testMains.map { (label, className) ->
     tasks.register<JavaExec>("run" + label) {

@@ -41,12 +41,13 @@ class NativePulseControlsTest(unittest.TestCase):
         self.assertIn("{12, 90, 90, 600}", INLINE)
         self.assertNotIn("set_power", INLINE)
         self.assertNotIn("set_bright", INLINE)
-        self.assertNotIn("startActivity(", INLINE)
+        self.assertNotIn("setContentView(", INLINE)
+        self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", INLINE)
 
     def test_no_unverified_lamp_target_or_duplicate_picker(self):
         self.assertIn("new String[0]", INLINE)
         self.assertIn("if (!ips.isEmpty())", SERVICE)
-        for forbidden in ("set_music", "set_power", "ColorSelectView(", "new EditText(", "startActivity("):
+        for forbidden in ("set_music", "set_power", "ColorSelectView(", "new EditText(", "setContentView("):
             self.assertNotIn(forbidden, INLINE)
 
     def test_owner_start_failure_replaces_stale_preparing_status(self):
