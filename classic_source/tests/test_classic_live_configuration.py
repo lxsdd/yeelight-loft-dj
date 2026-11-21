@@ -65,8 +65,14 @@ class LiveDJConfigurationContract(unittest.TestCase):
         self.assertIn("configureRuntime(session, intent, requestedGain, requestedScene)", service)
         self.assertIn('if (!"BEAT".equals(mode) && !"TIMER".equals(mode)) return false;', service)
         self.assertIn("value != Math.rint(value)", service)
-        self.assertIn("target.configurePulse(", service)
-        self.assertIn("target.configure(gain, scene)", service)
+        # A single source-bound transaction is now required; sequential
+        # pulse/colour/scene writes could half-apply a rejected timer edit.
+        self.assertIn("new DjRuntime.SceneSettings(", service)
+        self.assertIn("target.applySceneSettings(", service)
+        self.assertNotIn("target.configurePulse(", service)
+        self.assertNotIn("target.configure(gain, scene)", service)
+        self.assertIn("boolean applySceneSettings(SceneSettings settings);", self.sources["interface"])
+        self.assertIn("override fun applySceneSettings(settings: DjRuntime.SceneSettings)", self.sources["runtime"])
         self.assertIn("boolean configurePulse(int rgb, boolean beatSync", self.sources["interface"])
         run = self.sources["runtime"]
         block = run[run.index("override fun configurePulse("):run.index("override fun start(")]

@@ -21,7 +21,9 @@ class NativePulseControlsTest(unittest.TestCase):
         self.assertIn("ClassicDjService.EXTRA_PULSE_BPM", INLINE)
         self.assertIn("ClassicDjService.ACTION_CONFIG", INLINE)
         self.assertIn("configureRuntime(runtime, intent, gain, scene)", SERVICE)
-        self.assertIn("target.configurePulse(", SERVICE)
+        self.assertIn("new DjRuntime.SceneSettings(", SERVICE)
+        self.assertIn("target.applySceneSettings(", SERVICE)
+        self.assertNotIn("target.configurePulse(", SERVICE)
 
     def test_native_pulse_envelope_and_gamma_are_live_in_original_music_ui(self):
         self.assertIn("pulseShape = (pulseShape + 1) % PULSE_SHAPES.length", INLINE)
