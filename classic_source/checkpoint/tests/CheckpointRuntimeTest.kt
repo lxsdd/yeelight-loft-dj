@@ -242,5 +242,72 @@ fun main() {
     Thread.sleep(320L)
     check(timerTransport.frames == stoppedFrames) { "Clock tick escaped owned stop" }
     check(timerTransport.stops == 1 && quiet.closed && !timerTransport.active)
-    println("PASS Classic runtime source-first safety, real clock-driven scanner without PCM, stop fence, FFT and owner failures")
+    // A real independent scene uses the production session and owned reverse
+    // transport without ever requesting an audio source or a forged beat.
+    val independent = CheckpointRuntime()
+    independent.inputFactory = { error("Timed scene attempted microphone capture") }
+    independent.visualizerFactory = { error("Timed scene attempted Visualizer capture") }
+    independent.clock = { System.nanoTime() / 1_000_000L }
+    independent.idle = { Thread.sleep(5L) }
+    independent.wifiAddress = { "192.168.0.12" }
+    val autonomousWire = object : loftdj.classic.ClassicMusicCoordinator.Transport {
+        var active = false
+        var starts = 0
+        var stops = 0
+        @Volatile var frames = 0
+        override fun readMusic(id: String): Boolean? = active
+        override fun requestStart(id: String): Boolean { active = true; starts++; return true }
+        override fun reverseConnected(id: String) = true
+        override fun requestStop(id: String): Boolean { active = false; stops++; return true }
+        override fun closeReverse(id: String) {}
+        override fun sendReverseFrame(id: String, generation: Long, rgb: Int, brightness: Int): Boolean {
+            check(generation > 0 && rgb in 0..0xFFFFFF && brightness in 1..100)
+            frames++
+            return true
+        }
+    }
+    independent.transportFactory = { ip, ids ->
+        check(ip == "192.168.0.12" && ids == setOf("192.168.55.42"))
+        autonomousWire
+    }
+    val independentStatus = Listener()
+    check(independent.configure(1.0, "BEAT"))
+    check(runCatching {
+        independent.startTimedScene(Context(), listOf("192.168.55.42"), independentStatus)
+    }.isFailure) // Cannot invent beats without audio.
+    check(autonomousWire.starts == 0)
+    check(independent.configure(1.0, "SCANNER"))
+    check(runCatching {
+        independent.startTimedScene(Context(), emptyList(), independentStatus)
+    }.isFailure) // No unverified or zero participants.
+    check(runCatching {
+        independent.startTimedScene(Context(), listOf("8.8.8.8"), independentStatus)
+    }.isFailure)
+    check(autonomousWire.starts == 0)
+    independent.startTimedScene(Context(), listOf("192.168.55.42"), independentStatus)
+    check(independentStatus.states.contains("SCENE_TIMED_1_LAMPS"))
+    Thread.sleep(850L)
+    check(autonomousWire.frames >= 2) { "Independent scanner did not animate" }
+    check(!independentStatus.beat.await(10L, TimeUnit.MILLISECONDS))
+    check(!independentStatus.spectrum.await(10L, TimeUnit.MILLISECONDS))
+    check(!independent.configure(1.0, "BEAT"))
+    check(!independent.configure(1.0, "SPECTRUM"))
+    check(!independent.configure(1.0, "PULSE")) // Default pulse requires beats.
+    check(independent.configurePulse(0xF0A012, false, 120, 12, 90, 90, 600, 2.0))
+    check(independent.configure(1.0, "PULSE"))
+    check(!independent.configurePulse(0xF0A012, true, 120, 12, 90, 90, 600, 2.0))
+    check(independent.configure(1.0, "METEOR"))
+    check(independent.configure(1.0, "WAVE"))
+    Thread.sleep(360L)
+    independent.stop()
+    val finalFrames = autonomousWire.frames
+    Thread.sleep(340L)
+    check(autonomousWire.frames == finalFrames) { "Timed scene continued after stop" }
+    check(autonomousWire.starts == 1 && autonomousWire.stops == 1 && !autonomousWire.active)
+    check(independentStatus.states.contains("STOPPED"))
+    check(!independent.configure(1.0, "SCANNER"))
+    check(runCatching {
+        independent.startTimedScene(Context(), listOf("192.168.55.42"), Listener())
+    }.isFailure)
+    println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")
 }

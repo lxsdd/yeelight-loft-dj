@@ -19,6 +19,19 @@ class ClassicPlaybackContract(unittest.TestCase):
         self.assertEqual(RUNTIME.count("ClassicPcmDjBridge(newEngine"), 1)
         self.assertEqual(RUNTIME.count("ClassicPcmCaptureSession(bridge"), 1)
 
+    def test_independent_timed_scenes_share_owned_engine_without_audio(self):
+        interface = (BRIDGE / "runtime/DjRuntime.java").read_text("utf-8")
+        self.assertIn("void startTimedScene(", interface)
+        self.assertIn("override fun startTimedScene(", RUNTIME)
+        self.assertIn("sourceInput = null", RUNTIME)
+        self.assertIn("require(selectedLampIps.isNotEmpty())", RUNTIME)
+        self.assertIn("clockSceneAllowed(scene, pulse)", RUNTIME)
+        self.assertIn("if (clockOnly && !clockSceneAllowed(scene, pulse))", RUNTIME)
+        self.assertIn("session?.poll(bufferSize = WINDOW_SIZE) ?: false", RUNTIME)
+        self.assertIn("current?.clockTick(clock())", RUNTIME)
+        self.assertIn("SCENE_TIMED_", RUNTIME)
+        self.assertNotIn("ACTION_TIMED_SCENE", SERVICE)
+
     def test_uses_existing_loft_dj_android_capture_rules(self):
         for value in ("USAGE_MEDIA", "USAGE_GAME", "USAGE_UNKNOWN"):
             self.assertIn(value, PLAYBACK)

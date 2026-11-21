@@ -28,6 +28,7 @@ class CheckpointRuntime : DjRuntime {
     private var capture: ClassicPcmCaptureSession? = null
     private var engine: ClassicDjEngine? = null
     private var inputBridge: ClassicPcmDjBridge? = null
+    private var clockOnly = false
     private var sensitivity = 1.0
     private var scene = "SPECTRUM"
     private var pulse = ClassicPulseScene.Options()
@@ -51,6 +52,11 @@ class CheckpointRuntime : DjRuntime {
     internal var transportFactory: (String, Set<String>) -> ClassicMusicCoordinator.Transport =
         { ip, ids -> ClassicYeelightMusicTransport(ip, ids) }
 
+    /** A scene can use wall-clock time only if it has no music dependency. */
+    private fun clockSceneAllowed(name: String, settings: ClassicPulseScene.Options): Boolean =
+        name == "SCANNER" || name == "METEOR" || name == "WAVE" ||
+        (name == "PULSE" && !settings.beatSync)
+
     /** State-only in-place reconfiguration. No network, new worker or re-handshake. */
     override fun configure(sensitivity: Double, scene: String): Boolean {
         if (!sensitivity.isFinite() || sensitivity !in 0.25..4.0 ||
@@ -58,6 +64,7 @@ class CheckpointRuntime : DjRuntime {
                             "SCANNER", "METEOR", "WAVE")) return false
         synchronized(lock) {
             if (state == State.STOPPING || state == State.CLOSED) return false
+            if (clockOnly && !clockSceneAllowed(scene, pulse)) return false
             inputBridge?.setSensitivity(sensitivity)
             engine?.setScene(scene)
             this.sensitivity = sensitivity
@@ -84,6 +91,7 @@ class CheckpointRuntime : DjRuntime {
         }
         synchronized(lock) {
             if (state == State.STOPPING || state == State.CLOSED) return false
+            if (clockOnly && scene == "PULSE" && proposed.beatSync) return false
             if (engine?.configurePulse(proposed) == false) return false
             pulse = proposed
             return true
@@ -111,12 +119,26 @@ class CheckpointRuntime : DjRuntime {
         startCapture(selectedLampIps, listener) { visualizerFactory(audioSessionId) }
     }
 
+    /** Scene-gallery backend: shares the owned-only, paced lighting engine.
+     * Not exposed by the OEM UI until its participant identity is verified.
+     * No PCM or foreground-audio service is needed for this call.
+     */
+    override fun startTimedScene(context: Context, selectedLampIps: List<String>,
+                                 listener: DjRuntime.Listener) {
+        require(selectedLampIps.isNotEmpty()) { "No verified scene participants" }
+        startCapture(selectedLampIps, listener, sourceInput = null)
+    }
+
     private fun startCapture(selectedLampIps: List<String>, listener: DjRuntime.Listener,
-                             sourceInput: () -> ClassicPcmCaptureSession.Input) {
+                             sourceInput: (() -> ClassicPcmCaptureSession.Input)?) {
         require(selectedLampIps.size <= 4 && selectedLampIps.distinct().size == selectedLampIps.size)
         require(selectedLampIps.all(ClassicYeelightMusicTransport::validLanIp))
+        val independentScene = sourceInput == null
         synchronized(lock) {
             check(state == State.NEW) { "Session cannot be restarted" }
+            if (independentScene) check(clockSceneAllowed(scene, pulse)) {
+                "Audio-dependent effects require live audio"
+            }
             state = State.STARTING
             this.listener = listener
         }
@@ -127,7 +149,7 @@ class CheckpointRuntime : DjRuntime {
             // diagnostic. The original failure remains the cause for private QA,
             // but no device/audio/OEM text crosses the user-visible status path.
             createdInput = try {
-                sourceInput()
+                sourceInput?.invoke()
             } catch (failure: Throwable) {
                 val kind = when (failure) {
                     is SecurityException -> DjRuntime.CaptureFailureKind.PERMISSION
@@ -161,8 +183,10 @@ class CheckpointRuntime : DjRuntime {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
             synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
-            val bridge = ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
-            val newCapture = ClassicPcmCaptureSession(bridge, createdInput, clock) { output ->
+            val bridge = if (independentScene) null else
+                ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
+            val newCapture = if (bridge == null) null else
+                ClassicPcmCaptureSession(bridge, checkNotNull(createdInput), clock) { output ->
                 val current = synchronized(lock) {
                     if (state == State.RUNNING) this.listener else null
                 }
@@ -171,16 +195,17 @@ class CheckpointRuntime : DjRuntime {
                     output.presence.toFloat(), output.treble.toFloat(),
                     output.beat, output.confidence.toFloat())
             }
-            newCapture.start()
+            newCapture?.start()
             synchronized(lock) {
                 check(state == State.STARTING) { "Stop requested during startup" }
                 // Changes received while the network handshake was pending
                 // apply before the very first live PCM frame.
                 check(newEngine.configurePulse(pulse))
                 check(newEngine.setScene(scene))
-                check(bridge.setSensitivity(sensitivity))
+                check(bridge?.setSensitivity(sensitivity) ?: true)
                 capture = newCapture
                 inputBridge = bridge
+                clockOnly = independentScene
                 engine = newEngine
                 state = State.RUNNING
                 val mine = ++generation
@@ -189,7 +214,8 @@ class CheckpointRuntime : DjRuntime {
                     it.start()
                 }
             }
-            listener.onState(if (owned.isEmpty()) "MIC_ANALYSIS_ONLY_NO_LAMPS"
+            listener.onState(if (independentScene) "SCENE_TIMED_" + owned.size + "_LAMPS"
+                             else if (owned.isEmpty()) "MIC_ANALYSIS_ONLY_NO_LAMPS"
                              else "DJ_ACTIVE_${owned.size}_LAMPS")
         } catch (error: Throwable) {
             // Canceling during a network handshake must not leave an owned music session.
@@ -203,10 +229,9 @@ class CheckpointRuntime : DjRuntime {
     private fun readLoop(mine: Long) {
         try {
             while (true) {
-                val session = synchronized(lock) {
-                    if (state == State.RUNNING && mine == generation) capture else null
-                } ?: break
-                val received = session.poll(bufferSize = WINDOW_SIZE)
+                if (!synchronized(lock) { state == State.RUNNING && mine == generation }) break
+                val session = synchronized(lock) { capture }
+                val received = session?.poll(bufferSize = WINDOW_SIZE) ?: false
                 if (!received) {
                     // Scanner, meteor, wave and timer-pulse keep moving when a
                     // valid capture temporarily yields no PCM. The same owned
@@ -222,7 +247,7 @@ class CheckpointRuntime : DjRuntime {
             val callback = synchronized(lock) {
                 if (state == State.RUNNING && mine == generation) listener else null
             }
-            try { callback?.onError("Microphone capture failed; device commands remain disabled") }
+            try { callback?.onError("Audio/scene runtime stopped safely") }
             finally { stop() }
         }
     }
@@ -239,6 +264,7 @@ class CheckpointRuntime : DjRuntime {
             session = capture; capture = null
             localEngine = engine; engine = null
             inputBridge = null
+            clockOnly = false
             localWorker = worker; worker = null
             callback = listener; listener = null
         }

@@ -17,6 +17,11 @@ public interface DjRuntime {
      */
     void startVisualizer(Context context, int audioSessionId,
                          List<String> selectedLampIps, Listener listener) throws Exception;
+    /** A time-driven scene has no microphone, Visualizer or projection.
+     * Only a verified scene owner may supply explicit owned participants.
+     */
+    void startTimedScene(Context context, List<String> selectedLampIps,
+                         Listener listener) throws Exception;
     /** Idempotent, per-bulb safe stop/close; must not send blind recovery retries. */
     void stop();
     /** Update DSP sensitivity and visual scene without reconnecting owned Music sockets. */
