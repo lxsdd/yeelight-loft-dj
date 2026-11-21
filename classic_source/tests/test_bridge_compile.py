@@ -110,7 +110,7 @@ STUBS.update({
  public Intent putExtra(String k,double v){return this;} public Intent putExtra(String k,int v){return this;} public Intent putExtra(String k,Intent v){return this;}
  public String[] getStringArrayExtra(String k){return null;}
  public String getStringExtra(String k){return null;}
- public double getDoubleExtra(String k,double fallback){return fallback;} public int getIntExtra(String k,int fallback){return fallback;} public <T> T getParcelableExtra(String k,Class<T> c){return null;} public <T> T getParcelableExtra(String k){return null;} public boolean hasExtra(String k){return false;}
+ public double getDoubleExtra(String k,double fallback){return fallback;} public int getIntExtra(String k,int fallback){return fallback;} public <T> T getParcelableExtra(String k,Class<T> c){return null;} public <T> T getParcelableExtra(String k){return null;} public boolean hasExtra(String k){return false;} public boolean getBooleanExtra(String k,boolean fallback){return fallback;}
 }''',
 'android/widget/LinearLayout.java': '''package android.widget;
 public class LinearLayout extends android.view.View {
