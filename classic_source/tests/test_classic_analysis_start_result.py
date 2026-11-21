@@ -103,6 +103,15 @@ class ClassicAnalysisStartResultTest(unittest.TestCase):
             self.assertIn(code, service)
         self.assertNotIn("failure.getMessage()", service)
 
+    def test_read_failures_use_the_same_source_specific_owner_fenced_status(self):
+        service = (UI / "ClassicDjService.java").read_text("utf-8")
+        runtime = (ROOT / "bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.kt").read_text("utf-8")
+        self.assertIn('"Mikrofonaufnahme beendet [MIC_READ]"', service)
+        self.assertIn('"Interne Audioaufnahme beendet [AUDIO_READ]"', service)
+        self.assertIn('stopSession(token, internal ?', service)
+        self.assertIn('if (sessionFence.owns(token))', service)
+        self.assertIn('if (state == State.RUNNING && mine == generation)', runtime)
+
     def test_binary_incompatibility_does_not_crash_original_oem_music_ui(self):
         service = (UI / "ClassicDjService.java").read_text("utf-8")
         self.assertIn("catch (RuntimeException | LinkageError failure)", service)
