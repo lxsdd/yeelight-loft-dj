@@ -368,6 +368,23 @@ public final class ClassicDjService extends Service {
 
     /** Report a stable, non-sensitive reason instead of raw OEM/Android logs. */
     private static String classifyStartError(boolean internal, Throwable failure) {
+        // A failure before opening AudioRecord is not necessarily an AudioRecord
+        // failure. Only a typed, allowlisted source-open failure gets a precise
+        // MIC_*/AUDIO_* category. Never put Throwable messages or PCM into UI.
+        if (failure instanceof DjRuntime.CaptureStartFailure) {
+            DjRuntime.CaptureFailureKind kind =
+                ((DjRuntime.CaptureStartFailure) failure).kind;
+            String code;
+            switch (kind) {
+                case PERMISSION: code = internal ? "AUDIO_PERMISSION" : "MIC_PERMISSION"; break;
+                case FORMAT: code = internal ? "AUDIO_FORMAT" : "MIC_FORMAT"; break;
+                case STATE: code = internal ? "AUDIO_STATE" : "MIC_STATE"; break;
+                case ABI: code = internal ? "AUDIO_ABI" : "MIC_ABI"; break;
+                default: code = internal ? "AUDIO_START" : "MIC_START"; break;
+            }
+            return "DJ-Start fehlgeschlagen · " +
+                (internal ? "internes Audio" : "Mikrofon") + " [" + code + "]";
+        }
         if (!internal) return "DJ-Start fehlgeschlagen · Mikrofon [MIC_START]";
         if (failure instanceof SecurityException)
             return "DJ-Start fehlgeschlagen · Audioberechtigung [AUDIO_PERMISSION]";
