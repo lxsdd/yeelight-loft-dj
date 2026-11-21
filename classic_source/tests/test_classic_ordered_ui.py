@@ -136,7 +136,57 @@ public class ClassicOrderHarness {
            Collections.emptyList(),"B","A");}
     catch(IllegalArgumentException expected){rejected=true;}
     check(rejected,"stale snapshot rejected");
-    System.out.println("PASS actual Classic order, persistence, offline, scopes, stale, safety");
+
+    // Real production controller: a FRESH adapter must reject invalid drops
+    // rather than reporting success for a no-op (an earlier test was stale).
+    Adapter invalid=new Adapter(ClassicOrderPolicy.Surface.DEVICE_LIST,"validation",
+        list("i1","i2","i3"),store);
+    int stableWrites=ctx.prefs.writes;
+    check(!ctrl.onUserMove(invalid,"not-a-real-id",0),"fresh invalid id rejected");
+    check(!ctrl.onUserMove(invalid,"i1",-1),"fresh negative row rejected");
+    check(!ctrl.onUserMove(invalid,"i1",3),"fresh out-of-range row rejected");
+    check(!ctrl.onUserDrop(invalid,"i1","missing"),"fresh invalid before-target rejected");
+    check(!ctrl.onUserDrop(invalid,"missing","i1"),"fresh invalid dragged id rejected");
+    check(!ctrl.onUserMoveRelative(invalid,"i1",-1),"top move-up disabled");
+    check(!ctrl.onUserMoveRelative(invalid,"i3",1),"bottom move-down disabled");
+    check(!ctrl.onUserMoveRelative(invalid,"i2",2),"only 1-step accessible moves allowed");
+    check(ctx.prefs.writes==stableWrites,"invalid input cannot write preferences");
+    check(invalid.shown.equals(list("i1","i2","i3")),"invalid input cannot reorder UI");
+
+    // Accessible up/down and exact-scope Undo have the same real preference
+    // route as touch drag. No interaction with original device membership.
+    Adapter undo=new Adapter(ClassicOrderPolicy.Surface.DEVICE_LIST,"undo-scope",
+        list("A","B","C"),store);
+    check(!ctrl.onUndoLastMove(undo),"no previous edit to undo");
+    check(ctrl.onUserMoveRelative(undo,"C",-1),"accessible move up");
+    check(undo.shown.equals(list("A","C","B")),"accessible order");
+    check(ctrl.onUndoLastMove(undo),"undo exact previous write");
+    check(undo.shown.equals(list("A","B","C")),"undo restores row order");
+    check(!ctrl.onUndoLastMove(undo),"undo receipt single-use");
+    check(ctrl.onUserMoveRelative(undo,"B",1),"accessible move down");
+    check(undo.shown.equals(list("A","C","B")),"move-down action");
+    ctx.prefs.allow=false;
+    check(!ctrl.onUndoLastMove(undo),"failed undo write must not be success");
+    check(undo.shown.equals(list("A","C","B")),"failed undo leaves original display");
+    ctx.prefs.allow=true;
+    check(ctrl.onUndoLastMove(undo),"retry safely commits the exact undo");
+    check(undo.shown.equals(list("A","B","C")),"undo committed");
+    check(ctrl.onUserMove(undo,"A",2),"new touch drag");
+    check(undo.shown.equals(list("B","C","A")),"new order persisted");
+    Adapter otherScope=new Adapter(ClassicOrderPolicy.Surface.ROOM_LIST,"undo-scope",
+        list("R1","R2"),store);
+    check(!ctrl.onUndoLastMove(otherScope),"undo may not affect another list kind");
+    Adapter anotherGroup=new Adapter(ClassicOrderPolicy.Surface.GROUP_MEMBERS,"group2",
+        list("A","B"),store);
+    check(!ctrl.onUndoLastMove(anotherGroup),"undo may not affect other groups");
+    undo.shown=list("A","B","C"); // stale original adapter after OEM refresh
+    check(!ctrl.onUndoLastMove(undo),"stale displayed snapshot must not undo");
+    undo.shown=list("B","C","A");
+    check(ctrl.onUndoLastMove(undo),"correct owner can still undo after refresh");
+    check(undo.shown.equals(list("A","B","C")),"recovered order is exact");
+    check(ctx.prefs.map.size()>3,"independent scopes persist simultaneously");
+
+    System.out.println("PASS actual Classic order, persistence, offline, scopes, stale, accessible up/down, exact Undo, safety");
   }
 }
 '''
@@ -171,6 +221,9 @@ class ClassicOrderedUi(unittest.TestCase):
         self.assertIn("getSharedPreferences",source)
         self.assertIn("applyUserDropAtIndex",source)
         self.assertIn("onUserMove",source)
+        self.assertIn("onUserMoveRelative",source)
+        self.assertIn("onUndoLastMove",source)
+        self.assertIn("undoLastUserDrop",source)
         self.assertIn("ClassicOrderPolicy.project(",source)
         for forbidden in ("sendBroadcast(", "set_power", "set_music", "query(", "ContentResolver",
                           "execSQL", "getRemoteDeviceList", "startDiscovery(", "SharedPreferencesImpl"):

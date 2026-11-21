@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Separate, private, clone-only UI order. Reads never write. The only write is
@@ -18,6 +20,16 @@ import java.util.List;
 public final class ClassicLocalOrderStore {
     private static final String CLONE = "io.lxsdd.yeelightdj";
     private final SharedPreferences prefs;
+    // An immediate, session-local Undo receipt per surface+scope. Never synced
+    // to Cloud or hidden in OEM DB; one confirmed user drop is reversible.
+    private final Map<String, UndoReceipt> lastDrop = new HashMap<>();
+    private static final class UndoReceipt {
+        final List<String> before, after;
+        UndoReceipt(List<String> before, List<String> after) {
+            this.before = new ArrayList<>(before);
+            this.after = new ArrayList<>(after);
+        }
+    }
 
     public ClassicLocalOrderStore(Context context) {
         if (context == null || !CLONE.equals(context.getPackageName()))
@@ -86,7 +98,31 @@ public final class ClassicLocalOrderStore {
         List<String> updated = ClassicOrderPolicy.drop(
             visibleFromOem, rendered, saved, draggedId, beforeId);
         if (updated.equals(saved)) return true;
-        return prefs.edit().putString(storageKey, encode(updated)).commit();
+        if (!prefs.edit().putString(storageKey, encode(updated)).commit()) return false;
+        lastDrop.put(storageKey, new UndoReceipt(saved, updated));
+        return true;
+    }
+
+    /** Undo only the exact last committed order for that same verified list.
+     * A subsequent mutation or an OEM refresh with a changed adapter snapshot
+     * cannot silently rewrite group membership or another scope.
+     */
+    public synchronized boolean undoLastUserDrop(ClassicOrderPolicy.Surface surface,
+                                String scope, List<String> actualVisible,
+                                List<String> rendered) {
+        String storageKey = key(surface, scope);
+        UndoReceipt receipt = lastDrop.get(storageKey);
+        if (receipt == null) return false;
+        if (!read(surface, scope).equals(receipt.after)) {
+            lastDrop.remove(storageKey);
+            return false;
+        }
+        if (!ClassicOrderPolicy.project(actualVisible, receipt.after).equals(rendered))
+            return false;
+        if (!prefs.edit().putString(storageKey, encode(receipt.before)).commit())
+            return false;
+        lastDrop.remove(storageKey);
+        return true;
     }
 
     public synchronized boolean applyUserDropAtIndex(ClassicOrderPolicy.Surface surface,
@@ -97,6 +133,8 @@ public final class ClassicLocalOrderStore {
         List<String> updated = ClassicOrderPolicy.dropAtIndex(
             actualVisible, rendered, saved, draggedId, index);
         if (updated.equals(saved)) return true;
-        return prefs.edit().putString(storageKey, encode(updated)).commit();
+        if (!prefs.edit().putString(storageKey, encode(updated)).commit()) return false;
+        lastDrop.put(storageKey, new UndoReceipt(saved, updated));
+        return true;
     }
 }
