@@ -14,6 +14,9 @@ public final class ClassicDjEntryView extends Button implements View.OnClickList
         setText("Loft DJ");
         setContentDescription("Loft DJ öffnen");
         setAllCaps(false);
+        // The bridge-owned Button must remain discoverable by accessibility
+        // without changing any OEM parent/root accessibility policy.
+        setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         setOnClickListener(this);
     }
     @Override public void onClick(View view) {

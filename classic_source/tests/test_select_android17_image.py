@@ -29,6 +29,41 @@ class Android17ImageCatalogTests(unittest.TestCase):
             catalog.APPROVED_IMAGES[0],
         )
 
+    def test_4k_catalogue_probe_is_readonly_and_does_not_change_16k_choice(self):
+        candidate = catalog.FOUR_K_CANDIDATES[0]
+        data = listing(candidate, catalog.APPROVED_IMAGES[0])
+        self.assertEqual(catalog.catalogued_four_k_candidates(data),
+                         (candidate,))
+        self.assertEqual(catalog.select_stable_android17_image(data),
+                         catalog.APPROVED_IMAGES[0])
+        self.assertEqual(catalog.catalogued_four_k_candidates(
+            listing(catalog.APPROVED_IMAGES[0])), ())
+        for forbidden in (
+            "system-images;android-37;google_apis;x86_64",
+            "system-images;android-37.2-beta3;google_apis;x86_64",
+            "system-images;android-37.2;google_apis_playstore;x86_64",
+            "system-images;android-37.2;google_apis;arm64-v8a",
+            "system-images;android-36;google_apis;x86_64",
+            "system-images;android-37.2;google_apis;x86_64-malicious",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertEqual(catalog.catalogued_four_k_candidates(
+                    listing(forbidden)), ())
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "sdk-catalog.txt"
+            target.write_text(listing(candidate))
+            cmd = [sys.executable, str(MODULE), "--probe-4k", str(target)]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout.strip(),
+                             "ANDROID17_POTENTIAL_4K_CATALOG_CANDIDATE_NOT_VERIFIED")
+            self.assertNotIn(candidate, result.stdout)
+            target.write_text(listing(catalog.APPROVED_IMAGES[0]))
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout.strip(),
+                             "ANDROID17_4K_CATALOG_CANDIDATE_UNAVAILABLE")
+
     def test_exact_available_37_1_second_choice_is_bounded(self):
         self.assertEqual(
             catalog.select_stable_android17_image(listing(

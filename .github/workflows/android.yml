@@ -65,6 +65,9 @@ jobs:
           test -s "$ANDROID_HOME/platforms/android-36/android.jar"
           gradle --no-daemon --stacktrace -p classic_source/private_gradle_bridge stageBridgeInputs
           test -s classic_source/private_gradle_bridge/build/dex-input/classic-bridge.jar
+          # Reject Kotlin Result.Companion linkage against the OEM-owned
+          # older Kotlin runtime before any private APK/test hardware build.
+          python3 classic_source/bridge/checkpoint_abi.py classic_source/private_gradle_bridge/build/dex-input/classic-bridge.jar
       - name: Verify permanent APK signing certificate
         if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'lxsdd' && github.ref == 'refs/heads/main' }}
         shell: bash

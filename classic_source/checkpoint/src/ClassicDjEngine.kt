@@ -6,10 +6,15 @@ class ClassicDjEngine(
     private val analyzer: ClassicBeatAnalyzer = ClassicBeatAnalyzer()
 ) {
     data class Output(val beat: Boolean, val bpm: Double?, val confidence: Double,
-                      val sent: Set<String>, val failed: Set<String>, val level: Double = 0.0)
+                      val sent: Set<String>, val failed: Set<String>, val level: Double = 0.0,
+                      // Actual normalized FFT/beat-analyzer bands, not inferred UI bars.
+                      val bass: Double = 0.0, val mid: Double = 0.0,
+                      val presence: Double = 0.0, val treble: Double = 0.0)
     private val active = linkedMapOf<String, Long>()
     private var lastAudioMs = -1L
     private val lighting = ClassicLiveLightStyle()
+    private val spatial = ClassicSpatialChoreography()
+    private var spatialMode: ClassicSpatialChoreography.Mode? = null
 
     /** Caller must explicitly start and confirm each lamp. Unowned lamps are never output targets. */
     @Synchronized fun select(ids: List<String>, allowNextStart: () -> Boolean = { true }): Map<String, ClassicMusicCoordinator.State> {
@@ -42,13 +47,42 @@ class ClassicDjEngine(
         val frame = lighting.accept(timestampMs, result.beat, result.bass,
                                     result.mid, result.presence, result.treble)
         if (frame != null) {
-            for ((id, generation) in active.toMap()) {
-                if (coordinator.frame(id, generation, frame.rgb, frame.brightness)) sent.add(id)
+            // One ordered snapshot, kept stable for this entire output tick.
+            // Every distinct spatial intensity is sent only to an explicitly
+            // OWNED, generation-fenced participant; never nonparticipants.
+            val snapshot = active.toMap()
+            val mode = spatialMode
+            for ((index, entry) in snapshot.entries.withIndex()) {
+                val (id, generation) = entry
+                val look = if (mode == null) frame else
+                    spatial.frame(mode, index, snapshot.size, timestampMs,
+                                  result.bass * 0.5 + result.mid * 0.25 +
+                                  result.presence * 0.15 + result.treble * 0.10, result.beat)
+                if (coordinator.frame(id, generation, look.rgb, look.brightness)) sent.add(id)
                 else { failed.add(id); active.remove(id) }
             }
         }
         return Output(result.beat, result.bpm, result.confidence, sent, failed,
-                      (0.5 * result.bass + 0.25 * result.mid + 0.15 * result.presence + 0.10 * result.treble).coerceIn(0.0, 1.0))
+                      (0.5 * result.bass + 0.25 * result.mid + 0.15 * result.presence + 0.10 * result.treble).coerceIn(0.0, 1.0),
+                      result.bass, result.mid, result.presence, result.treble)
+    }
+
+    /** Pure pulse envelope configuration: no socket, power command or new session. */
+    @Synchronized internal fun configurePulse(options: ClassicPulseScene.Options): Boolean =
+        lighting.configurePulse(options)
+
+    /** Switch light scenes on the existing generation-fenced reverse session. */
+    @Synchronized fun setScene(scene: String): Boolean {
+        val spatial = ClassicSpatialChoreography.Mode.entries.firstOrNull { it.name == scene }
+        if (spatial != null) {
+            // Retain the already-validated 300ms reverse output budget.
+            if (!lighting.setScene("SPECTRUM")) return false
+            spatialMode = spatial
+            return true
+        }
+        if (!lighting.setScene(scene)) return false
+        spatialMode = null
+        return true
     }
 
     @Synchronized fun stop(): Map<String, ClassicMusicCoordinator.State> {
@@ -57,6 +91,7 @@ class ClassicDjEngine(
         analyzer.reset()
         lastAudioMs = -1L
         lighting.reset()
+        spatialMode = null
         return coordinator.stopGroup(ids)
     }
 

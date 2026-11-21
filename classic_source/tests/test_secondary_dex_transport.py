@@ -66,6 +66,45 @@ class SecondaryDexTransportTests(unittest.TestCase):
         self.assertEqual(parity(self.candidate, self.signed)["status"],
                          "SIGNED_STARTUP_PAYLOAD_IDENTICAL_NOT_RUNTIME_TESTED")
 
+    def test_windows_open_zip_replace_denied_until_candidate_read_handle_closed(self):
+        """Exercise actual repack with simulated Windows sharing semantics."""
+        from unittest.mock import patch
+        import os
+        import secondary_dex_transport as transport
+
+        original_digest = hashlib.sha256(self.original.read_bytes()).hexdigest()
+        with ZipFile(self.candidate) as before:
+            payloads = {n: hashlib.sha256(before.read(n)).hexdigest()
+                        for n in before.namelist()}
+        tracked = []
+        actual_zip = transport.ZipFile
+        actual_replace = os.replace
+
+        def spy_zip(path, *args, **kwargs):
+            archive = actual_zip(path, *args, **kwargs)
+            if Path(path) == self.candidate:
+                tracked.append(archive)
+            return archive
+
+        def refuse_while_open(src, dst):
+            if Path(dst) == self.candidate and any(z.fp is not None for z in tracked):
+                raise PermissionError("SYNTHETIC_WINDOWS_DESTINATION_SHARING")
+            return actual_replace(src, dst)
+
+        with patch.object(transport, "ZipFile", side_effect=spy_zip), \
+             patch.object(transport.os, "replace", side_effect=refuse_while_open):
+            report = transport.normalize_private_multidex(self.original, self.candidate)
+        self.assertTrue(report["transport_changed"])
+        self.assertFalse(report["oem_dex_payload_changed"])
+        self.assertEqual(original_digest, hashlib.sha256(self.original.read_bytes()).hexdigest())
+        with ZipFile(self.candidate) as normalized:
+            self.assertEqual(payloads,
+                {n: hashlib.sha256(normalized.read(n)).hexdigest()
+                 for n in normalized.namelist()})
+            self.assertTrue(all(normalized.getinfo(n).compress_type == ZIP_STORED
+                                for n in ("classes.dex", "classes2.dex", "classes3.dex")))
+        self.assertFalse(transport.normalize_private_multidex(self.original, self.candidate)["transport_changed"])
+
     def test_rejects_duplicate_and_missing_secondary_without_mutation(self):
         for kwargs, reason in (({"duplicate": True}, "MULTIDEX_DUPLICATE_ZIP_MEMBER"),
                                ({"omit": True}, "MULTIDEX_ENTRY_SET_CHANGED")):

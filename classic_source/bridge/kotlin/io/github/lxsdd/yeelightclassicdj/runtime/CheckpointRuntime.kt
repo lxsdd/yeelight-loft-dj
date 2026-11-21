@@ -1,10 +1,12 @@
 package io.github.lxsdd.yeelightclassicdj.runtime
 
 import android.content.Context
+import android.media.projection.MediaProjection
 import android.os.SystemClock
 import loftdj.classic.ClassicAndroidAudioRecordInput
 import loftdj.classic.ClassicDjEngine
 import loftdj.classic.ClassicMusicCoordinator
+import loftdj.classic.ClassicPulseScene
 import loftdj.classic.ClassicPcmCaptureSession
 import loftdj.classic.ClassicPcmDjBridge
 import loftdj.classic.ClassicYeelightMusicTransport
@@ -24,6 +26,10 @@ class CheckpointRuntime : DjRuntime {
     private var worker: Thread? = null
     private var capture: ClassicPcmCaptureSession? = null
     private var engine: ClassicDjEngine? = null
+    private var inputBridge: ClassicPcmDjBridge? = null
+    private var sensitivity = 1.0
+    private var scene = "SPECTRUM"
+    private var pulse = ClassicPulseScene.Options()
     private var listener: DjRuntime.Listener? = null
     private var generation = 0L
 
@@ -40,8 +46,59 @@ class CheckpointRuntime : DjRuntime {
     internal var transportFactory: (String, Set<String>) -> ClassicMusicCoordinator.Transport =
         { ip, ids -> ClassicYeelightMusicTransport(ip, ids) }
 
+    /** State-only in-place reconfiguration. No network, new worker or re-handshake. */
+    override fun configure(sensitivity: Double, scene: String): Boolean {
+        if (!sensitivity.isFinite() || sensitivity !in 0.25..4.0 ||
+            scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE",
+                            "SCANNER", "METEOR", "WAVE")) return false
+        synchronized(lock) {
+            if (state == State.STOPPING || state == State.CLOSED) return false
+            inputBridge?.setSensitivity(sensitivity)
+            engine?.setScene(scene)
+            this.sensitivity = sensitivity
+            this.scene = scene
+            return true
+        }
+    }
+
+    override fun configurePulse(
+        rgb: Int, beatSync: Boolean, bpm: Int, minimum: Int, maximum: Int,
+        attackMs: Int, decayMs: Int, gamma: Double
+    ): Boolean {
+        // Avoid Kotlin Result.Companion field references. The original Classic
+        // APK supplies an older Kotlin runtime, and the private clone excludes
+        // duplicate stdlib classes. An inline runCatching block compiles to
+        // getstatic kotlin.Result.Companion and can crash with NoSuchFieldError
+        // before the microphone session even begins.
+        val proposed = try {
+            ClassicPulseScene.Options(rgb, beatSync, bpm, minimum, maximum, attackMs, decayMs, gamma)
+        } catch (invalid: IllegalArgumentException) {
+            // ClassicPulseScene.Options uses require() for invalid user values.
+            // Do not swallow LinkageError or other unexpected runtime failures.
+            return false
+        }
+        synchronized(lock) {
+            if (state == State.STOPPING || state == State.CLOSED) return false
+            if (engine?.configurePulse(proposed) == false) return false
+            pulse = proposed
+            return true
+        }
+    }
+
     override fun start(context: Context, source: String, selectedLampIps: List<String>, listener: DjRuntime.Listener) {
-        require(source == "microphone") { "Only explicit microphone capture is supported" }
+        require(source == "microphone") { "Unapproved microphone source" }
+        startCapture(selectedLampIps, listener) { inputFactory() }
+    }
+
+    override fun startInternal(context: Context, projection: MediaProjection,
+                               selectedLampIps: List<String>, listener: DjRuntime.Listener) {
+        startCapture(selectedLampIps, listener) {
+            ClassicPlaybackCaptureInput.open(projection, sampleRate = SAMPLE_RATE)
+        }
+    }
+
+    private fun startCapture(selectedLampIps: List<String>, listener: DjRuntime.Listener,
+                             sourceInput: () -> ClassicPcmCaptureSession.Input) {
         require(selectedLampIps.size <= 4 && selectedLampIps.distinct().size == selectedLampIps.size)
         require(selectedLampIps.all(ClassicYeelightMusicTransport::validLanIp))
         synchronized(lock) {
@@ -72,18 +129,27 @@ class CheckpointRuntime : DjRuntime {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
             synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
-            createdInput = inputFactory()
+            createdInput = sourceInput()
             val bridge = ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = ClassicPcmCaptureSession(bridge, createdInput, clock) { output ->
                 val current = synchronized(lock) {
                     if (state == State.RUNNING) this.listener else null
                 }
                 current?.onBeat(output.bpm ?: 0.0, output.level.toFloat())
+                current?.onSpectrum(output.bass.toFloat(), output.mid.toFloat(),
+                    output.presence.toFloat(), output.treble.toFloat(),
+                    output.beat, output.confidence.toFloat())
             }
             newCapture.start()
             synchronized(lock) {
                 check(state == State.STARTING) { "Stop requested during startup" }
+                // Changes received while the network handshake was pending
+                // apply before the very first live PCM frame.
+                check(newEngine.configurePulse(pulse))
+                check(newEngine.setScene(scene))
+                check(bridge.setSensitivity(sensitivity))
                 capture = newCapture
+                inputBridge = bridge
                 engine = newEngine
                 state = State.RUNNING
                 val mine = ++generation
@@ -132,6 +198,7 @@ class CheckpointRuntime : DjRuntime {
             ++generation // fence all late read-loop callbacks
             session = capture; capture = null
             localEngine = engine; engine = null
+            inputBridge = null
             localWorker = worker; worker = null
             callback = listener; listener = null
         }

@@ -84,14 +84,17 @@ def pair_contract(o: dict, c: dict) -> dict:
     original = baseline_contract(o)
     require(c.get('package') == audit.NEW and c.get('dex_count') == 3,
             'CANDIDATE_PACKAGE_OR_DEX_DRIFT')
+    # Reuse the same exact manifest roles as the real production builder.
+    require(audit.NATIVE_MUSIC_PROVIDER in audit.ADDED,
+            'NATIVE_MUSIC_PROVIDER_REGISTRATION_MISSING')
     expected = o['components'].copy()
     for name in audit.REMOVED:
         del expected[('provider', name)]
-    for item in audit.ADDED:
+    for item in audit.ADDED + audit.CLONE_ONLY_ADDED:
         expected[item] += 1
     require(expected == c['components'], 'CANDIDATE_COMPONENT_DRIFT')
     removed = {'L' + name.replace('.', '/') + ';' for name in audit.REMOVED}
-    added = {'L' + name.replace('.', '/') + ';' for _, name in audit.ADDED}
+    added = {'L' + name.replace('.', '/') + ';' for _, name in audit.ADDED + audit.CLONE_ONLY_ADDED}
     require(o['entrypoints'] - c['entrypoints'] == removed and
             c['entrypoints'] - o['entrypoints'] == added,
             'CANDIDATE_ENTRYPOINT_DRIFT')
@@ -100,7 +103,7 @@ def pair_contract(o: dict, c: dict) -> dict:
         key = ('provider', 'L' + name.replace('.', '/') + ';')
         require(expected_roles.get(key) == 1, 'ORIGINAL_REMOVED_PROVIDER_ROLE_DRIFT')
         del expected_roles[key]
-    for role, name in audit.ADDED:
+    for role, name in audit.ADDED + audit.CLONE_ONLY_ADDED:
         expected_roles[(role, 'L' + name.replace('.', '/') + ';')] += 1
     require(expected_roles == c['manifest_references'],
             'CANDIDATE_MANIFEST_ROLES_DRIFT')

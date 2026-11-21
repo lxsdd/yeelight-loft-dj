@@ -38,5 +38,11 @@ IMAGE="$(cat "$PRIVATE/selected-image")"
    "$IMAGE" == 'system-images;android-37.1;google_apis_ps16k;x86_64' ]] ||
   fail HOSTED_SDK_IMAGE_UNLISTED
 
+# Report only availability of possible untagged API37 x86_64 variants.
+# This neither installs an image nor asserts 4-KiB PAGE_SIZE; any candidate
+# requires a measured kernel and a distinct owner-approved acceptance path.
+python3 classic_source/private_ci/select_android17_image.py \
+  --probe-4k "$PRIVATE/catalog" || fail HOSTED_SDK_CATALOG_FAILED
+
 # No system-image name, shell traces, SDK logs or OEM details go to CI logs.
 printf '%s\n' ANDROID17_PUBLIC_STABLE_CATALOG_PASS

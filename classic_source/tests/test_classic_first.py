@@ -17,7 +17,9 @@ MANIFEST = '''<?xml version="1.0" encoding="utf-8"?>
   <permission android:name="com.yeelight.cherry.PERMISSION" android:protectionLevel="signature" />
   <uses-permission android:name="com.yeelight.cherry.PERMISSION"/>
   <application android:name=".ClassicApp" android:appComponentFactory=".Factories" android:allowBackup="false">
-    <activity android:name=".MainActivity" android:exported="true"/>
+    <activity android:name=".MainActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
     <activity-alias android:name=".Alias" android:targetActivity=".MainActivity" android:exported="false"/>
     <service android:name="com.yeelight.cherry.existing.Sync" android:exported="false"/>
     <provider android:name=".Provider" android:authorities="com.yeelight.cherry.device;com.yeelight.cherry.landevice" android:permission="com.yeelight.cherry.PERMISSION" android:exported="false"/>
@@ -32,6 +34,10 @@ LAYOUT = '''<LinearLayout xmlns:android="http://schemas.android.com/apk/res/andr
 DEX = b'dex\n039\0' + b'X'*200 + (b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjActivity;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryView;'
         + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjService;'
+        + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicDjEntryProvider;'
+        + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicMusicInlineControls;'
+        + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicNearbyGateActivity;'
+        + b'Lio/github/lxsdd/yeelightclassicdj/ui/ClassicInternalAudioConsentActivity;'
         + b'Lio/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime;')
 
 class ClassicTests(unittest.TestCase):
@@ -112,7 +118,14 @@ class ClassicTests(unittest.TestCase):
         self.assertEqual(info['firebase_auto_init'], 'DISABLED_FOR_PRIVATE_CLONE')
         self.assertEqual(info['legacy_device_interaction_provider'], 'DISABLED_PRIVATE_CLONE_ONLY')
         self.assertFalse(any(p.get(x.A('name')) == 'com.yeelight.yeelib.data.DeviceInteractionProvider' for p in app.findall('provider')))
-        self.assertEqual(len(app.findall('provider')), 1)
+        self.assertEqual(len(app.findall('provider')), 2)
+        dj = [q for q in app.findall('provider')
+              if q.get(x.A('name')) == x.BRIDGE_NAMESPACE + '.ui.ClassicDjEntryProvider']
+        self.assertEqual(len(dj), 1)
+        self.assertEqual(dj[0].get(x.A('authorities')),
+                         x.NEW_PACKAGE + '.loftdj.music')
+        self.assertEqual(dj[0].get(x.A('exported')), 'false')
+        self.assertTrue(info['clone_native_music_provider'])
         self.assertFalse(any(p.get(x.A('name')) == 'com.google.firebase.provider.FirebaseInitProvider' for p in app.findall('provider')))
 
     def test_firebase_provider_missing_refused_without_mutation(self):
@@ -222,6 +235,16 @@ class ClassicTests(unittest.TestCase):
         result = x.prepare(self.original, self.decoded, self.dex, out)
         self.assertEqual(result['status'], 'DECODED_CLONE_PREPARED_NOT_COMPILED_OR_HARDWARE_TESTED')
         self.assertTrue((out / 'classes3.dex').exists())
+        self.assertTrue(result['clone_music_in_place_source_wired'])
+        self.assertFalse(result['clone_music_in_place_runtime_verified'])
+        self.assertEqual(result['layout_variants_patched'], [])
+        # Native music is integrated through the Activity, not a Home link.
+        self.assertEqual((out / 'res/layout/activity_main_new.xml').read_bytes(),
+                         (self.decoded / 'res/layout/activity_main_new.xml').read_bytes())
+        patched_app = ET.parse(out / 'AndroidManifest.xml').getroot().find('application')
+        self.assertTrue(any(v.get(x.A('name')) ==
+                            x.BRIDGE_NAMESPACE + '.ui.ClassicDjEntryProvider'
+                            for v in patched_app.findall('provider')))
         self.assertEqual(x.digest_file(self.decoded / 'AndroidManifest.xml'), baseline)
         self.assertEqual(x.digest_file(self.decoded / 'res/layout/activity_main_new.xml'), lbase)
         self.assertFalse((out / 'signed.apk').exists())

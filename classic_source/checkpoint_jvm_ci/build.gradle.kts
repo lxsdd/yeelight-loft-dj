@@ -29,12 +29,15 @@ val testMains = linkedMapOf(
     "Coordinator" to "loftdj.classic.CoordinatorTestKt",
     "CancelDuringStart" to "loftdj.classic.CancelDuringStartTestKt",
     "BeatAnalyzer" to "loftdj.classic.BeatAnalyzerTestKt",
+    "LiveLightStyle" to "loftdj.classic.LiveLightStyleTestKt",
     "DjEngine" to "loftdj.classic.DjEngineTestKt",
     "PcmBands" to "loftdj.classic.PcmBandsTestKt",
     "CaptureSession" to "loftdj.classic.CaptureSessionTestKt",
     "AndroidAudioRecordInput" to "loftdj.classic.AndroidAudioRecordInputTestKt",
     "YeelightReverseMusicTransport" to "loftdj.classic.YeelightReverseMusicTransportTestKt",
-    "CheckpointRuntime" to "io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt"
+    "CheckpointRuntime" to "io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt",
+    "PlaybackCaptureInput" to "io.github.lxsdd.yeelightclassicdj.runtime.ClassicPlaybackCaptureInputTestKt",
+    "SpatialChoreography" to "loftdj.classic.ClassicSpatialChoreographyTestKt"
 )
 val runTasks = testMains.map { (label, className) ->
     tasks.register<JavaExec>("run" + label) {
@@ -48,6 +51,6 @@ val runTasks = testMains.map { (label, className) ->
 }
 tasks.register("verifyClassicJvm") {
     group = "verification"
-    description = "Compile ALL Classic JVM/DJ source and execute all nine real integration test programs."
+    description = "Compile ALL Classic JVM/DJ source and execute all twelve real integration test programs."
     dependsOn(runTasks)
 }

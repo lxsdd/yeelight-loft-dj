@@ -17,8 +17,12 @@ import time
 from pathlib import Path
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
+from page_size_warning import (
+    read_warning_action, read_framework_resources, inspect_app_overlay_readonly
+)
 
 PACKAGE = "io.lxsdd.yeelightdj"
+ORIGINAL_PACKAGE = "com.yeelight.cherry"  # private identity-only offline A/B control
 DJ_ACTIVITY = "io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity"
 MAX_TEXT = 2_000_000
 SERIAL = re.compile(r"emulator-[0-9]{4,5}\Z")
@@ -329,6 +333,86 @@ def _sanitized_exception_chain(rows):
     }
 
 
+# Isolate the FIRST stack frame of the selected target FATAL. Never output
+# proprietary method names or frame strings. Java stack dumps may contain
+# renamed/obfuscated OEM classes with no package prefix; the signed APK's
+# exact DEX-origin map, not a package-name heuristic, determines ownership.
+NULL_STACK_FRAME = re.compile(
+    r"^\s*at\s+([A-Za-z_$][A-Za-z0-9_.$]*)\.([A-Za-z_$][A-Za-z0-9_$<>]*)"
+    r"\([^()\n]{0,180}\)\s*$"
+)
+KNOWN_DEX_ORIGINS = frozenset({
+    "PRIMARY_OEM_DEX", "SECONDARY_OEM_DEX", "NATIVE_BRIDGE_DEX"
+})
+
+
+def _null_dereference_origin(rows, graph, fatal_line):
+    """Return fixed low-entropy null-crash hints, never private symbols.
+
+    This is *diagnostic*, not proof of a root cause, lifecycle completion,
+    or an OEM-vs-clone comparison. Ignore unrelated logcat tags and the next
+    process's FATAL block using the caller's exact target selection.
+    """
+    frame_classes = []
+    lifecycle = "UNDETERMINED"
+    operation = "UNSPECIFIED"
+    for row in rows[:MAX_FATAL_BLOCK_LINES]:
+        msg = _android_runtime_message(row)
+        cause = ROOT_CAUSE.match(msg)
+        if cause and cause.group(2).rsplit(".", 1)[-1] == "NullPointerException":
+            if "Attempt to invoke" in msg and "null object reference" in msg:
+                operation = "NULL_METHOD_INVOKE"
+            elif "Attempt to read from field" in msg:
+                operation = "NULL_FIELD_READ"
+            elif "Attempt to write to field" in msg:
+                operation = "NULL_FIELD_WRITE"
+            elif "Attempt to get length of null array" in msg:
+                operation = "NULL_ARRAY_LENGTH"
+            else:
+                operation = "NULL_OTHER"
+        frame = NULL_STACK_FRAME.fullmatch(msg)
+        if not frame:
+            continue
+        klass, method = frame.groups()
+        frame_classes.append(klass)
+        if lifecycle == "UNDETERMINED" and klass == "android.app.ActivityThread":
+            if method in ("performLaunchActivity", "handleLaunchActivity"):
+                lifecycle = "ACTIVITY_LAUNCH_STACK"
+            elif method in ("performResumeActivity", "handleResumeActivity"):
+                lifecycle = "ACTIVITY_RESUME_STACK"
+            elif method in ("performPauseActivity", "handlePauseActivity"):
+                lifecycle = "ACTIVITY_PAUSE_STACK"
+        if lifecycle == "UNDETERMINED" and klass == "android.app.Instrumentation":
+            if method == "callActivityOnCreate":
+                lifecycle = "ACTIVITY_CREATE_STACK"
+            elif method == "callActivityOnResume":
+                lifecycle = "ACTIVITY_RESUME_STACK"
+    def origin(klass):
+        descriptor = "L" + klass.replace(".", "/") + ";"
+        name = graph.get("dex_origin", {}).get(descriptor) if type(graph) is dict else None
+        if name in KNOWN_DEX_ORIGINS:
+            return name
+        if klass.startswith(("android.", "java.", "javax.", "dalvik.")):
+            return "PLATFORM_CLASS"
+        return "UNINDEXED_OR_UNKNOWN_CLASS"
+    first = origin(frame_classes[0]) if frame_classes else "NO_FRAME"
+    first_owned = next((origin(k) for k in frame_classes
+                        if origin(k) in KNOWN_DEX_ORIGINS), "NONE")
+    header = _android_runtime_message(fatal_line)
+    thread = ("MAIN_THREAD" if header == "FATAL EXCEPTION: main" else
+              "NON_MAIN_THREAD" if header.startswith("FATAL EXCEPTION: ") else
+              "UNDETERMINED")
+    return {
+        "null_operation_bucket": operation,
+        "null_top_frame_origin": first,
+        "null_first_owned_frame_origin": first_owned,
+        "null_activity_lifecycle_hint": lifecycle,
+        "null_crash_thread": thread,
+        "null_frame_evidence": "STACK_FRAMES_SEEN" if frame_classes else "NO_PARSED_FRAMES",
+        "null_origin_attribution_is_diagnostic_only": True,
+    }
+
+
 def classify_crash(logcat, package=PACKAGE, candidate_graph=None, installed_apk_path=None):
     """Classify actual AndroidRuntime target crash, not a guessed OEM failure.
 
@@ -360,7 +444,9 @@ def classify_crash(logcat, package=PACKAGE, candidate_graph=None, installed_apk_
             continue
         e = _sanitized_exception_chain(window)
         provenance = (_sanitized_classloader_provenance(window, candidate_graph, installed_apk_path)
-                      if e["exception_category"] == "CLASS_LOADER_MISSING" else {})
+                      if e["exception_category"] == "CLASS_LOADER_MISSING" else
+                      _null_dereference_origin(window, candidate_graph, line)
+                      if e["exception_category"] == "NULL_DEREFERENCE" else {})
         trace = "\n".join(window)
         if "installContentProviders" in trace or "installProvider(" in trace or "Provider.onCreate" in trace:
             stage = "PROVIDER_INIT"
@@ -422,14 +508,16 @@ def evaluate_launch_window(*, component, launch_output, activity_snapshot, crash
 
 
 
-def classify_visible_ui(dump, *, stage):
+def classify_visible_ui(dump, *, stage, expected_package=PACKAGE):
     """Confirm visible, clickable native controls; never return raw UI XML.
 
     An ActivityRecord alone may identify an empty or broken Activity. UIAutomator
     data is read exclusively from the isolated private emulator and discarded.
     """
     _bounded(dump, "SMOKE_BAD_UI_DUMP")
-    if stage not in ("classic_entry", "native_dj"):
+    if expected_package not in (PACKAGE, ORIGINAL_PACKAGE):
+        raise SmokeBlocked("SMOKE_UI_PACKAGE_NOT_AUTHORIZED")
+    if stage not in ("classic_entry", "native_dj", "music_inline_toggle", "music_inline_expanded"):
         raise SmokeBlocked("SMOKE_INVALID_UI_STAGE")
     if "<!DOCTYPE" in dump or "<!ENTITY" in dump:
         raise SmokeBlocked("SMOKE_UNSAFE_UI_XML")
@@ -444,25 +532,77 @@ def classify_visible_ui(dump, *, stage):
     if root.tag != "hierarchy":
         raise SmokeBlocked("SMOKE_UI_ROOT_INVALID")
     nodes = [x.attrib for x in root.iter("node")]
-    if stage == "classic_entry":
-        ok = any(x.get("text") == "Loft DJ" and x.get("clickable") == "true"
-                 for x in nodes)
+    # UIAutomator's node package attribution is the only evidence used here.
+    # A pre-login OEM Activity or Android compatibility dialog can occupy the
+    # first frame; never mislabel it as a failed Music screen or bypass login.
+    # Return a fixed category, never package names, OEM labels or raw UI text.
+    packages = {x["package"] for x in nodes if x.get("package")}
+    system_packages = {"android", "com.android.systemui",
+                       "com.google.android.permissioncontroller",
+                       "com.android.permissioncontroller"}
+    if expected_package in packages:
+        origin = ("CLONE_ONLY" if packages == {expected_package}
+                  else "CLONE_AND_OTHER")
+    elif packages and packages <= system_packages:
+        origin = "ANDROID_SYSTEM_ONLY"
+    elif packages:
+        origin = "OTHER_OR_UNVERIFIED"
     else:
-        title = any(x.get("text") == "Loft DJ · Yeelight Classic" for x in nodes)
-        start = any(x.get("text") == "Mikrofon starten" and x.get("clickable") == "true"
-                    for x in nodes)
-        stop = any(x.get("text") == "DJ stoppen" and x.get("clickable") == "true"
-                   for x in nodes)
+        origin = "UNATTRIBUTED"
+    def own_control(node, label, clickable=None):
+        return (node.get("package") == expected_package and
+                node.get("text") == label and
+                node.get("enabled") != "false" and
+                (clickable is None or node.get("clickable") == clickable))
+    if stage == "classic_entry":
+        ok = any(own_control(x, "Loft DJ", "true") for x in nodes)
+    elif stage in ("music_inline_toggle", "music_inline_expanded"):
+        toggle = any(own_control(x, "Loft DJ", "true") and
+                     x.get("content-desc") ==
+                     "Loft DJ Steuerung in Classic-Musik einblenden"
+                     for x in nodes)
+        if stage == "music_inline_toggle":
+            ok = toggle
+        else:
+            # These appear only after tapping the in-place toggle.
+            # No separate DJ Activity and no microphone permission is needed.
+            status = any(x.get("package") == expected_package and
+                         x.get("content-desc") ==
+                         "Loft DJ Status innerhalb Classic Music"
+                         for x in nodes)
+            analyze = any(x.get("package") == expected_package and
+                          x.get("content-desc") ==
+                          "Mikrofonanalyse starten, ohne Lampen" and
+                          x.get("enabled") != "false" and
+                          x.get("clickable") == "true" for x in nodes)
+            stop = any(x.get("package") == expected_package and
+                       x.get("content-desc") ==
+                       "Loft DJ Mikrofonanalyse stoppen" and
+                       x.get("enabled") != "false" and
+                       x.get("clickable") == "true" for x in nodes)
+            ok = toggle and status and analyze and stop
+    else:
+        title = any(own_control(x, "Loft DJ · Yeelight Classic") for x in nodes)
+        start = any(own_control(x, "Mikrofon starten", "true") for x in nodes)
+        stop = any(own_control(x, "DJ stoppen", "true") for x in nodes)
         ok = title and start and stop
     return {"expected_native_ui_observed": bool(ok),
+            "ui_node_origin_category": origin,
             "ui_stage": stage, "ui_interaction_tested": False}
 
 
-def entry_button_coordinates(dump, display):
-    """Select only the actual visible Classic Loft DJ button; no blind taps."""
-    result = classify_visible_ui(dump, stage="classic_entry")
+def entry_button_coordinates(dump, display, *, expected_package=PACKAGE,
+                             native_music=False):
+    """Select only the verified Classic button; native mode is Music-only."""
+    if type(native_music) is not bool or (
+            native_music and expected_package != PACKAGE):
+        raise SmokeBlocked("SMOKE_MUSIC_MODE_OUT_OF_SCOPE")
+    stage = "music_inline_toggle" if native_music else "classic_entry"
+    result = classify_visible_ui(dump, stage=stage,
+                                 expected_package=expected_package)
     if not result["expected_native_ui_observed"]:
-        raise SmokeBlocked("SMOKE_CLASSIC_ENTRY_NOT_VISIBLE")
+        raise SmokeBlocked("SMOKE_MUSIC_INLINE_TOGGLE_NOT_VISIBLE"
+                           if native_music else "SMOKE_CLASSIC_ENTRY_NOT_VISIBLE")
     _bounded(display, "SMOKE_BAD_DISPLAY")
     sizes = re.findall(r"(?:Physical|Override) size:\s*(\d+)x(\d+)", display)
     if not sizes:
@@ -479,7 +619,11 @@ def entry_button_coordinates(dump, display):
     except ET.ParseError:
         raise SmokeBlocked("SMOKE_UI_XML_INVALID") from None
     buttons = [n.attrib for n in tree.iter("node")
-               if n.get("text") == "Loft DJ" and n.get("clickable") == "true"]
+               if n.get("package") == expected_package and
+               n.get("text") == "Loft DJ" and
+               (not native_music or n.get("content-desc") ==
+                "Loft DJ Steuerung in Classic-Musik einblenden") and
+               n.get("clickable") == "true" and n.get("enabled") != "false"]
     if len(buttons) != 1:
         raise SmokeBlocked("SMOKE_CLASSIC_ENTRY_AMBIGUOUS")
     bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
@@ -536,9 +680,272 @@ def _adb(args, *, serial, timeout=18):
     return _bounded(result.stdout, "SMOKE_ADB_OUTPUT_TOO_LARGE")
 
 
+# APK remains private on an owner-approved disposable offline emulator.
+# Android 17 UiAutomator can report only the destination on /dev/tty stdout.
+# The identity-control path already uses an ephemeral file; use the same
+# capture contract for BOTH clone UI stages without publishing its contents.
+PRIVATE_UI_SNAPSHOT = "/data/local/tmp/classic-dj-owner-only-smoke.xml"
+
+
+def capture_private_ui_hierarchy(run):
+    """Read actual XML bytes, never infer UI visibility from a dump success.
+
+    The runner must be an already owner-gated isolated emulator. No shell
+    interpolation or arbitrary output, and cleanup is mandatory on ALL paths.
+    """
+    try:
+        run(["shell", "rm", "-f", PRIVATE_UI_SNAPSHOT])
+        run(["shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT])
+        xml = run(["shell", "cat", PRIVATE_UI_SNAPSHOT])
+        _bounded(xml, "SMOKE_BAD_UI_DUMP")
+        if "<?xml" not in xml or "</hierarchy>" not in xml:
+            raise SmokeBlocked("SMOKE_UI_XML_MISSING")
+        return xml
+    finally:
+        try:
+            run(["shell", "rm", "-f", PRIVATE_UI_SNAPSHOT])
+        except (SmokeBlocked, OSError, ValueError, TypeError):
+            raise SmokeBlocked("SMOKE_UI_TEMP_CLEANUP_FAILED") from None
+
+
+def _focused_system_window(run):
+    """Read first-frame focus without exposing any Android or OEM window text."""
+    for section in ("displays", "windows"):
+        raw = run(["shell", "dumpsys", "window", section])
+        _bounded(raw, "SMOKE_BAD_WINDOW_SNAPSHOT")
+        matches = re.findall(r"(?m)^[ \t]*mCurrentFocus=[^\r\n]{1,512}$", raw)
+        if matches:
+            return (raw if len(matches) == 1 else "",
+                    "DISPLAY_FOCUS_DECLARED" if section == "displays" and len(matches) == 1
+                    else "LEGACY_FOCUS_DECLARED" if len(matches) == 1
+                    else "FOCUS_AMBIGUOUS_NO_ACTION")
+    return "", "FOCUS_NOT_DECLARED_NO_ACTION"
+
+
+def _unique_current_focus_token(snapshot):
+    """Opaque private-only token; NEVER serialize the focused window title."""
+    if type(snapshot) is not str or len(snapshot) > MAX_TEXT:
+        return None
+    matches = re.findall(
+        r"(?m)^[ \t]*mCurrentFocus=(Window\{[^\r\n]{1,300}\})[ \t]*$",
+        snapshot)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _focus_token_relation(before, after):
+    old = _unique_current_focus_token(before)
+    new = _unique_current_focus_token(after)
+    return ('UNVERIFIED' if not old or not new else
+            'SAME_FOCUS_TOKEN' if old == new else
+            'DIFFERENT_FOCUS_TOKEN')
+
+
+def _warning_focus_tokens(snapshot):
+    return tuple(re.findall(
+        r"(?m)^[ \t]*m(?:CurrentFocus|FocusedApp)=[^\r\n]{1,512}$",
+        snapshot))
+
+
+def _single_known_16k_warning(ui_xml, *, run, pause, prelaunch_focus=''):
+    """At most one exact AOSP 16K acknowledgment per Activity transition.
+
+    Unknown, login, permission, ANR and unrelated Android dialogs are NEVER
+    clicked. This path is reachable only after the owner-gated offline
+    emulator, installed-hash and original-Activity launch checks.
+    """
+    observation = {
+        "status": "SYSTEM_UI_NOT_RECOGNIZED_NO_ACTION",
+        "acknowledged": False,
+        "permission_granted": False,
+        "native_entry_accepted": False,
+        "raw_ui_or_window_logged": False,
+    }
+    try:
+        focus, state = _focused_system_window(run)
+        observation["focus_source"] = state
+        if not focus:
+            return ui_xml, observation
+        display = run(["shell", "wm", "size"])
+        evidence = {}
+        warning = read_warning_action(
+            ui_xml, focus, display, run, evidence, target_package=PACKAGE)
+        observation["page_size_probe"] = evidence
+        if warning is None:
+            # An actual system UID 1000 APPLICATION_OVERLAY is *not* the
+            # AOSP TYPE_PHONE warning. Classify only known platform text and
+            # lifecycle identity; never grant a tap or emit the raw UI.
+            if (evidence.get('window_type_detail') == 'APP_OVERLAY'
+                    and evidence.get('focused_app') == 'CLASSIC'
+                    and evidence.get('window_owner') == 'ANDROID_SYSTEM'):
+                observation['prelaunch_focus_relation'] = (
+                    _focus_token_relation(prelaunch_focus, focus))
+                try:
+                    windows = run(['shell', 'dumpsys', 'window', 'windows'])
+                    resources = read_framework_resources(run)
+                    observation['system_overlay_inspection'] = (
+                        inspect_app_overlay_readonly(
+                            ui_xml, focus, windows, resources,
+                            target_package=PACKAGE))
+                except (SmokeBlocked, OSError, ValueError, TypeError):
+                    observation['system_overlay_inspection'] = {
+                        'status': 'OVERLAY_READONLY_PROBE_UNAVAILABLE',
+                        'interaction_performed': False}
+            return ui_xml, observation
+        next_focus, next_state = _focused_system_window(run)
+        current_tokens = _warning_focus_tokens(focus)
+        if (not next_focus or next_state != state
+                or len(current_tokens) != 2
+                or current_tokens != _warning_focus_tokens(next_focus)):
+            observation["status"] = "WARNING_FOCUS_CHANGED_NO_ACTION"
+            return ui_xml, observation
+        # Re-establish full offline isolation immediately before touching a
+        # *verified system compatibility button*, never user app controls.
+        if (run(["shell", "getprop", "ro.kernel.qemu"]) != "1"
+                or run(["shell", "settings", "get", "global", "airplane_mode_on"]) != "1"
+                or run(["shell", "settings", "get", "global", "wifi_on"]) != "0"
+                or run(["shell", "settings", "get", "global", "mobile_data"]) != "0"):
+            observation["status"] = "WARNING_OFFLINE_STATE_CHANGED_NO_ACTION"
+            return ui_xml, observation
+        for version in ("-4", "-6"):
+            routes = run(["shell", "ip", version, "route", "show"])
+            if routes and any(" dev lo" not in line for line in routes.splitlines()):
+                observation["status"] = "WARNING_NETWORK_ROUTE_CHANGED_NO_ACTION"
+                return ui_xml, observation
+        (x, y), kind = warning
+        run(["shell", "input", "tap", str(x), str(y)])
+        observation["status"] = "EXACT_AOSP_PAGE_SIZE_WARNING_ACKNOWLEDGED"
+        observation["page_size_warning_kind"] = kind
+        observation["acknowledged"] = True
+        pause(1)
+        return capture_private_ui_hierarchy(run), observation
+    except SmokeBlocked as exc:
+        # Do not swallow an incomplete private screenshot cleanup.
+        if str(exc) == "SMOKE_UI_TEMP_CLEANUP_FAILED":
+            raise
+        observation["status"] = "WARNING_PROBE_UNAVAILABLE_NO_ACTION"
+        return ui_xml, observation
+
+
+def _passive_system_ui_recheck(ui_xml, *, stage, run, pause):
+    """One bounded read-only wait for transient first-run system surfaces.
+
+    Android's cold first run can outlive the first 3-second window. Never
+    acknowledge, swipe, log in, grant permission, or infer OEM readiness.
+    No raw UI hierarchy, Android dialog text, or OEM labels leave this module.
+    """
+    before = classify_visible_ui(ui_xml, stage=stage)
+    if before["ui_node_origin_category"] != "ANDROID_SYSTEM_ONLY":
+        return ui_xml, None
+    before_focus, _before_source = _focused_system_window(run)
+    pause(8)
+    fresh = capture_private_ui_hierarchy(run)
+    after_focus, _after_source = _focused_system_window(run)
+    state = classify_visible_ui(fresh, stage=stage)
+    status = ("NATIVE_CONTROLS_BECAME_VISIBLE"
+              if state["expected_native_ui_observed"] else
+              "SYSTEM_UI_PERSISTED_NO_ACTION"
+              if state["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY" else
+              "OTHER_UI_NO_NATIVE_PROOF")
+    return fresh, {
+        "status": status,
+        "wait_ms": 8000,
+        "window_focus_relation": _focus_token_relation(before_focus, after_focus),
+        "ui_node_origin_category": state["ui_node_origin_category"],
+        "expected_native_ui_observed": state["expected_native_ui_observed"],
+        "interaction_performed": False,
+        "permission_granted": False,
+        "account_login_tested": False,
+        "raw_ui_or_window_logged": False,
+    }
+
+
+def _native_clone_music_host(snapshot):
+    """Current global top is the real Classic MusicActivity inside the clone.
+
+    Class names are compared privately and NEVER returned/logged.
+    """
+    category, activity = _global_top(snapshot)
+    return bool(category == "CLONE_GLOBAL_TOP" and activity and
+                activity.startswith("com.yeelight.cherry.") and
+                activity.endswith(".MusicActivity") and
+                "$" not in activity and "/" not in activity)
+
+
+def _verify_inline_music_route(*, home, reports, ui_data, run, pause,
+                               dwell_ms, candidate_graph, installed_path):
+    """Qualify one real OEM Music screen and in-place DJ expansion, no login.
+
+    This is private emulator UI evidence only, NOT app, MiOT or lamp acceptance.
+    """
+    if (home["status"] not in ("EMULATOR_ACTIVITY_RESUMED_OBSERVED",
+                               "BLOCKED_REQUIRED_UI_NOT_VISIBLE")
+            or not home["resumed_activity_observed"]):
+        return {"status": "PRIVATE_EMULATOR_LAUNCH_BLOCKED",
+                "entrypoint_observations": reports,
+                "installed_apk_hash_verified": True,
+                "native_entry_navigation_tested": False,
+                "physical_device_tested": False,
+                "app_functionally_accepted": False}
+    before = run(["shell", "dumpsys", "activity", "activities"])
+    host = _native_clone_music_host(before)
+    home["oem_music_activity_resumed"] = host
+    if not host or not home["ui"]["expected_native_ui_observed"]:
+        # An OEM Welcome/Login/Home may be fully healthy while its Music
+        # screen is unreachable in a freshly installed OFFLINE test clone.
+        home["status"] = "OEM_START_OBSERVED_MUSIC_NOT_ATTESTED"
+        return {"status": "PRIVATE_EMULATOR_OEM_START_ONLY",
+                "entrypoint_observations": reports,
+                "installed_apk_hash_verified": True,
+                "native_entry_navigation_tested": False,
+                "cloud_login_tested": False,
+                "miot_binding_attested": False,
+                "physical_device_tested": False,
+                "app_functionally_accepted": False}
+    x, y = entry_button_coordinates(ui_data, run(["shell", "wm", "size"]),
+                                    native_music=True)
+    run(["logcat", "-b", "crash", "-c"])
+    run(["shell", "input", "tap", str(x), str(y)])
+    pause(dwell_ms / 1000.0)
+    after = run(["shell", "dumpsys", "activity", "activities"])
+    crash = classify_crash(run(["logcat", "-b", "crash", "-d"]),
+                           candidate_graph=candidate_graph,
+                           installed_apk_path=installed_path)
+    expanded = classify_visible_ui(capture_private_ui_hierarchy(run),
+                                   stage="music_inline_expanded")
+    same_host = (_native_clone_music_host(after) and
+                 _global_top(after) == _global_top(before))
+    good = (same_host and expanded["expected_native_ui_observed"] and
+            not crash["target_crash"] and not crash["unattributed_fatal"])
+    reports.append({
+        "status": ("EMULATOR_CLASSIC_MUSIC_INLINE_OPENED" if good else
+                   "BLOCKED_MUSIC_ACTIVITY_CHANGED" if not same_host else
+                   "BLOCKED_CRASH" if crash["target_crash"] else
+                   "BLOCKED_UNATTRIBUTED_FATAL" if crash["unattributed_fatal"] else
+                   "BLOCKED_INLINE_CONTROLS_NOT_VISIBLE"),
+        "oem_music_activity_retained": bool(same_host),
+        "ui": expanded, "crash": crash,
+        "microphone_started": False, "lamp_commands_sent": False,
+    })
+    return {
+        "status": ("PRIVATE_EMULATOR_NATIVE_MUSIC_INLINE_OBSERVED" if good
+                   else "PRIVATE_EMULATOR_NATIVE_MUSIC_INLINE_BLOCKED"),
+        "entrypoint_observations": reports,
+        "installed_apk_hash_verified": True,
+        "native_entry_navigation_tested": True,
+        "ui_controls_exercised": False,
+        "microphone_started": False,
+        "cloud_login_tested": False,
+        "miot_binding_attested": False,
+        "lamp_commands_sent": False,
+        "physical_device_tested": False,
+        "app_functionally_accepted": False,
+    }
+
+
 def probe_private_emulator(serial, *, owner_approved, launcher_component,
                            expected_installed_apk_sha256, dwell_ms=3000,
-                           adb=_adb, pause=time.sleep, candidate_graph=None):
+                           adb=_adb, pause=time.sleep, candidate_graph=None,
+                           require_clone_music_ui=False):
     """Explicitly authorized PRIVATE offline emulator only; NEVER a real phone.
 
     Requires preinstalled private candidate, Android 17, emulator kernel,
@@ -551,6 +958,8 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
         raise SmokeBlocked("SMOKE_EMULATOR_SERIAL_REQUIRED")
     _component(launcher_component)
     _component(PACKAGE + "/" + DJ_ACTIVITY)
+    if type(require_clone_music_ui) is not bool:
+        raise SmokeBlocked("SMOKE_INVALID_MUSIC_TEST_MODE")
     if (type(expected_installed_apk_sha256) is not str or
             not PIN.fullmatch(expected_installed_apk_sha256)):
         raise SmokeBlocked("SMOKE_APK_PIN_REQUIRED")
@@ -587,6 +996,14 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
             fields[0] != expected_installed_apk_sha256):
         raise SmokeBlocked("SMOKE_INSTALLED_APK_HASH_MISMATCH")
 
+    # Capture an opaque prelaunch focus token while the verified clone is
+    # installed but not running. Only SAME/DIFFERENT/UNVERIFIED leaves RAM.
+    # No prelaunch UI, OEM app label or system window title is serialized.
+    try:
+        prelaunch_focus, _prelaunch_source = _focused_system_window(run)
+    except SmokeBlocked:
+        prelaunch_focus = ''
+
     reports = []
     # Launch ONLY the OEM launcher, which must already be exported as a normal
     # launcher Activity. The private native DJ Activity is intentionally
@@ -602,13 +1019,59 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
                                   crash_log=crashes, observed_ms=dwell_ms,
                                   candidate_graph=candidate_graph,
                                   installed_apk_path=installed_path)
+    ui_stage = "music_inline_toggle" if require_clone_music_ui else "classic_entry"
     ui_data = None
     if home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
-        ui_data = run(["shell", "uiautomator", "dump", "/dev/tty"])
-        home["ui"] = classify_visible_ui(ui_data, stage="classic_entry")
-        if home["ui"]["expected_native_ui_observed"] is False:
+        ui_data = capture_private_ui_hierarchy(run)
+        home["ui"] = classify_visible_ui(ui_data, stage=ui_stage)
+        if (not home["ui"]["expected_native_ui_observed"] and
+                home["ui"]["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY"):
+            ui_data, warning = _single_known_16k_warning(
+                ui_data, run=run, pause=pause,
+                prelaunch_focus=prelaunch_focus)
+            home["system_warning"] = warning
+            if warning["acknowledged"]:
+                # A compatibility confirmation is NOT OEM init or a native
+                # entry PASS. Re-check Activity/crashes after its dismissal.
+                fresh = evaluate_launch_window(
+                    component=launcher_component, launch_output=am_output,
+                    activity_snapshot=run(["shell", "dumpsys", "activity", "activities"]),
+                    crash_log=run(["logcat", "-b", "crash", "-d"]),
+                    observed_ms=dwell_ms, candidate_graph=candidate_graph,
+                    installed_apk_path=installed_path)
+                home.update({k: fresh[k] for k in (
+                    "status", "resumed_activity_observed", "foreground_category",
+                    "crash")})
+                home["ui"] = classify_visible_ui(ui_data, stage=ui_stage)
+        ui_data, delayed = _passive_system_ui_recheck(
+            ui_data, stage=ui_stage, run=run, pause=pause)
+        if delayed is not None:
+            home["passive_system_ui_recheck"] = delayed
+            fresh = evaluate_launch_window(
+                component=launcher_component, launch_output=am_output,
+                activity_snapshot=run(["shell", "dumpsys", "activity", "activities"]),
+                crash_log=run(["logcat", "-b", "crash", "-d"]),
+                observed_ms=dwell_ms, candidate_graph=candidate_graph,
+                installed_apk_path=installed_path)
+            home.update({k: fresh[k] for k in (
+                "status", "resumed_activity_observed", "foreground_category", "crash")})
+            home["ui"] = classify_visible_ui(ui_data, stage=ui_stage)
+        # Initial OEM welcome/login or a platform dialog need not inflate
+        # activity_main_new.xml, where the normal clone's entry is attached.
+        # Preserve independent startup evidence, but do not tap, infer an
+        # account state, or count a missing entry as native UI acceptance.
+        home["oem_main_initialization"] = "NOT_ATTESTED"
+        home["miot_binding"] = "NOT_ATTESTED"
+        home["cloud_login"] = "NOT_TESTED"
+        if (home["ui"]["expected_native_ui_observed"] is False and
+                home["status"] == "EMULATOR_ACTIVITY_RESUMED_OBSERVED"):
             home["status"] = "BLOCKED_REQUIRED_UI_NOT_VISIBLE"
     reports.append(home)
+    if require_clone_music_ui:
+        return _verify_inline_music_route(
+            home=home, reports=reports, ui_data=ui_data,
+            run=run, pause=pause, dwell_ms=dwell_ms,
+            candidate_graph=candidate_graph, installed_path=installed_path)
     if home["status"] != "EMULATOR_ACTIVITY_RESUMED_OBSERVED":
         return {"status": "PRIVATE_EMULATOR_LAUNCH_BLOCKED",
                 "entrypoint_observations": reports,
@@ -626,13 +1089,31 @@ def probe_private_emulator(serial, *, owner_approved, launcher_component,
     pause(dwell_ms / 1000.0)
     dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
     dj_crashes = run(["logcat", "-b", "crash", "-d"])
-    dj_ui = run(["shell", "uiautomator", "dump", "/dev/tty"])
+    dj_ui = capture_private_ui_hierarchy(run)
+    dj_classification = classify_visible_ui(dj_ui, stage="native_dj")
+    dj_warning = None
+    if (not dj_classification["expected_native_ui_observed"] and
+            dj_classification["ui_node_origin_category"] == "ANDROID_SYSTEM_ONLY"):
+        dj_ui, dj_warning = _single_known_16k_warning(
+            dj_ui, run=run, pause=pause)
+        if dj_warning["acknowledged"]:
+            dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
+            dj_crashes = run(["logcat", "-b", "crash", "-d"])
+    dj_ui, dj_delayed = _passive_system_ui_recheck(
+        dj_ui, stage="native_dj", run=run, pause=pause)
+    if dj_delayed is not None:
+        dj_snapshot = run(["shell", "dumpsys", "activity", "activities"])
+        dj_crashes = run(["logcat", "-b", "crash", "-d"])
     dj = evaluate_navigation_window(component=PACKAGE + "/" + DJ_ACTIVITY,
                                     activity_snapshot=dj_snapshot,
                                     crash_log=dj_crashes, ui_dump=dj_ui,
                                     observed_ms=dwell_ms,
                                     candidate_graph=candidate_graph,
                                     installed_apk_path=installed_path)
+    if dj_warning is not None:
+        dj["system_warning"] = dj_warning
+    if dj_delayed is not None:
+        dj["passive_system_ui_recheck"] = dj_delayed
     reports.append(dj)
     success = dj["status"] == "EMULATOR_NATIVE_DJ_NAVIGATION_OBSERVED"
     return {
@@ -657,6 +1138,7 @@ def main(argv=None):
     p.add_argument("--expected-installed-apk-sha256", required=True)
     p.add_argument("--explicit-owner-approved-private-emulator", action="store_true")
     p.add_argument("--candidate-apk", required=True)
+    p.add_argument("--require-clone-music-ui", action="store_true")
     args = p.parse_args(argv)
     try:
         candidate_graph = _private_candidate_graph(args.candidate_apk)
@@ -665,13 +1147,17 @@ def main(argv=None):
             owner_approved=args.explicit_owner_approved_private_emulator,
             launcher_component=args.launcher_component,
             expected_installed_apk_sha256=args.expected_installed_apk_sha256,
-            candidate_graph=candidate_graph)
+            candidate_graph=candidate_graph,
+            require_clone_music_ui=args.require_clone_music_ui)
     except SmokeBlocked as e:
         # Fixed code only. Never print the raw adb/logcat/OEM identity.
         print(json.dumps({"status": "BLOCKED", "code": str(e)}, sort_keys=True))
         return 2
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["status"] == "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED" else 2
+    accepted = ("PRIVATE_EMULATOR_NATIVE_MUSIC_INLINE_OBSERVED"
+                if args.require_clone_music_ui else
+                "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+    return 0 if report["status"] == accepted else 2
 
 
 if __name__ == "__main__":

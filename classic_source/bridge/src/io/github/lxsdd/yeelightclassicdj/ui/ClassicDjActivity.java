@@ -12,8 +12,6 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
-import android.widget.EditText;
-import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -22,8 +20,17 @@ import android.widget.TextView;
 public final class ClassicDjActivity extends Activity {
     public static final String EXTRA_SELECTED_IPS = "io.github.lxsdd.yeelightclassicdj.SELECTED_LAMP_IPS";
     private TextView status;
-    private EditText lampIps;
-    private CheckBox musicOptIn;
+    // Legacy private QA surface also participates in the SAME service gate.
+    private String sessionOwner;
+     private double liveGain = 1.0;
+    private String liveScene = "SPECTRUM";
+    private boolean pulseBeatSync = true;
+    private int pulseBpm = 90;
+    // Future color selection must reuse the existing OEM Classic picker.
+    // Never substitute a second raw hex picker in this interim DJ screen.
+    private int pulseRgb = 0x25CBE8;
+    private int pulseMin = 12, pulseMax = 90, pulseAttack = 90, pulseDecay = 600;
+    private double pulseGamma = 2.0;
     private String transientStatus;
     private long transientUntilMs;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
@@ -58,23 +65,131 @@ public final class ClassicDjActivity extends Activity {
         TextView warning = new TextView(this);
         warning.setText("Nur Color4/1S mit aktiviertem LAN-Zugriff. Music-Mode wird ausschließlich für gewählte Lampen gestartet. Bei Verbindungsfehler bitte Lampenstatus kontrollieren.");
         layout.addView(warning);
-        lampIps = new EditText(this);
-        lampIps.setSingleLine(false);
-        lampIps.setHint("Color4-IP(s), durch Komma getrennt (max. 4)");
-        layout.addView(lampIps);
-        musicOptIn = new CheckBox(this);
-        musicOptIn.setText("Diese Color4-Lampen ausdrücklich für DJ-Music auswählen");
-        layout.addView(musicOptIn);
+        // Never expose a raw-IP selection that appears authorized but has no
+        // proven OEM device identity or Classic account/room binding.
+        TextView selectionGate = new TextView(this);
+        selectionGate.setText("Lampensteuerung gesperrt: Classic-Geräteauswahl und "
+            + "Berechtigung sind noch nicht verifiziert. Mikrofonanalyse ohne Lampen möglich.");
+        layout.addView(selectionGate);
         Button start = new Button(this);
         start.setText("Mikrofon starten");
         start.setOnClickListener(v -> requestMic());
         layout.addView(start);
+        TextView liveTitle = new TextView(this);
+        liveTitle.setText("Live-Szene · ohne DJ-Neustart");
+        layout.addView(liveTitle);
+        LinearLayout scenes = new LinearLayout(this);
+        scenes.setOrientation(LinearLayout.HORIZONTAL);
+        String[] codes = {"SPECTRUM", "AMBIENT", "BEAT", "PULSE", "SCANNER", "METEOR", "WAVE"};
+        String[] labels = {"Spektrum", "Ruhig", "Beat", "Puls", "Scanner", "Meteor", "Welle"};
+        for (int index = 0; index < codes.length; index++) {
+            final String chosen = codes[index];
+            Button choice = new Button(this);
+            choice.setText(labels[index]);
+            choice.setOnClickListener(v -> {
+                liveScene = chosen;
+                updateRunningSettings();
+                showTransientStatus("Szene: " + chosen + " · direkt übernommen");
+            });
+            scenes.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        layout.addView(scenes);
+        TextView pulseTitle = new TextView(this);
+        pulseTitle.setText("Puls · Beat oder eigener Takt");
+        layout.addView(pulseTitle);
+        LinearLayout pulseModes = new LinearLayout(this);
+        pulseModes.setOrientation(LinearLayout.HORIZONTAL);
+        Button analyzed = new Button(this);
+        analyzed.setText("Musik-Beat");
+        analyzed.setOnClickListener(v -> {
+            pulseBeatSync = true; liveScene = "PULSE";
+            updateRunningSettings();
+            showTransientStatus("Puls folgt analysierten Beats");
+        });
+        pulseModes.addView(analyzed, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button timer = new Button(this);
+        timer.setText("Freier Takt");
+        timer.setOnClickListener(v -> {
+            pulseBeatSync = false; liveScene = "PULSE";
+            updateRunningSettings();
+            showTransientStatus("Puls mit " + pulseBpm + " BPM");
+        });
+        pulseModes.addView(timer, new LinearLayout.LayoutParams(0, -2, 1f));
+        layout.addView(pulseModes);
+        LinearLayout pulseTempo = new LinearLayout(this);
+        pulseTempo.setOrientation(LinearLayout.HORIZONTAL);
+        for (int bpm : new int[]{60, 90, 120}) {
+            Button choice = new Button(this);
+            choice.setText(bpm + " BPM");
+            choice.setOnClickListener(v -> {
+                pulseBeatSync = false; pulseBpm = bpm; liveScene = "PULSE";
+                updateRunningSettings();
+                showTransientStatus("Freier Puls: " + bpm + " BPM");
+            });
+            pulseTempo.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        layout.addView(pulseTempo);
+        LinearLayout pulseShape = new LinearLayout(this);
+        pulseShape.setOrientation(LinearLayout.HORIZONTAL);
+        Button calm = new Button(this);
+        calm.setText("Puls sanft");
+        calm.setOnClickListener(v -> {
+            pulseMin = 12; pulseMax = 65; pulseAttack = 160; pulseDecay = 900; pulseGamma = 2.2;
+            liveScene = "PULSE"; updateRunningSettings();
+            showTransientStatus("Sanfter Puls übernommen");
+        });
+        pulseShape.addView(calm, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button vivid = new Button(this);
+        vivid.setText("Puls kräftig");
+        vivid.setOnClickListener(v -> {
+            pulseMin = 8; pulseMax = 100; pulseAttack = 70; pulseDecay = 330; pulseGamma = 1.2;
+            liveScene = "PULSE"; updateRunningSettings();
+            showTransientStatus("Kräftiger Puls übernommen");
+        });
+        pulseShape.addView(vivid, new LinearLayout.LayoutParams(0, -2, 1f));
+        layout.addView(pulseShape);
+        TextView pulseNote = new TextView(this);
+        pulseNote.setText("Niedrige Helligkeit bleibt sichtbar, nicht AUS. Farbauswahl später über den Classic-Picker.");
+        layout.addView(pulseNote);
+        TextView gainTitle = new TextView(this);
+        gainTitle.setText("Mikrofonempfindlichkeit · direkt auswählen");
+        layout.addView(gainTitle);
+        LinearLayout gains = new LinearLayout(this);
+        gains.setOrientation(LinearLayout.HORIZONTAL);
+        double[] steps = {0.5, 1.0, 2.0};
+        String[] gainLabels = {"Leise", "Normal", "Empfindlich"};
+        for (int index = 0; index < steps.length; index++) {
+            final double chosen = steps[index];
+            Button choice = new Button(this);
+            choice.setText(gainLabels[index]);
+            choice.setOnClickListener(v -> {
+                liveGain = chosen;
+                updateRunningSettings();
+                showTransientStatus("Empfindlichkeit: " + chosen + "× · direkt übernommen");
+            });
+            gains.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        layout.addView(gains);
         Button stop = new Button(this);
         stop.setText("DJ stoppen");
         stop.setOnClickListener(v -> {
-            Intent i = new Intent(this, ClassicDjService.class);
-            i.setAction(ClassicDjService.ACTION_STOP);
-            startService(i);
+            String oldOwner = sessionOwner;
+            sessionOwner = null;
+            if (oldOwner == null) {
+                showTransientStatus("Keine eigene Analyse aktiv.");
+                return;
+            }
+            if (!ClassicDjService.stopOwnedFromUi(oldOwner)) {
+                Intent i = new Intent(this, ClassicDjService.class);
+                i.setAction(ClassicDjService.ACTION_STOP);
+                i.putExtra(ClassicDjService.EXTRA_UI_OWNER, oldOwner);
+                try {
+                    startService(i);
+                } catch (RuntimeException blocked) {
+                    showTransientStatus("Stopp unbestätigt; Sitzungsstatus prüfen.");
+                    return;
+                }
+            }
             showTransientStatus("Stopp angefordert; Lampenstatus muss bestätigt werden.");
         });
         layout.addView(stop);
@@ -101,6 +216,30 @@ public final class ClassicDjActivity extends Activity {
         if (status != null) status.setText(message);
     }
 
+    /** Config changes only the already-owned DSP pipeline; never starts lamps. */
+    private void updateRunningSettings() {
+        if (!ClassicDjService.hasActiveSession()) return;
+        if (sessionOwner == null) return;
+        Intent config = new Intent(this, ClassicDjService.class);
+        config.setAction(ClassicDjService.ACTION_CONFIG);
+        config.putExtra(ClassicDjService.EXTRA_UI_OWNER, sessionOwner);
+        config.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
+        config.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
+        writePulseSettings(config);
+        startService(config);
+    }
+
+    private void writePulseSettings(Intent intent) {
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MODE, pulseBeatSync ? "BEAT" : "TIMER");
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_COLOR, (double) pulseRgb);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) pulseBpm);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MIN, (double) pulseMin);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_MAX, (double) pulseMax);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, (double) pulseAttack);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, (double) pulseDecay);
+        intent.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, pulseGamma);
+    }
+
     private void requestMic() {
         if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_REQUEST);
@@ -110,30 +249,29 @@ public final class ClassicDjActivity extends Activity {
     }
 
     private void startMicService() {
-        java.util.ArrayList<String> ips = new java.util.ArrayList<>();
-        if (musicOptIn.isChecked()) {
-            String input = lampIps.getText().toString().trim();
-            if (input.isEmpty()) {
-                showTransientStatus("Mindestens eine Color4-IP eingeben oder Auswahl deaktivieren.");
-                return;
-            }
-            for (String part : input.split(",")) {
-                String ip = part.trim();
-                if (!validPrivateLanIp(ip) || ips.contains(ip)) {
-                    showTransientStatus("Ungültige oder doppelte Color4-IP: bitte prüfen.");
-                    return;
-                }
-                ips.add(ip);
-            }
-            if (ips.size() > 4) { showTransientStatus("Maximal vier Lampen gleichzeitig."); return; }
+        // A text IP is never a substitute for a verified Classic participant.
+        // No lamp target is emitted by this screen, even after microphone grant.
+        final String[] selectedIps = new String[0];
+        if (ClassicDjService.hasActiveSession()) {
+            showTransientStatus("Andere DJ-Analyse bereits aktiv.");
+            return;
         }
+        String newOwner = java.util.UUID.randomUUID().toString();
         Intent i = new Intent(this, ClassicDjService.class);
         i.setAction(ClassicDjService.ACTION_MIC);
-        i.putExtra(EXTRA_SELECTED_IPS, ips.toArray(new String[0]));
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-        else startService(i);
-        showTransientStatus(ips.isEmpty() ? "Mikrofonanalyse ohne Lampen gestartet." :
-            "Music-Rückkanal für " + ips.size() + " gewählte Color4-Lampen wird aufgebaut.");
+        i.putExtra(ClassicDjService.EXTRA_UI_OWNER, newOwner);
+        i.putExtra(EXTRA_SELECTED_IPS, selectedIps);
+        i.putExtra(ClassicDjService.EXTRA_GAIN, liveGain);
+        i.putExtra(ClassicDjService.EXTRA_SCENE, liveScene);
+        writePulseSettings(i);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+            else startService(i);
+            sessionOwner = newOwner;
+            showTransientStatus("Mikrofonanalyse ohne Lampen angefordert.");
+        } catch (RuntimeException blocked) {
+            showTransientStatus("Mikrofonanalyse nicht gestartet.");
+        }
     }
 
     /** Fail closed: no DNS, public network, multicast or off-subnet fallback. */

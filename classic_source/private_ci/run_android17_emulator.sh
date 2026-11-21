@@ -16,6 +16,11 @@ APK="$(realpath -e -- "$1")"
 [[ -s "$APK" ]] || fail
 # Print only allowlisted booleans; no private OEM classes, paths, or APK bytes.
 python3 classic_source/secondary_dex_transport.py --owner-only-transport-status || fail
+# Publish ONLY independently allowlisted original UI structure/reference counts.
+# The raw original DEX, activity symbols, resources and receipt stay private;
+# this runs before emulator actions and cannot change any UI or lamp.
+python3 classic_source/private_ci/emit_oem_ui_evidence.py \
+  "$RUNNER_TEMP/private-output/classic-loft-dj-UNSIGNED.apk.preflight.json" || fail
 command -v sdkmanager >/dev/null || fail
 command -v avdmanager >/dev/null || fail
 command -v adb >/dev/null || fail
@@ -116,6 +121,7 @@ if python3 classic_source/private_ci/android17_start_smoke.py \
  --launcher-component "io.lxsdd.yeelightdj/$LAUNCHER" \
  --expected-installed-apk-sha256 "$PIN" \
  --candidate-apk "$APK" \
+ --require-clone-music-ui \
  --explicit-owner-approved-private-emulator; then
   printf 'PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS\n'
 else
@@ -125,5 +131,71 @@ else
     --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
     --candidate "$APK" \
     --serial emulator-5554 || fail
+  # Only AFTER the clone has actually failed: inspect its exact crash first,
+  # uninstall it, then run one unmodified original on THIS offline emulator.
+  # No original install/launch if the clone passed; never turn a crash to PASS.
+  python3 classic_source/private_ci/private_original_baseline.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --candidate "$APK" \
+    --serial emulator-5554 \
+    --explicit-owner-approved-private-emulator || fail
+  # On a nonfatal UI-hierarchy failure the original differential intentionally
+  # returns NOT_APPLICABLE without uninstalling the cloned app. Running the
+  # original-identity A/B on top of an installed clone would violate its own
+  # package-isolation gate and produce the misleading generic identity error.
+  # Never uninstall it here, never run a different comparison, and never
+  # reinterpret inaccessible UI as an app-crash success.
+  # pm path returns exit 1 when a package is ABSENT (normal after a fatal
+  # baseline comparison); list packages has a stable zero-exit empty result.
+  CLONE_INSTALLED_MATCH="$(adb -s emulator-5554 shell pm list packages --user 0 io.lxsdd.yeelightdj 2>/dev/null | tr -d '\r')" || fail
+  if [[ "$CLONE_INSTALLED_MATCH" == "package:io.lxsdd.yeelightdj" ]]; then
+    printf 'PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB\n'
+    fail
+  fi
+  [[ -z "$CLONE_INSTALLED_MATCH" ]] || fail
+  # After the real clone FAIL and the unmodified stock comparison, run one
+  # strictly private *identity-preserving* control with a real DJ bridge.
+  # This is a diagnostic A/B bundle, not an OEM source export or acceptance.
+  # Keep original package/authorities/OEM dex but the same disabled providers,
+  # UI bridge, min-SDK and ephemeral signing. No extra run if clone passed.
+  # The stock original is uninstalled by private_original_baseline above.
+  IDU="$RUNNER_TEMP/private-output/classic-loft-dj-IDENTITY-UNSIGNED.apk"
+  IDS="$RUNNER_TEMP/private-output/classic-loft-dj-IDENTITY-TEST-SIGNED.apk"
+  export CLASSIC_APKTOOL_JAR="$RUNNER_TEMP/classic-tools/apktool_3.0.3.jar"
+  python3 classic_source/build_private_unsigned.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --android-sdk "$ANDROID_HOME" --output "$IDU" --identity-control \
+    >"$WORK/identity-build.log" 2>&1 || fail
+  python3 classic_source/private_test_sign.py \
+    --unsigned "$IDU" --preflight "$IDU.preflight.json" \
+    --output "$IDS" --android-sdk "$ANDROID_HOME" --identity-control \
+    >"$WORK/identity-sign.log" 2>&1 || fail
+  python3 classic_source/private_payload_parity.py \
+    --unsigned "$IDU" --signed "$IDS" || fail
+  # Observe real in-Classic button navigation in the working package identity
+  # before deriving the separate single-field package-name crash control.
+  python3 classic_source/private_ci/private_identity_control.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --candidate "$IDS" --serial emulator-5554 \
+    --explicit-owner-approved-private-emulator --probe-native-ui || fail
+  # Package-only control: derive from the audited original-identity unsigned
+  # APK by changing only the binary Manifest package string. OEM DEX,
+  # authorities, signature permissions, layouts and bridge stay byte-identical.
+  # Installed only AFTER the original-identity control was uninstalled.
+  PKU="$RUNNER_TEMP/private-output/classic-loft-dj-PACKAGE-UNSIGNED.apk"
+  PKS="$RUNNER_TEMP/private-output/classic-loft-dj-PACKAGE-TEST-SIGNED.apk"
+  python3 classic_source/private_ci/package_only_manifest.py \
+    --source "$IDU" --output "$PKU" || fail
+  python3 classic_source/private_test_sign.py \
+    --unsigned "$PKU" --preflight "$PKU.preflight.json" \
+    --output "$PKS" --android-sdk "$ANDROID_HOME" --package-only-control \
+    >"$WORK/package-only-sign.log" 2>&1 || fail
+  python3 classic_source/private_payload_parity.py \
+    --unsigned "$PKU" --signed "$PKS" || fail
+  python3 classic_source/private_ci/private_package_only_control.py \
+    --original "$RUNNER_TEMP/private-original/com.yeelight.cherry_3.5.4.apk" \
+    --candidate "$PKS" --serial emulator-5554 \
+    --explicit-owner-approved-private-emulator || fail
+  # Never turn a crashing clone or any nonfatal control into product PASS.
   fail
 fi

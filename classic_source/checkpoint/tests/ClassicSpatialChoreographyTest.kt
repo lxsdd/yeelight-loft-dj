@@ -1,0 +1,131 @@
+package loftdj.classic
+
+/**
+ * Real source-bound JVM qualifications for the three ordered spatial effects.
+ * No sockets, OEM binaries or devices; pure 14-position simulation plus
+ * generation-owned 4-participant coordinator/engine integration.
+ */
+private class SpatialMockTransport : ClassicMusicCoordinator.Transport {
+    val active = mutableMapOf<String, Boolean>()
+    val calls = mutableListOf<String>()
+    val sent = mutableListOf<Triple<String, Int, Int>>()
+    override fun readMusic(id: String): Boolean? = active[id]
+    override fun requestStart(id: String): Boolean {
+        calls += "start:$id"; active[id] = true; return true
+    }
+    override fun reverseConnected(id: String) = true
+    override fun requestStop(id: String): Boolean {
+        calls += "stop:$id"; active[id] = false; return true
+    }
+    override fun closeReverse(id: String) { calls += "close:$id" }
+    override fun sendReverseFrame(id: String, generation: Long, rgb: Int,
+                                  brightness: Int): Boolean {
+        check(generation > 0 && rgb in 0..0xFFFFFF && brightness in 1..100)
+        sent.add(Triple(id, rgb, brightness))
+        return true
+    }
+}
+
+fun main() {
+    val choreography = ClassicSpatialChoreography()
+    val count = 14
+    val modes = ClassicSpatialChoreography.Mode.entries
+    check(modes.map { it.name } == listOf("SCANNER", "METEOR", "WAVE"))
+    for (mode in modes) {
+        val frames = (0L..9000L step 210L).map { time ->
+            (0 until count).map { index ->
+                choreography.frame(mode, index, count, time, .7, time % 840L == 0L)
+            }
+        }
+        check(frames.flatten().all { it.rgb in 0..0xFFFFFF && it.brightness in 1..100 })
+        check(frames.any { row -> row.map { it.brightness }.distinct().size >= 3 }) {
+            "Spatial per-lamp intensity is required: $mode"
+        }
+        check(frames.map { row -> row.map { it.brightness } }.distinct().size >= 4) {
+            "Spatial pattern must travel: $mode"
+        }
+        check(frames.any { row -> row.any { it.brightness == 1 } }) {
+            "Unlit tails must be 1%, not a fictitious power off: $mode"
+        }
+        check(frames.map { row -> row.map { it.rgb } }.flatten().distinct().size == 1) {
+            "A spatial scene has one explicit color identity: $mode"
+        }
+    }
+    val scanner0=(0 until 14).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.SCANNER,it,14,0,.7,false).brightness
+    }
+    val scannerEnd=(0 until 14).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.SCANNER,it,14,2730,.7,false).brightness
+    }
+    check(scanner0.indexOf(scanner0.maxOrNull()) == 0)
+    check(scannerEnd.indexOf(scannerEnd.maxOrNull()) == 13)
+    val scannerReturn=(0 until 14).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.SCANNER,it,14,5460,.7,false).brightness
+    }
+    check(scannerReturn.indexOf(scannerReturn.maxOrNull()) == 0) { "Scanner must bounce back" }
+
+    val meteor=(0 until 14).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.METEOR,it,14,165*5L,.7,false).brightness
+    }
+    check(meteor[5]>meteor[4] && meteor[4]>meteor[3] &&
+          meteor[2] < meteor[4]) { "Meteor trail must decay behind head" }
+    val wave=(0 until 14).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.WAVE,it,14,1000,.7,false).brightness
+    }
+    check(wave.toSet().size >= 5) { "Wave must vary spatial phase" }
+    check((0 until 14).all {
+        val weak=choreography.frame(ClassicSpatialChoreography.Mode.WAVE,it,14,1000,0.0,false)
+        val loud=choreography.frame(ClassicSpatialChoreography.Mode.WAVE,it,14,1000,1.0,true)
+        loud.brightness >= weak.brightness
+    })
+    for(mode in modes) {
+        for(badIndex in listOf(-1,14)) {
+            check(runCatching { choreography.frame(mode,badIndex,14,10,.1,false) }.isFailure)
+        }
+        check(runCatching { choreography.frame(mode,0,0,10,.1,false) }.isFailure)
+        check(runCatching { choreography.frame(mode,0,15,10,.1,false) }.isFailure)
+        check(runCatching { choreography.frame(mode,0,4,-1,.1,false) }.isFailure)
+        for(bad in listOf(-1.0,Double.NaN,Double.POSITIVE_INFINITY,1.1)) {
+            check(runCatching { choreography.frame(mode,0,4,10,bad,false) }.isFailure)
+        }
+    }
+
+    // Production-bound effect routing, with the same existing owned-only socket
+    // gate as the prior four scenes. Never ask the foreign session to start.
+    val transport=SpatialMockTransport()
+    val coordinator=ClassicMusicCoordinator(transport)
+    val ids=(1..4).map { "owned$it" }
+    for(id in ids) { coordinator.register(id,true); transport.active[id]=false }
+    coordinator.register("foreign",true); transport.active["foreign"]=true
+    val engine=ClassicDjEngine(coordinator)
+    check(engine.select(ids).values.all { it == ClassicMusicCoordinator.State.OWNED })
+    check(engine.selected() == ids.toSet())
+    check(transport.calls.count { it.startsWith("start:") } == 4)
+    var now=0L
+    for(mode in modes) {
+        check(engine.setScene(mode.name))
+        val before=transport.sent.size
+        for(step in 0..8) {
+            now+=320L
+            engine.audio(now, doubleArrayOf(.8,.45,.2,.1))
+        }
+        val new=transport.sent.drop(before)
+        check(new.isNotEmpty())
+        check(new.map { it.first }.toSet() == ids.toSet())
+        check(new.map { it.third }.distinct().size > 1)
+        check(new.none { it.first=="foreign" })
+        check(transport.calls.count { it.startsWith("start:") } == 4) {
+            "Live scenes must not renegotiate"
+        }
+    }
+    check(!engine.setScene("SCANNER;set_power"))
+    check(!engine.setScene("UNSUPPORTED"))
+    check(engine.setScene("PULSE"))
+    check(engine.setScene("SPECTRUM"))
+    check(engine.selected()==ids.toSet())
+    engine.stop()
+    check(engine.selected().isEmpty())
+    check(transport.calls.count { it.startsWith("stop:") } == 4)
+    check(transport.calls.none { it.contains("foreign") })
+    println("PASS Classic 14-point scanner/meteor/wave geometry, 4 OWNED session routing, no nonparticipants, live switching, stop and validation")
+}

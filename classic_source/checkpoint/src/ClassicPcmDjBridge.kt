@@ -9,6 +9,14 @@ class ClassicPcmDjBridge(
 ) {
     private val spectral = ClassicPcmBands(sampleRate, windowSize)
     private var adaptiveGain = 1.0
+    private var liveSensitivity = 1.0
+
+    /** Thread-safe setting: never restarts AudioRecord or changes Music ownership. */
+    @Synchronized fun setSensitivity(value: Double): Boolean {
+        if (!value.isFinite() || value !in 0.25..4.0) return false
+        liveSensitivity = value
+        return true
+    }
     private fun measuredGain(pcm: ShortArray): Double {
         val energy = pcm.fold(0.0) { acc, sample ->
             val normalized = sample.toDouble() / 32768.0
@@ -22,7 +30,9 @@ class ClassicPcmDjBridge(
     @Synchronized fun accept(timestampMs: Long, pcm: ShortArray, gain: Double = 1.0): ClassicDjEngine.Output {
         // Compute and validate before dispatch; invalid PCM must never cause lamp output.
         require(gain.isFinite() && gain in 0.1..10.0)
-        val corrected = if (automaticAnalysisGain) (measuredGain(pcm) * gain).coerceIn(0.1, 10.0) else gain
-        return engine.audio(timestampMs, spectral.bands(pcm), corrected)
+        val corrected = (if (automaticAnalysisGain) measuredGain(pcm) else 1.0) *
+            gain * liveSensitivity
+        val bounded = corrected.coerceIn(0.1, 10.0)
+        return engine.audio(timestampMs, spectral.bands(pcm), bounded)
     }
 }
