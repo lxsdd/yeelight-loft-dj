@@ -41,7 +41,7 @@ class LiveDJConfigurationContract(unittest.TestCase):
         self.assertIn("EXTRA_GAIN, liveGain", ui)
         self.assertIn("EXTRA_SCENE, liveScene", ui)
         self.assertIn("if (!ClassicDjService.hasActiveSession()) return;", ui)
-        self.assertIn('String[] codes = {"SPECTRUM", "AMBIENT", "BEAT", "PULSE"}', ui)
+        self.assertIn('String[] codes = {"SPECTRUM", "AMBIENT", "BEAT", "PULSE", "SCANNER", "METEOR", "WAVE"}', ui)
         self.assertIn('writePulseSettings(config);', ui)
         self.assertIn('writePulseSettings(i);', ui)
         self.assertIn('pulseBeatSync = false;', ui)
@@ -78,7 +78,7 @@ class LiveDJConfigurationContract(unittest.TestCase):
     def test_dsp_bounded_scene_and_gain_without_new_transport(self):
         run = self.sources["runtime"]
         cfg = run[run.index("override fun configure("):run.index("override fun start(")]
-        self.assertIn('scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE")', cfg)
+        self.assertIn('scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE",', cfg)
         self.assertIn("sensitivity !in 0.25..4.0", cfg)
         self.assertIn("inputBridge?.setSensitivity(sensitivity)", cfg)
         self.assertIn("engine?.setScene(scene)", cfg)

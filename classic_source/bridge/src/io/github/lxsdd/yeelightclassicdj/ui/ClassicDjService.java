@@ -200,7 +200,8 @@ public final class ClassicDjService extends Service {
             "SPECTRUM" : intent.getStringExtra(EXTRA_SCENE);
         if (!Double.isFinite(requestedGain) || requestedGain < 0.25 ||
             requestedGain > 4.0 ||
-            !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT", "PULSE").contains(requestedScene)) {
+            !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT", "PULSE",
+                "SCANNER", "METEOR", "WAVE").contains(requestedScene)) {
             rejectStart(requestedOwner, "Ungültige DJ-Live-Einstellung");
             stopSelf();
             return START_NOT_STICKY;
@@ -387,7 +388,8 @@ public final class ClassicDjService extends Service {
                                             double gain, String scene) {
         if (target == null || intent == null || scene == null ||
                 !Double.isFinite(gain) || gain < 0.25 || gain > 4.0 ||
-                !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT", "PULSE").contains(scene))
+                !java.util.Arrays.asList("SPECTRUM", "AMBIENT", "BEAT", "PULSE",
+                "SCANNER", "METEOR", "WAVE").contains(scene))
             return false;
         String mode = intent.getStringExtra(EXTRA_PULSE_MODE);
         if (mode == null) mode = "BEAT";

@@ -49,7 +49,8 @@ class CheckpointRuntime : DjRuntime {
     /** State-only in-place reconfiguration. No network, new worker or re-handshake. */
     override fun configure(sensitivity: Double, scene: String): Boolean {
         if (!sensitivity.isFinite() || sensitivity !in 0.25..4.0 ||
-            scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE")) return false
+            scene !in setOf("SPECTRUM", "AMBIENT", "BEAT", "PULSE",
+                            "SCANNER", "METEOR", "WAVE")) return false
         synchronized(lock) {
             if (state == State.STOPPING || state == State.CLOSED) return false
             inputBridge?.setSensitivity(sensitivity)

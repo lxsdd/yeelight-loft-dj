@@ -18,6 +18,12 @@ public final class ClassicDjEffectPreview {
         if ("PULSE".equals(scene))
             return beatSync ? "Puls · Beat-gesteuerte Helligkeitshüllkurve" :
                               "Puls · frei eingestellter Tempo-Takt";
+        if ("SCANNER".equals(scene))
+            return "Scanner · gerichteter Knight-Rider-Lauf auf freigegebenen Lampen";
+        if ("METEOR".equals(scene))
+            return "Meteor · Sternschnuppe mit abklingendem Schweif";
+        if ("WAVE".equals(scene))
+            return "Welle · räumliche Sinuswelle entlang der Lichtreihenfolge";
         return "Effekt nicht verifiziert";
     }
 
@@ -47,6 +53,12 @@ public final class ClassicDjEffectPreview {
                 value = elapsed < 100L ? elapsed / 100.0 :
                                       Math.exp(-(elapsed - 100.0) / 350.0);
             }
+        } else if ("SCANNER".equals(scene)) {
+            value = (clockMs / 210L) % 2 == 0 ? 0.85 : 0.18;
+        } else if ("METEOR".equals(scene)) {
+            value = Math.exp(-((clockMs / 165L) % 5) * 0.65);
+        } else if ("WAVE".equals(scene)) {
+            value = 0.5 + 0.5 * Math.sin(clockMs / 500.0);
         } else {
             return 0;
         }

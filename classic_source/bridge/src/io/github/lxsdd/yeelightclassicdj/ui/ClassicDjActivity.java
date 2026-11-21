@@ -80,8 +80,8 @@ public final class ClassicDjActivity extends Activity {
         layout.addView(liveTitle);
         LinearLayout scenes = new LinearLayout(this);
         scenes.setOrientation(LinearLayout.HORIZONTAL);
-        String[] codes = {"SPECTRUM", "AMBIENT", "BEAT", "PULSE"};
-        String[] labels = {"Spektrum", "Ruhig", "Beat", "Puls"};
+        String[] codes = {"SPECTRUM", "AMBIENT", "BEAT", "PULSE", "SCANNER", "METEOR", "WAVE"};
+        String[] labels = {"Spektrum", "Ruhig", "Beat", "Puls", "Scanner", "Meteor", "Welle"};
         for (int index = 0; index < codes.length; index++) {
             final String chosen = codes[index];
             Button choice = new Button(this);

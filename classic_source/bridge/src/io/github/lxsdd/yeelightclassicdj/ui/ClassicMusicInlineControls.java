@@ -28,9 +28,9 @@ import android.widget.TextView;
  */
 public final class ClassicMusicInlineControls extends LinearLayout {
     private static final String[] SCENES =
-        {"SPECTRUM", "AMBIENT", "BEAT", "PULSE"};
+        {"SPECTRUM", "AMBIENT", "BEAT", "PULSE", "SCANNER", "METEOR", "WAVE"};
     private static final String[] SCENE_LABELS =
-        {"Spektrum", "Ruhig", "Beat", "Puls"};
+        {"Spektrum", "Ruhig", "Beat", "Puls", "Scanner", "Meteor", "Welle"};
     private static final double[] GAINS = {0.5, 1.0, 2.0, 4.0};
     private final Activity host;
     private final Handler handler = new Handler(Looper.getMainLooper());

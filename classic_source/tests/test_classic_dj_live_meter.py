@@ -45,7 +45,8 @@ class ClassicDjLiveHarness {
            actual.summary().contains("85%"),"real BPM confidence label");
    float[] mutable=actual.bands();mutable[0]=0f;
    require(actual.bands()[0]==0.7f,"read-only copy of measured frequency bands");
-   for(String scene:new String[]{"SPECTRUM","AMBIENT","BEAT","PULSE"}) {
+   for(String scene:new String[]{"SPECTRUM","AMBIENT","BEAT","PULSE",
+                                 "SCANNER","METEOR","WAVE"}) {
      require(ClassicDjEffectPreview.explanation(scene,true).length()>10,
        "clear mode-specific semantics");
    }
@@ -69,6 +70,10 @@ class ClassicDjLiveHarness {
      "stale source does not animate");
    require(ClassicDjEffectPreview.intensity("SPECTRUM",none,true,120,300)==0,
      "foreign source does not animate");
+   for(String spatial:new String[]{"SCANNER","METEOR","WAVE"}) {
+     int value=ClassicDjEffectPreview.intensity(spatial,actual,true,120,300);
+     require(value>=0 && value<=100,"valid spatial preview strength");
+   }
    require(ClassicDjEffectPreview.intensity("UNSUPPORTED",actual,true,120,300)==0,
      "unsupported effects fail closed");
    System.out.println("PASS real-pcm-band-meter-model source freshness, silence, ownership and four distinct effect previews");

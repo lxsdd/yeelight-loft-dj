@@ -36,7 +36,8 @@ val testMains = linkedMapOf(
     "AndroidAudioRecordInput" to "loftdj.classic.AndroidAudioRecordInputTestKt",
     "YeelightReverseMusicTransport" to "loftdj.classic.YeelightReverseMusicTransportTestKt",
     "CheckpointRuntime" to "io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt",
-    "PlaybackCaptureInput" to "io.github.lxsdd.yeelightclassicdj.runtime.ClassicPlaybackCaptureInputTestKt"
+    "PlaybackCaptureInput" to "io.github.lxsdd.yeelightclassicdj.runtime.ClassicPlaybackCaptureInputTestKt",
+    "SpatialChoreography" to "loftdj.classic.ClassicSpatialChoreographyTestKt"
 )
 val runTasks = testMains.map { (label, className) ->
     tasks.register<JavaExec>("run" + label) {
@@ -50,6 +51,6 @@ val runTasks = testMains.map { (label, className) ->
 }
 tasks.register("verifyClassicJvm") {
     group = "verification"
-    description = "Compile ALL Classic JVM/DJ source and execute all ten real integration test programs."
+    description = "Compile ALL Classic JVM/DJ source and execute all twelve real integration test programs."
     dependsOn(runTasks)
 }
