@@ -44,5 +44,31 @@ fun main() {
     check(runCatching { failed.poll() }.isFailure)
     check(failed.state() == ClassicPcmCaptureSession.State.FAILED && bad.closes == 1)
     failed.close(); check(bad.closes == 1)
-    println("PASS capture lifecycle, monotonic clock, partial frames, failure cleanup")
+    // Production path: real 16-kHz PCM -> four measured FFT bands -> automatic
+    // gain -> beat/BPM.  Soft 90-Hz burst music must be analyzed, not just a
+    // direct synthetic ClassicBeatAnalyzer input.
+    val softEngine = ClassicDjEngine(ClassicMusicCoordinator(transport))
+    val softBridge = ClassicPcmDjBridge(softEngine, automaticAnalysisGain = true)
+    val softWave = ShortArray(1024) { i ->
+        (3000.0 * kotlin.math.sin(2.0 * Math.PI * 90.0 * i / 16000.0)).toInt().toShort()
+    }
+    val faintBackground = ShortArray(1024) { i ->
+        (100.0 * kotlin.math.sin(2.0 * Math.PI * 90.0 * i / 16000.0)).toInt().toShort()
+    }
+    var softBeats = 0
+    var lastTempo: Double? = null
+    for (i in 0..112) {
+        val result = softBridge.accept((i + 1L) * 64L,
+            if (i % 8 == 0) softWave else faintBackground)
+        if (result.beat) softBeats++
+        if (result.bpm != null) lastTempo = result.bpm
+    }
+    check(softBeats >= 7) { "Weak captured PCM not beat-responsive: $softBeats" }
+    check(lastTempo != null && lastTempo!! in 110.0..125.0) {
+        "Measured PCM BPM missing or out of range: $lastTempo"
+    }
+    val silentEngine = ClassicDjEngine(ClassicMusicCoordinator(transport))
+    val silentBridge = ClassicPcmDjBridge(silentEngine, automaticAnalysisGain = true)
+    check((1L..40L).all { !silentBridge.accept(it * 64L, ShortArray(1024)).beat })
+    println("PASS capture lifecycle, monotonic clock, partial frames, failure cleanup, quiet-PCM BPM and silence")
 }
