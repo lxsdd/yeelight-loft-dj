@@ -129,7 +129,21 @@ class CheckpointRuntime : DjRuntime {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
             synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
-            createdInput = sourceInput()
+            // Only the physical Android source-open phase receives this typed
+            // diagnostic. The original failure remains the cause for private QA,
+            // but no device/audio/OEM text crosses the user-visible status path.
+            createdInput = try {
+                sourceInput()
+            } catch (failure: Throwable) {
+                val kind = when (failure) {
+                    is SecurityException -> DjRuntime.CaptureFailureKind.PERMISSION
+                    is LinkageError -> DjRuntime.CaptureFailureKind.ABI
+                    is IllegalArgumentException -> DjRuntime.CaptureFailureKind.FORMAT
+                    is IllegalStateException -> DjRuntime.CaptureFailureKind.STATE
+                    else -> DjRuntime.CaptureFailureKind.UNKNOWN
+                }
+                throw DjRuntime.CaptureStartFailure(kind, failure)
+            }
             val bridge = ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = ClassicPcmCaptureSession(bridge, createdInput, clock) { output ->
                 val current = synchronized(lock) {
