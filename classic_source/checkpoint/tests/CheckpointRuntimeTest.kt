@@ -107,6 +107,25 @@ fun main() {
         check(thrown.cause != null)
         rejected.stop()
     }
+    // Real production source-ordering contract: a microphone-open denial must
+    // not even read Wi-Fi or begin any Music socket handshake. The same check
+    // covers future verified participant adapters without authorizing them.
+    val rejectedParticipant = CheckpointRuntime()
+    var touchedNetwork = false
+    rejectedParticipant.inputFactory = { throw SecurityException("synthetic audio deny") }
+    rejectedParticipant.wifiAddress = { touchedNetwork = true; "192.168.0.12" }
+    rejectedParticipant.transportFactory = { _, _ ->
+        touchedNetwork = true
+        error("No socket allowed before microphone open")
+    }
+    val denied = runCatching {
+        rejectedParticipant.start(Context(), "microphone", listOf("192.168.55.42"), Listener())
+    }.exceptionOrNull()
+    check(denied is DjRuntime.CaptureStartFailure &&
+          denied.kind == DjRuntime.CaptureFailureKind.PERMISSION)
+    check(!touchedNetwork) { "Source denied but network/participant was touched" }
+    rejectedParticipant.stop()
+
     // Integration acceptance: user-picked one Color4 is registered, owned and stopped.
     // No sockets or actual lamp writes: injected in-memory reverse transport.
     val selected = CheckpointRuntime()
@@ -143,5 +162,47 @@ fun main() {
     unsafe.inputFactory = { error("Input MUST NOT be opened for public IP") }
     check(runCatching { unsafe.start(Context(), "microphone", listOf("8.8.8.8"), Listener()) }.isFailure)
     check(runCatching { unsafe.start(Context(), "microphone", listOf("192.168.1.2", "192.168.1.2"), Listener()) }.isFailure)
-    println("PASS Classic runtime PCM/FFT lifecycle, explicit 1-lamp transport lifecycle, denied IPs, double-start, and failure path")
+    // Real runtime worker: no PCM bytes for the whole period. A confirmed
+    // timed spatial scene must still render across the existing reverse session
+    // without inventing audio telemetry, additional Music starts or stray stop.
+    val timed = CheckpointRuntime()
+    val quiet = object : ClassicPcmCaptureSession.Input {
+        var closed = false
+        override fun read(buffer: ShortArray): Int = if (closed) -1 else 0
+        override fun close() { closed = true }
+    }
+    timed.inputFactory = { quiet }
+    timed.clock = { System.nanoTime() / 1_000_000L }
+    timed.idle = { Thread.sleep(5) }
+    timed.wifiAddress = { "192.168.0.12" }
+    val timerTransport = object : loftdj.classic.ClassicMusicCoordinator.Transport {
+        var active = false
+        var starts = 0
+        var stops = 0
+        var frames = 0
+        override fun readMusic(id: String): Boolean? = active
+        override fun requestStart(id: String): Boolean { starts++; active = true; return true }
+        override fun reverseConnected(id: String): Boolean = true
+        override fun requestStop(id: String): Boolean { stops++; active = false; return true }
+        override fun closeReverse(id: String) {}
+        override fun sendReverseFrame(id: String, generation: Long, rgb: Int,
+                                      brightness: Int): Boolean {
+            frames++
+            return true
+        }
+    }
+    timed.transportFactory = { _, _ -> timerTransport }
+    check(timed.configure(1.0, "SCANNER"))
+    val timedListener = Listener()
+    timed.start(Context(), "microphone", listOf("192.168.55.42"), timedListener)
+    Thread.sleep(850L)
+    check(timerTransport.frames >= 2) { "Clock-driven scanner lost without PCM frames" }
+    check(!timedListener.beat.await(10, TimeUnit.MILLISECONDS))
+    check(timerTransport.starts == 1)
+    timed.stop()
+    val stoppedFrames = timerTransport.frames
+    Thread.sleep(320L)
+    check(timerTransport.frames == stoppedFrames) { "Clock tick escaped owned stop" }
+    check(timerTransport.stops == 1 && quiet.closed && !timerTransport.active)
+    println("PASS Classic runtime source-first safety, real clock-driven scanner without PCM, stop fence, FFT and owner failures")
 }

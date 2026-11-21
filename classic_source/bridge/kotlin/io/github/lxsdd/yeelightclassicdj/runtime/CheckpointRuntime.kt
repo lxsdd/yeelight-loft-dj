@@ -109,6 +109,24 @@ class CheckpointRuntime : DjRuntime {
         var createdInput: ClassicPcmCaptureSession.Input? = null
         var stagedEngine: ClassicDjEngine? = null
         try {
+            // Only the physical Android source-open phase receives this typed
+            // diagnostic. The original failure remains the cause for private QA,
+            // but no device/audio/OEM text crosses the user-visible status path.
+            createdInput = try {
+                sourceInput()
+            } catch (failure: Throwable) {
+                val kind = when (failure) {
+                    is SecurityException -> DjRuntime.CaptureFailureKind.PERMISSION
+                    is LinkageError -> DjRuntime.CaptureFailureKind.ABI
+                    is IllegalArgumentException -> DjRuntime.CaptureFailureKind.FORMAT
+                    is IllegalStateException -> DjRuntime.CaptureFailureKind.STATE
+                    else -> DjRuntime.CaptureFailureKind.UNKNOWN
+                }
+                throw DjRuntime.CaptureStartFailure(kind, failure)
+            }
+            // Never negotiate or power any lamp before the physical source
+            // is successfully opened and this invocation still owns STARTING.
+            synchronized(lock) { check(state == State.STARTING) { "Source cancelled before lamp handshake" } }
             val localIp = if (selectedLampIps.isEmpty()) null else
                 wifiAddress()
                     ?: error("Wi-Fi IPv4 address not found; no device commands sent")
@@ -129,21 +147,6 @@ class CheckpointRuntime : DjRuntime {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
             synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
-            // Only the physical Android source-open phase receives this typed
-            // diagnostic. The original failure remains the cause for private QA,
-            // but no device/audio/OEM text crosses the user-visible status path.
-            createdInput = try {
-                sourceInput()
-            } catch (failure: Throwable) {
-                val kind = when (failure) {
-                    is SecurityException -> DjRuntime.CaptureFailureKind.PERMISSION
-                    is LinkageError -> DjRuntime.CaptureFailureKind.ABI
-                    is IllegalArgumentException -> DjRuntime.CaptureFailureKind.FORMAT
-                    is IllegalStateException -> DjRuntime.CaptureFailureKind.STATE
-                    else -> DjRuntime.CaptureFailureKind.UNKNOWN
-                }
-                throw DjRuntime.CaptureStartFailure(kind, failure)
-            }
             val bridge = ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = ClassicPcmCaptureSession(bridge, createdInput, clock) { output ->
                 val current = synchronized(lock) {
@@ -190,7 +193,16 @@ class CheckpointRuntime : DjRuntime {
                     if (state == State.RUNNING && mine == generation) capture else null
                 } ?: break
                 val received = session.poll(bufferSize = WINDOW_SIZE)
-                if (!received) idle()
+                if (!received) {
+                    // Scanner, meteor, wave and timer-pulse keep moving when a
+                    // valid capture temporarily yields no PCM. The same owned
+                    // engine/rate limiter is used; NO new source or Music socket.
+                    val current = synchronized(lock) {
+                        if (state == State.RUNNING && mine == generation) engine else null
+                    }
+                    current?.clockTick(clock())
+                    idle()
+                }
             }
         } catch (error: Throwable) {
             val callback = synchronized(lock) {

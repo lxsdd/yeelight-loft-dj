@@ -118,6 +118,36 @@ fun main() {
             "Live scenes must not renegotiate"
         }
     }
+    // The *same production engine* renders independent clock ticks while the
+    // owned music channel remains unchanged (no capture callback or new socket).
+    check(engine.setScene("SCANNER"))
+    var tickTime = now + 350L
+    val beforeClock = transport.sent.size
+    check(engine.clockTick(tickTime).sent == ids.toSet())
+    check(engine.clockTick(tickTime).sent.isEmpty()) // replay must not write
+    repeat(4) { tickTime += 350L; engine.clockTick(tickTime) }
+    check(transport.sent.size >= beforeClock + 8)
+    check(transport.sent.drop(beforeClock).all { it.first in ids })
+    // A stale PCM callback after a clock tick retains telemetry but cannot
+    // reset the renderer or overtake the newer scene output.
+    val beforeStale = transport.sent.size
+    check(engine.audio(tickTime - 12L, doubleArrayOf(.9,.2,.1,.1)).sent.isEmpty())
+    check(transport.sent.size == beforeStale)
+    // Only truly timed pulse may animate without new audio: beat-pulse and
+    // ordinary BEAT/SPECTRUM explicitly refuse unclocked fake music.
+    check(engine.setScene("PULSE"))
+    check(engine.configurePulse(ClassicPulseScene.Options(beatSync = true)))
+    tickTime += 350L
+    check(engine.clockTick(tickTime).sent.isEmpty())
+    check(engine.configurePulse(ClassicPulseScene.Options(beatSync = false, bpm = 90)))
+    tickTime += 350L
+    check(engine.clockTick(tickTime).sent == ids.toSet())
+    check(engine.setScene("BEAT"))
+    tickTime += 350L
+    check(engine.clockTick(tickTime).sent.isEmpty())
+    check(engine.setScene("SPECTRUM"))
+    tickTime += 350L
+    check(engine.clockTick(tickTime).sent.isEmpty())
     check(!engine.setScene("SCANNER;set_power"))
     check(!engine.setScene("UNSUPPORTED"))
     check(engine.setScene("PULSE"))
@@ -125,6 +155,8 @@ fun main() {
     check(engine.selected()==ids.toSet())
     engine.stop()
     check(engine.selected().isEmpty())
+    tickTime += 350L
+    check(engine.clockTick(tickTime).sent.isEmpty())
     check(transport.calls.count { it.startsWith("stop:") } == 4)
     check(transport.calls.none { it.contains("foreign") })
     println("PASS Classic 14-point scanner/meteor/wave geometry, 4 OWNED session routing, no nonparticipants, live switching, stop and validation")
