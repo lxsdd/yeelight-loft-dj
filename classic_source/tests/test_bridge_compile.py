@@ -139,6 +139,8 @@ STUBS.update({
  public Context getApplicationContext(){return null;} public String getPackageName(){return "";}
  public android.content.pm.PackageManager getPackageManager(){return new android.content.pm.PackageManager();}
  public android.content.res.Resources getResources(){return new android.content.res.Resources();}
+ public static final int MODE_PRIVATE=0;
+ public SharedPreferences getSharedPreferences(String name,int mode){return null;}
 }''',
 'android/content/res/Resources.java': '''package android.content.res; public class Resources {
  public android.util.DisplayMetrics getDisplayMetrics(){return new android.util.DisplayMetrics();}
@@ -262,6 +264,16 @@ public class MediaProjectionManager {
 'android/content/pm/ServiceInfo.java': '''package android.content.pm; public class ServiceInfo {
  public static final int FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION=32;
  public static final int FOREGROUND_SERVICE_TYPE_MICROPHONE=128;
+}''',
+})
+
+# Local-only drag order requires Android private preferences, not an OEM DB.
+STUBS.update({
+'android/content/SharedPreferences.java': '''package android.content;
+public interface SharedPreferences {
+ String getString(String key,String fallback);
+ Editor edit();
+ interface Editor { Editor putString(String key,String value); boolean commit(); }
 }''',
 })
 
