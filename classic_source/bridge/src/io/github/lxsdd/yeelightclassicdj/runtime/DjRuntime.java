@@ -18,6 +18,15 @@ public interface DjRuntime {
     /** Beat or clock driven pulse, on the same generation-owned Music session. */
     boolean configurePulse(int rgb, boolean beatSync, int bpm, int minimum, int maximum,
                            int attackMs, int decayMs, double gamma);
+    /** Stable allowlisted capture-open result. Never expose raw OEM/Android exceptions in UI. */
+    enum CaptureFailureKind { PERMISSION, FORMAT, STATE, ABI, UNKNOWN }
+    final class CaptureStartFailure extends Exception {
+        public final CaptureFailureKind kind;
+        public CaptureStartFailure(CaptureFailureKind kind, Throwable cause) {
+            super(kind == null ? "UNKNOWN" : kind.name(), cause);
+            this.kind = kind == null ? CaptureFailureKind.UNKNOWN : kind;
+        }
+    }
     interface Listener {
         void onState(String state);
         void onBeat(double bpm, float level);
