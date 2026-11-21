@@ -24,8 +24,12 @@ EXTRA={"application":("appComponentFactory","backupAgent","manageSpaceActivity",
 SYSTEM=("Ljava/","Ljavax/","Landroid/","Ldalvik/","Lorg/json/","Lorg/xmlpull/",
         "Lorg/w3c/dom/","Lorg/xml/sax/","Lorg/apache/http/","Lcom/android/")
 REMOVED=("com.google.firebase.provider.FirebaseInitProvider","com.yeelight.yeelib.data.DeviceInteractionProvider")
+# Mandatory original MusicActivity lifecycle provider is installed by classic_first.
+# A local diagnostic may no longer patch the component allowlist independently.
+NATIVE_MUSIC_PROVIDER=("provider","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider")
 ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity"),
-       ("service","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjService"))
+       ("service","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjService"),
+       NATIVE_MUSIC_PROVIDER)
 CLONE_ONLY_ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicNearbyGateActivity"),
                   ("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicInternalAudioConsentActivity"))
 

@@ -1,5 +1,6 @@
 """Synthetic contract tests only; never download the OEM APK or launch devices."""
 from pathlib import Path
+from copy import deepcopy
 import sys
 import unittest
 from unittest.mock import patch
@@ -43,7 +44,8 @@ class EmulatorOnlyBaseline(unittest.TestCase):
         result = probe.pair_contract(self.o, self.c)
         self.assertEqual(result['status'], 'CANDIDATE_STATIC_PARITY_PROBE_ONLY_NOT_PRODUCT_QUALIFIED')
         self.assertIs(result['publishable'], False)
-        self.assertEqual(result['candidate_added_bridge_entries'], 4)
+        self.assertEqual(result['candidate_added_bridge_entries'], 5)
+        self.assertIn(probe.audit.NATIVE_MUSIC_PROVIDER, probe.audit.ADDED)
 
     def test_original_gap_count_changes_fail_in_both_directions(self):
         for count in (2, 4):
@@ -80,6 +82,34 @@ class EmulatorOnlyBaseline(unittest.TestCase):
                 bad['definitions'].pop(needle)
                 with self.assertRaisesRegex(probe.ProbeBlocked, 'ORIGINAL_REFERENCE_GAPS_DRIFT'):
                     probe.baseline_contract(bad)
+
+    def test_native_music_provider_exact_and_negative_drift(self):
+        provider = probe.audit.NATIVE_MUSIC_PROVIDER
+        self.assertEqual(provider[0], 'provider')
+        self.assertEqual(probe.audit.ADDED.count(provider), 1)
+        self.assertEqual(self.c['components'][provider], 1)
+        desc = 'L' + provider[1].replace('.', '/') + ';'
+        self.assertIn(desc, self.c['entrypoints'])
+        self.assertIn(desc, self.c['definitions'])
+        self.assertEqual(self.c['manifest_references'][('provider', desc)], 1)
+        variants = (
+            ('missing-provider', lambda c: c['components'].pop(provider),
+             'CANDIDATE_COMPONENT_DRIFT'),
+            ('foreign-provider', lambda c: c['components'].__setitem__(
+                ('provider', 'synthetic.Unapproved'), 1), 'CANDIDATE_COMPONENT_DRIFT'),
+            ('missing-definition', lambda c: c['definitions'].pop(desc),
+             'CANDIDATE_BRIDGE_MISSING'),
+            ('wrong-role', lambda c: c['manifest_references'].__setitem__(
+                ('provider', desc), 0), 'CANDIDATE_MANIFEST_ROLES_DRIFT'),
+            ('missing-parent', lambda c: c['definitions'].__setitem__(
+                desc, ['Lsynthetic/missing/NewParent;']), 'CANDIDATE_NEW_CLASS_PARENT_UNVERIFIED'),
+        )
+        for label, mutate, reason in variants:
+            with self.subTest(label=label):
+                modified = deepcopy(self.c)
+                mutate(modified)
+                with self.assertRaisesRegex(probe.ProbeBlocked, reason):
+                    probe.pair_contract(self.o, modified)
 
     def test_candidate_manifest_component_or_role_drifts_fail(self):
         self.c['components'][('service', 'unapproved.Service')] = 1

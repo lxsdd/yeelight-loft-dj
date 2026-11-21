@@ -84,6 +84,9 @@ def pair_contract(o: dict, c: dict) -> dict:
     original = baseline_contract(o)
     require(c.get('package') == audit.NEW and c.get('dex_count') == 3,
             'CANDIDATE_PACKAGE_OR_DEX_DRIFT')
+    # Reuse the same exact manifest roles as the real production builder.
+    require(audit.NATIVE_MUSIC_PROVIDER in audit.ADDED,
+            'NATIVE_MUSIC_PROVIDER_REGISTRATION_MISSING')
     expected = o['components'].copy()
     for name in audit.REMOVED:
         del expected[('provider', name)]
