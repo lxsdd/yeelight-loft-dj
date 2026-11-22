@@ -38,16 +38,17 @@ class VerifiedOemSelectionGateTest(unittest.TestCase):
         self.assertNotIn("new EditText(this)", ACTIVITY)
         self.assertNotIn("new CheckBox(this)", ACTIVITY)
 
-    def test_original_music_inline_stays_analysis_only(self):
-        self.assertIn("new String[0]", INLINE)
-        self.assertIn("ClassicDjService.ACTION_MIC", INLINE)
-        self.assertIn("ClassicDjService.ACTION_STOP", INLINE)
-        self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", INLINE)
-        self.assertIn("inlineSheet.addView(expanded);", INLINE)
+    def test_original_music_inline_has_no_second_audio_or_lamp_start(self):
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", INLINE)
+        self.assertIn("ClassicSceneUiState.update(", INLINE)
+        self.assertIn("ClassicOriginalMusicSelection.originalGroupMemberCount()", INLINE)
+        for forbidden in ("new String[0]", "ClassicDjService.ACTION_MIC",
+                          "ClassicDjService.ACTION_STOP", "host.startActivity(",
+                          "host.startService(", "set_power", "set_music"):
+            self.assertNotIn(forbidden, INLINE)
+        self.assertIn("inlineSheet.addView(content);", INLINE)
         self.assertNotIn("new Dialog(", INLINE)
         self.assertNotIn("host.setContentView(", INLINE)
-        self.assertNotIn("set_power", INLINE)
-        self.assertNotIn("set_music", INLINE)
 
 
 if __name__ == "__main__":

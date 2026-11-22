@@ -115,16 +115,15 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("root.addView(controls, params);", provider_source)
         self.assertIn("new ClassicMusicInlineControls(activity)", provider_source)
         self.assertIn("onHostPaused()", inline)
-        # A stale or paused panel must never kill another session without
-        # generation ownership; keep the real service's async cleanup path.
-        self.assertIn("ClassicDjService.stopOwnedFromUi(oldOwner)", inline)
-        self.assertIn("intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, oldOwner)", inline)
-        self.assertNotIn("host.stopService(new Intent(host, ClassicDjService.class))", inline)
-        self.assertIn("new String[0]", inline)
-        self.assertIn("ClassicDjService.ACTION_CONFIG", inline)
-        self.assertIn("ClassicDjService.ACTION_STOP", inline)
-        self.assertIn("ClassicDjService.ACTION_MIC", inline)
-        self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", inline)
+        # Original MusicActivity now owns the only Play/Pause and source UI.
+        # The embedded panel may only choose a shared in-memory scene; it
+        # cannot start/stop a second service or authorize device endpoints.
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", inline)
+        self.assertIn("ClassicSceneUiState.update(", inline)
+        for forbidden in ("new String[0]", "ClassicDjService.ACTION_CONFIG",
+                          "ClassicDjService.ACTION_STOP", "ClassicDjService.ACTION_MIC",
+                          "stopOwnedFromUi(", "host.startService(", "host.startActivity("):
+            self.assertNotIn(forbidden, inline)
         for forbidden in ("host.setContentView(", "set_music",
                           "set_power", "Socket(", "HttpURLConnection",
                           "Color4-IP(s)", "getRemoteDeviceList"):
