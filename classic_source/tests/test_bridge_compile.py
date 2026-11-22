@@ -69,7 +69,7 @@ STUBS = {
 'android/view/View.java': '''package android.view; public class View {
  private final android.content.Context c; public View(android.content.Context c){this.c=c;}
  public void setContentDescription(CharSequence a){} public void setOnClickListener(OnClickListener x){}
-  public void setEnabled(boolean enabled){}
+  public void setEnabled(boolean enabled){} public void setSelected(boolean selected){}
  public android.content.Context getContext(){return c;}
  public interface OnClickListener {void onClick(View v);} }''',
 'android/view/Gravity.java': '''package android.view; public class Gravity {public static final int TOP=48;}''',
@@ -187,7 +187,7 @@ public abstract class ContentProvider {
  private final android.content.Context c; private Object tag;
  public View(android.content.Context c){this.c=c;}
  public void setContentDescription(CharSequence a){} public void setOnClickListener(OnClickListener x){}
-  public void setEnabled(boolean enabled){}
+  public void setEnabled(boolean enabled){} public void setSelected(boolean selected){}
  public android.content.Context getContext(){return c;}
  public android.content.res.Resources getResources(){return new android.content.res.Resources();}
  public void setTag(Object o){tag=o;} public Object getTag(){return tag;}
