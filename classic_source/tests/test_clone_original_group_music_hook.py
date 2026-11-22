@@ -117,7 +117,8 @@ class OriginalGroupObserverTests(unittest.TestCase):
         self.assertIn("keine bestätigte Auswahl", ui)
         self.assertIn("ClassicOriginalMusicSelection.originalGroupClosed()", provider)
         self.assertIn("if (!ips.isEmpty())", service)
-        self.assertIn("new String[0]", ui)
+        self.assertNotIn("new String[0]", ui)
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", ui)
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / group.SOURCE_PATH
             path.parent.mkdir(parents=True)

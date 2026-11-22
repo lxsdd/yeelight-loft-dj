@@ -128,7 +128,8 @@ class OriginalMusicSelectionHookTest(unittest.TestCase):
         assert "ClassicOriginalMusicSelection.clear();" in provider
         assert "if (!ips.isEmpty())" in service
         assert "OEM-Lampenauswahl nicht verifiziert" in service
-        assert "new String[0]" in music
+        assert "new String[0]" not in music
+        assert "Audioquelle und Start/Stopp: oben in Classic" in music
         assert "No OEM device/room identity" in service
         assert "set_power" not in hook.BRIDGE
 
