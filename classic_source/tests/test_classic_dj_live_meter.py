@@ -102,7 +102,8 @@ class ClassicDjLiveMeterTest(unittest.TestCase):
   service=(SRC/"ClassicDjService.java").read_text()
   self.assertIn("result.bass, result.mid, result.presence, result.treble",engine)
   self.assertIn("current?.onSpectrum(output.bass.toFloat()",kotlin)
-  self.assertIn("ClassicDjService.frameForOwner(sessionOwner)",ui)
+  self.assertNotIn("ClassicDjService.frameForOwner(",ui)
+  self.assertIn("Nur Simulation",ui)
   self.assertIn("sessionFence.owns(token)",service)
   self.assertIn("uiOwner.owns(owner)",service)
   for forbidden in ("set_power","set_music","Socket(","http://","Math.random()"):
