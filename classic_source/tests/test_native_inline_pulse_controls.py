@@ -9,10 +9,12 @@ SERVICE = (ROOT / "ClassicDjService.java").read_text("utf-8")
 
 class NativePulseControlsTest(unittest.TestCase):
     def test_native_inline_pulse_ui_has_live_timing(self):
-        self.assertIn("pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE)", INLINE)
-        self.assertIn("beatPulse = !beatPulse", INLINE)
-        self.assertIn("pulseTempo = (pulseTempo + 1) % PULSE_TEMPOS.length", INLINE)
-        self.assertIn("pulseTempoButton.setEnabled(!beatPulse)", INLINE)
+        gallery = (ROOT / "ClassicSceneGalleryPanel.java").read_text("utf-8")
+        self.assertIn("pulseEditor.setVisibility(s.scene == 3 ? View.VISIBLE : View.GONE)", gallery)
+        self.assertIn("s.gainIndex, !s.beatPulse", gallery)
+        self.assertIn("(s.pulseTempoIndex + 1) % 5", gallery)
+        self.assertIn("pulseTempo.setEnabled(!s.beatPulse)", gallery)
+        self.assertNotIn("pulseModeButton", INLINE)
         self.assertIn("PULSE_TEMPOS = {60, 90, 120, 150, 180}", INLINE)
 
     def test_initial_and_live_config_both_include_pulse_settings(self):
@@ -26,8 +28,9 @@ class NativePulseControlsTest(unittest.TestCase):
         self.assertNotIn("target.configurePulse(", SERVICE)
 
     def test_native_pulse_envelope_and_gamma_are_live_in_original_music_ui(self):
-        self.assertIn("pulseShape = (pulseShape + 1) % PULSE_SHAPES.length", INLINE)
-        self.assertIn("pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE)", INLINE)
+        gallery = (ROOT / "ClassicSceneGalleryPanel.java").read_text("utf-8")
+        self.assertIn("(s.pulseShapeIndex + 1) % 3", gallery)
+        self.assertIn("pulseShape.setText(", gallery)
         self.assertIn("PULSE_SHAPES = {", INLINE)
         self.assertIn("PULSE_GAMMAS = {2.2, 1.2, 2.0}", INLINE)
         for extra in ("EXTRA_PULSE_MIN", "EXTRA_PULSE_MAX", "EXTRA_PULSE_ATTACK",
