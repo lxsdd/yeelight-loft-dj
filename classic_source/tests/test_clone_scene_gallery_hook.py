@@ -63,14 +63,21 @@ class SceneGalleryHookTest(unittest.TestCase):
 package io.github.lxsdd.yeelightclassicdj.ui;
 public class SceneStateHarness {
     public static void main(String[] args) {
+        long firstRevision = ClassicSceneUiState.revision();
         ClassicSceneUiState.Selection initial = ClassicSceneUiState.snapshot();
         if (initial.scene != 0 || initial.gainIndex != 1) throw new AssertionError("default");
         if (!ClassicSceneUiState.update(5, 4, true, 1, 2)) throw new AssertionError("gallery");
+        if (ClassicSceneUiState.revision() <= firstRevision)
+            throw new AssertionError("gallery change invisible to MusicActivity");
+        long galleryRevision = ClassicSceneUiState.revision();
         ClassicSceneUiState.Selection gallery = ClassicSceneUiState.snapshot();
         if (gallery.scene != 5 || gallery.speedIndex != 4 || !gallery.reverse)
             throw new AssertionError("gallery state");
         if (!ClassicSceneUiState.updateAudio(3, false, 4, 0))
             throw new AssertionError("music state");
+        if (ClassicSceneUiState.revision() <= galleryRevision)
+            throw new AssertionError("music change invisible to gallery");
+        long audioRevision = ClassicSceneUiState.revision();
         ClassicSceneUiState.Selection music = ClassicSceneUiState.snapshot();
         if (music.scene != 5 || music.gainIndex != 3 || music.beatPulse ||
             music.pulseTempoIndex != 4 || music.pulseShapeIndex != 0)
@@ -78,6 +85,8 @@ public class SceneStateHarness {
         if (ClassicSceneUiState.update(20, 0, false, 0, 0) ||
             ClassicSceneUiState.updateAudio(100, true, 0, 0))
             throw new AssertionError("invalid state accepted");
+        if (ClassicSceneUiState.revision() != audioRevision)
+            throw new AssertionError("rejected changes must not redraw gallery");
         ClassicSceneUiState.Selection after = ClassicSceneUiState.snapshot();
         if (after.scene != 5 || after.gainIndex != 3)
             throw new AssertionError("invalid state mutated owner");
@@ -120,6 +129,10 @@ class OriginalGalleryProductionSourceTest(unittest.TestCase):
             self.assertIn("ClassicSceneUiState", txt)
         self.assertIn("ClassicSceneUiState.snapshot()", gallery)
         self.assertIn("syncSceneFromGallery();", music)
+        self.assertIn("ClassicSceneUiState.revision() != observedSceneRevision", music)
+        self.assertIn("previous.panel.redraw();", gallery)
+        self.assertIn("EXPLANATIONS[s.scene]", gallery)
+        self.assertIn("cards[i].setSelected(i == s.scene)", gallery)
         self.assertIn("ClassicSceneUiState.updateAudio(", music)
         self.assertIn("ClassicDjService.ACTION_CONFIG", gallery)
         self.assertIn("ClassicDjService.ownerForInternal()", gallery)
