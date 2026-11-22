@@ -11,14 +11,17 @@ class SpatialSettingsMusicUiTest(unittest.TestCase):
     def test_visible_grouped_scene_choices_and_live_parameters(self):
         self.assertIn('heading.setText(rowIndex == 0 ? "Musikreaktionen" : "Räumliche Lichtszene")', INLINE)
         self.assertIn('choice.setText((selected ? "✓ " : "") + SCENE_LABELS[i])', INLINE)
-        self.assertIn("spatialControls.setVisibility(scene >= 4 ? View.VISIBLE : View.GONE)", INLINE)
-        self.assertIn("spatialControls.addView(top)", INLINE)
-        self.assertIn("spatialControls.addView(bottom)", INLINE)
+        gallery = (UI / "ClassicSceneGalleryPanel.java").read_text("utf-8")
+        self.assertIn("sceneParametersReadOnly.setText(", INLINE)
+        self.assertNotIn("spatialSpeedButton", INLINE)
+        self.assertIn("spatialEditor.setVisibility(s.scene >= 4 ? View.VISIBLE : View.GONE)", gallery)
+        self.assertIn("spatialEditor.addView(row)", gallery)
+        self.assertIn("spatialEditor.addView(second)", gallery)
         self.assertIn("SPATIAL_SPEEDS = {50, 75, 100, 150, 200}", INLINE)
         self.assertIn("SPATIAL_TRAILS = {1, 2, 4, 6, 8}", INLINE)
         self.assertIn("SPATIAL_RANGES = {{1, 100}, {5, 60}, {20, 85}}", INLINE)
-        self.assertIn("spatialReverse = !spatialReverse", INLINE)
-        self.assertIn("updateSpatialLabels();", INLINE)
+        self.assertIn("s.speedIndex, !s.reverse", gallery)
+        self.assertIn("updateSceneParameterSummary();", INLINE)
         self.assertIn("configureIfOwned();", INLINE)
 
     def test_start_and_live_config_uses_same_atomic_scene_snapshot(self):
