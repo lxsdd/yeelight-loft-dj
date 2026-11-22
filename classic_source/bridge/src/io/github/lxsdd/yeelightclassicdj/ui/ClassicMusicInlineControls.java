@@ -61,7 +61,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         if (!selected) return "Original-Classic-Gerätezuordnung noch nicht bestätigt";
         if (groupCount < 0)
             return "Original-Classic-Gerätekontext erkannt · Gruppenzuordnung offen · DJ-Lampen NICHT freigegeben";
-        return "Original-Classic-Gruppenliste gelesen: " + groupCount +
+        return "Zuletzt gelesene Original-Classic-Gruppenliste: " + groupCount +
             " Mitglieder (keine bestätigte Auswahl) · DJ-Lampen NICHT freigegeben";
     }
     private final TextView liveFeedback;

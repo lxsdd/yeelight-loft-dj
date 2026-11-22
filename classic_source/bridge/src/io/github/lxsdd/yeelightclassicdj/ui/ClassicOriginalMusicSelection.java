@@ -71,10 +71,11 @@ public final class ClassicOriginalMusicSelection {
     }
 
     static synchronized void observeGroupMembersAt(java.util.List<?> members, long nowMs) {
-        if (!groupFreshAt(nowMs) || members == null) {
-            observedGroupCount = -1;
-            return;
-        }
+        // Only the live original group Activity may submit a new list.
+        // After Back, retain the last read-only count for MusicActivity's
+        // return screen, but reject late refreshes from a destroyed host.
+        if (!groupEntryFreshAt(nowMs)) return;
+        if (members == null) { observedGroupCount = -1; return; }
         try {
             // No fixed fleet maximum, no access to IDs/IPs, no device commands.
             observedGroupCount = members.size();
@@ -93,8 +94,14 @@ public final class ClassicOriginalMusicSelection {
         return groupFreshAt(nowMs) ? observedGroupCount : -1;
     }
 
+    private static boolean groupEntryFreshAt(long nowMs) {
+        return groupEntryObserved && freshAt(nowMs) &&
+            groupObservedAtMs != Long.MIN_VALUE && nowMs >= groupObservedAtMs &&
+            nowMs - groupObservedAtMs <= FRESH_MS;
+    }
+
     private static boolean groupFreshAt(long nowMs) {
-        if (!groupEntryObserved || !freshAt(nowMs) ||
+        if (observedGroupCount < 0 || !freshAt(nowMs) ||
             groupObservedAtMs == Long.MIN_VALUE || nowMs < groupObservedAtMs ||
             nowMs - groupObservedAtMs > FRESH_MS) {
             resetGroup();
@@ -103,8 +110,13 @@ public final class ClassicOriginalMusicSelection {
         return true;
     }
 
-    /** Original GroupMusic Activity teardown, never a release of lamp access. */
-    public static synchronized void originalGroupClosed() { resetGroup(); }
+    /** Closing OEM GroupMusic rejects further list callbacks, but leaves a
+     * bounded READ-ONLY last-seen count for the resumed original MusicActivity.
+     * No chosen membership, LAN address or ownership survives this transition.
+     */
+    public static synchronized void originalGroupClosed() {
+        groupEntryObserved = false;
+    }
 
     private static void resetGroup() {
         groupEntryObserved = false;

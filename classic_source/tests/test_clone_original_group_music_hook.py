@@ -142,7 +142,9 @@ public final class OriginalGroupHarness {
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList("a","b"), 270);
     check(ClassicOriginalMusicSelection.groupMemberCountAt(270) == 2, "list refresh");
     ClassicOriginalMusicSelection.originalGroupClosed();
-    check(ClassicOriginalMusicSelection.groupMemberCountAt(280) == -1, "group closed");
+    check(ClassicOriginalMusicSelection.groupMemberCountAt(280) == 2, "last-seen count available on Music return");
+    ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList("spoof"), 281);
+    check(ClassicOriginalMusicSelection.groupMemberCountAt(281) == 2, "closed group cannot update snapshot");
     check(ClassicOriginalMusicSelection.freshAt(280), "original click still observed");
     ClassicOriginalMusicSelection.observeGroupEntryAt("group", 290);
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList("a"), 300);
