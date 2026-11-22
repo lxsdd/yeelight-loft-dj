@@ -283,6 +283,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         spatialSpeedButton.setOnClickListener(v -> {
             spatialSpeedIndex = (spatialSpeedIndex + 1) % SPATIAL_SPEEDS.length;
             updateSpatialLabels();
+            publishSharedScene();
             configureIfOwned();
         });
         top.addView(spatialSpeedButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -292,6 +293,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         spatialDirectionButton.setOnClickListener(v -> {
             spatialReverse = !spatialReverse;
             updateSpatialLabels();
+            publishSharedScene();
             configureIfOwned();
         });
         top.addView(spatialDirectionButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -305,6 +307,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         spatialTrailButton.setOnClickListener(v -> {
             spatialTrailIndex = (spatialTrailIndex + 1) % SPATIAL_TRAILS.length;
             updateSpatialLabels();
+            publishSharedScene();
             configureIfOwned();
         });
         bottom.addView(spatialTrailButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -314,6 +317,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         spatialRangeButton.setOnClickListener(v -> {
             spatialRangeIndex = (spatialRangeIndex + 1) % SPATIAL_RANGES.length;
             updateSpatialLabels();
+            publishSharedScene();
             configureIfOwned();
         });
         bottom.addView(spatialRangeButton, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -406,9 +410,32 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             SPATIAL_RANGES[spatialRangeIndex][1] + "%");
     }
 
+    /** The original SceneFragment and MusicActivity share one transient scene model. */
+    private void publishSharedScene() {
+        ClassicSceneUiState.update(scene, spatialSpeedIndex, spatialReverse,
+            spatialTrailIndex, spatialRangeIndex);
+    }
+
+    private void syncSceneFromGallery() {
+        ClassicSceneUiState.Selection stored = ClassicSceneUiState.snapshot();
+        scene = stored.scene;
+        spatialSpeedIndex = stored.speedIndex;
+        spatialReverse = stored.reverse;
+        spatialTrailIndex = stored.trailIndex;
+        spatialRangeIndex = stored.rangeIndex;
+        refreshSceneChoices();
+        sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
+        spatialControls.setVisibility(scene >= 4 ? View.VISIBLE : View.GONE);
+        pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
+        pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
+        updateSpatialLabels();
+        renderLiveFeedback();
+    }
+
     private void selectScene(int requested) {
         if (requested < 0 || requested >= SCENES.length) return;
         scene = requested;
+        publishSharedScene();
         refreshSceneChoices();
         sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
         spatialControls.setVisibility(scene >= 4 ? View.VISIBLE : View.GONE);
@@ -450,6 +477,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
 
     public void onHostResumed() {
         attached = true;
+        syncSceneFromGallery();
         ClassicInternalAudioConsentActivity.Result result =
             ClassicInternalAudioConsentActivity.takeResult();
         boolean returnFromConsent = consentFlowPending && result != null;

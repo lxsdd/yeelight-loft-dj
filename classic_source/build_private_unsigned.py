@@ -327,6 +327,10 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             # behavior, original identity control, and actual device state stay intact.
             from clone_ble_stop_guard import patch_staged_clone as patch_ble_stop
             smali_report['ble_stop_guard'] = patch_ble_stop(staged)
+            # Only the SHA-pinned original SceneFragment lifecycle, no
+            # device identity, gallery adapter or original scene write.
+            from clone_scene_gallery_hook import patch_staged_clone as patch_scene_gallery
+            smali_report['scene_gallery'] = patch_scene_gallery(staged)
         build_diagnostics.phase('APKTOOL_REBUILD')
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         build_diagnostics.phase('MULTIDEX_LAYOUT')
