@@ -1,69 +1,45 @@
-"""Source regression: native Classic Music inline pulse UI remains DSP-only."""
+"""Original music effect strip and original SceneFragment pulse editor ownership."""
 from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1] / "bridge/src/io/github/lxsdd/yeelightclassicdj/ui"
 INLINE = (ROOT / "ClassicMusicInlineControls.java").read_text("utf-8")
+GALLERY = (ROOT / "ClassicSceneGalleryPanel.java").read_text("utf-8")
 SERVICE = (ROOT / "ClassicDjService.java").read_text("utf-8")
+RUNTIME = (Path(__file__).resolve().parents[1] / "bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.kt").read_text("utf-8")
 
 
 class NativePulseControlsTest(unittest.TestCase):
-    def test_native_inline_pulse_ui_has_live_timing(self):
-        gallery = (ROOT / "ClassicSceneGalleryPanel.java").read_text("utf-8")
-        self.assertIn("pulseEditor.setVisibility(s.scene == 3 ? View.VISIBLE : View.GONE)", gallery)
-        self.assertIn("s.gainIndex, !s.beatPulse", gallery)
-        self.assertIn("(s.pulseTempoIndex + 1) % 5", gallery)
-        self.assertIn("pulseTempo.setEnabled(!s.beatPulse)", gallery)
+    def test_original_scene_editor_exclusively_owns_pulse_settings(self):
+        self.assertIn("pulseEditor.setVisibility(s.scene == 3 ? View.VISIBLE : View.GONE)", GALLERY)
+        self.assertIn("s.gainIndex, !s.beatPulse", GALLERY)
+        self.assertIn("(s.pulseTempoIndex + 1) % 5", GALLERY)
+        self.assertIn("(s.pulseShapeIndex + 1) % 3", GALLERY)
+        self.assertIn("pulseTempo.setEnabled(!s.beatPulse)", GALLERY)
+        self.assertIn("pulseShape.setText(", GALLERY)
+        self.assertIn("ClassicSceneUiState.update(", INLINE)
         self.assertNotIn("pulseModeButton", INLINE)
-        self.assertIn("PULSE_TEMPOS = {60, 90, 120, 150, 180}", INLINE)
+        self.assertNotIn("gainButton", INLINE)
+        self.assertNotIn("EXTRA_PULSE_BPM", INLINE)
 
-    def test_initial_and_live_config_both_include_pulse_settings(self):
-        self.assertEqual(INLINE.count("addPulseSettings(intent);"), 2)
-        self.assertIn("ClassicDjService.EXTRA_PULSE_MODE", INLINE)
-        self.assertIn("ClassicDjService.EXTRA_PULSE_BPM", INLINE)
-        self.assertIn("ClassicDjService.ACTION_CONFIG", INLINE)
-        self.assertIn("configureRuntime(runtime, intent, gain, scene)", SERVICE)
-        self.assertIn("new DjRuntime.SceneSettings(", SERVICE)
-        self.assertIn("target.applySceneSettings(", SERVICE)
-        self.assertNotIn("target.configurePulse(", SERVICE)
-
-    def test_native_pulse_envelope_and_gamma_are_live_in_original_music_ui(self):
-        gallery = (ROOT / "ClassicSceneGalleryPanel.java").read_text("utf-8")
-        self.assertIn("(s.pulseShapeIndex + 1) % 3", gallery)
-        self.assertIn("pulseShape.setText(", gallery)
-        self.assertIn("PULSE_SHAPES = {", INLINE)
-        self.assertIn("PULSE_GAMMAS = {2.2, 1.2, 2.0}", INLINE)
-        for extra in ("EXTRA_PULSE_MIN", "EXTRA_PULSE_MAX", "EXTRA_PULSE_ATTACK",
-                      "EXTRA_PULSE_DECAY", "EXTRA_PULSE_GAMMA"):
-            self.assertIn("ClassicDjService." + extra, INLINE)
-            self.assertIn(extra, SERVICE)
-        self.assertEqual(INLINE.count("addPulseSettings(intent);"), 2)
-        self.assertIn("configureIfOwned();", INLINE)
-
-    def test_pulse_presets_are_valid_and_dsp_only(self):
-        self.assertIn("{12, 65, 160, 900}", INLINE)
-        self.assertIn("{8, 100, 70, 330}", INLINE)
-        self.assertIn("{12, 90, 90, 600}", INLINE)
-        self.assertNotIn("set_power", INLINE)
-        self.assertNotIn("set_bright", INLINE)
-        self.assertIn("inlineSheet.addView(expanded);", INLINE)
-        self.assertIn("choice.setOnClickListener(v -> selectScene(selectedScene));", INLINE)
-        self.assertNotIn("new Dialog(", INLINE)
-        self.assertNotIn("host.setContentView(", INLINE)
-        self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", INLINE)
-
-    def test_no_unverified_lamp_target_or_duplicate_picker(self):
-        self.assertIn("new String[0]", INLINE)
-        self.assertIn("if (!ips.isEmpty())", SERVICE)
-        for forbidden in ("set_music", "set_power", "ColorSelectView(", "new EditText(", "host.setContentView("):
+    def test_one_original_player_does_not_start_second_capture(self):
+        for forbidden in ("sourceButton", "startButton", "ACTION_MIC", "ACTION_INTERNAL",
+                          "ACTION_STOP", "host.startService(", "stopOwned("):
             self.assertNotIn(forbidden, INLINE)
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", INLINE)
+        self.assertIn("preview.setMode(selected.scene, selected.beatPulse,", INLINE)
+        self.assertIn("Kein Original-Audiositzungsbeleg", INLINE)
+        self.assertIn("if (!ips.isEmpty())", SERVICE)
+        self.assertIn("target.applySceneSettings(new DjRuntime.SceneSettings(", SERVICE)
+        self.assertIn("ClassicPulseScene.Options(", RUNTIME)
+        self.assertNotIn("set_power", INLINE)
 
-    def test_owner_start_failure_replaces_stale_preparing_status(self):
-        self.assertIn("ClassicDjService.startFailureForOwner(sessionOwner)", INLINE)
-        self.assertIn("START_ACK_TIMEOUT_MS", INLINE)
-        self.assertIn("ClassicDjService.hasActiveSession()", INLINE)
-        self.assertIn("erst Stopp, dann erneut", INLINE)
-        self.assertNotIn("Analyse nicht aktiv · erneut starten oder stoppen", INLINE)
+    def test_gallery_and_music_share_no_duplicate_storage(self):
+        self.assertIn("ClassicSceneUiState.revision()", INLINE)
+        self.assertIn("ClassicSceneUiState.snapshot()", INLINE)
+        self.assertNotIn("SharedPreferences", INLINE)
+        self.assertNotIn("SQLiteDatabase", INLINE)
+        self.assertNotIn("new Dialog(", INLINE)
 
 
 if __name__ == "__main__":

@@ -1,78 +1,99 @@
-"""Owner-visible Classic Music layout/source/consent regression contract.
+"""Original MusicActivity UI integration: no second audio controller.
 
-No OEM APK, physical lamp or Android permission is exercised in public CI.
+Source-only checks; real OEM-APK layout still requires owner Pixel acceptance.
 """
 from pathlib import Path
 import unittest
 
 SRC = Path(__file__).resolve().parents[1]
 UI = SRC / "bridge/src/io/github/lxsdd/yeelightclassicdj/ui"
-INLINE = (UI / "ClassicMusicInlineControls.java").read_text(encoding="utf-8")
-PROVIDER = (UI / "ClassicDjEntryProvider.java").read_text(encoding="utf-8")
-SERVICE = (UI / "ClassicDjService.java").read_text(encoding="utf-8")
-BROKER = (UI / "ClassicInternalAudioConsentActivity.java").read_text(encoding="utf-8")
+INLINE = (UI / "ClassicMusicInlineControls.java").read_text("utf-8")
+PROVIDER = (UI / "ClassicDjEntryProvider.java").read_text("utf-8")
+SERVICE = (UI / "ClassicDjService.java").read_text("utf-8")
+BROKER = (UI / "ClassicInternalAudioConsentActivity.java").read_text("utf-8")
+PATTERN = (UI / "ClassicDjPatternPreviewView.java").read_text("utf-8")
 
 
 class ClassicMusicSheetRegression(unittest.TestCase):
-    def test_original_music_uses_reserved_in_place_panel_and_direct_modes(self):
-        self.assertIn("new ClassicMusicInlineControls(activity)", PROVIDER)
-        self.assertIn("root.getChildCount() != 1", PROVIDER)
-        self.assertIn("ViewGroup.LayoutParams.MATCH_PARENT", PROVIDER)
-        self.assertIn("controls.setDockHeightListener(lease::resize)", PROVIDER)
-        self.assertIn("lp.bottomMargin = baseline + requested", PROVIDER)
-        self.assertIn("lp.bottomMargin = baseline", PROVIDER)
-        self.assertIn("if (lease != null) lease.detach();", PROVIDER)
-        self.assertNotIn("Gravity.TOP | Gravity.END", PROVIDER)
-        self.assertNotIn("belowToolbar", PROVIDER)
-        self.assertIn("root.addView(controls, params);", PROVIDER)
-        self.assertIn("inlineSheet = new ScrollView(activity)", INLINE)
-        self.assertIn("inlineSheet.addView(expanded)", INLINE)
-        self.assertIn("inlineSheet.setVisibility(View.GONE)", INLINE)
-        self.assertIn("addView(inlineSheet,", INLINE)
-        self.assertIn("choice.setOnClickListener(v -> selectScene(selectedScene))", INLINE)
-        self.assertNotIn("scene = (scene + 1) % SCENES.length", INLINE)
+    def test_one_in_original_host_reserved_compact_surface(self):
+        for required in (
+            "new ClassicMusicInlineControls(activity)",
+            "root.getChildCount() != 1",
+            "controls.setDockHeightListener(lease::resize)",
+            "lp.bottomMargin = baseline + requested",
+            "lp.bottomMargin = baseline",
+            "if (lease != null) lease.detach();",
+            "root.addView(controls, params);",
+        ):
+            self.assertIn(required, PROVIDER)
+        for required in (
+            "inlineSheet = new ScrollView(activity)",
+            "inlineSheet.addView(content)",
+            "inlineSheet.setVisibility(View.GONE)",
+            "addView(inlineSheet,",
+            "compactHeightPx = dp(46) + dp(10)",
+            "screen * 0.26f",
+            "closeSheet();",
+        ):
+            self.assertIn(required, INLINE)
         self.assertNotIn("new Dialog(", INLINE)
-        self.assertNotIn("controlSheet", INLINE)
         self.assertNotIn("host.setContentView(", INLINE)
-        self.assertNotIn("new Intent(host, ClassicDjActivity.class)", INLINE)
-        self.assertIn("ClassicDjService.frameForOwner(sessionOwner)", INLINE)
-        self.assertIn("ClassicDjEffectPreview.intensity(", INLINE)
-        self.assertIn("PCM-Analyse noch nicht gestartet", INLINE)
-        self.assertIn("new ProgressBar(activity, null,", INLINE)
-        for name in ("Bass", "Mitten", "Präsenz", "Höhen"):
-            self.assertIn(name, INLINE)
-        self.assertNotIn("Math.random()", INLINE)
+        self.assertNotIn("new Intent(", INLINE)
+        self.assertNotIn("Gravity.TOP | Gravity.END", PROVIDER)
 
-    def test_explains_internal_audio_dialog_without_claiming_screen_video_capture(self):
-        self.assertIn("Quelle: Internes Android-Audio", INLINE)
-        self.assertIn("Wir verarbeiten nur erlaubtes App-Audio, kein Bildschirmvideo", INLINE)
-        self.assertIn("Eine Freigabe ist pro Sitzung erforderlich", INLINE)
-        self.assertIn('startButton.setText(preferInternal ? "Audio freigeben" : "Analyse starten")', INLINE)
+    def test_oem_player_owns_only_audio_switch_and_transport(self):
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", INLINE)
+        self.assertIn("Keine zweite Aufnahme", INLINE)
+        for forbidden in (
+            "sourceButton", "startButton", "stopOwned(", "host.startActivity(",
+            "host.startService(", "host.startForegroundService(",
+            "requestPermissions(", "MediaProjection", "ClassicDjService.ACTION_MIC",
+            "ClassicDjService.ACTION_INTERNAL", "ClassicDjService.ACTION_STOP",
+            "ClassicDjService.frameForOwner(", "onRequestPermissionsResult(",
+        ):
+            # Production has no duplicate interactive source/start/stop path.
+            self.assertNotIn(forbidden, INLINE)
         self.assertIn("manager.createScreenCaptureIntent()", BROKER)
         self.assertIn("resultCode != RESULT_OK", BROKER)
-        self.assertIn("host.startActivity(intent); // transient Android consent broker; no DJ screen", INLINE)
-        self.assertIn("if (returnFromConsent) openControlSheet();", INLINE)
-        self.assertIn("closeControlSheet();", INLINE)
-        self.assertIn("inlineSheet.setVisibility(View.VISIBLE)", INLINE)
+        self.assertIn("ACTION_INTERNAL", BROKER)
 
-    def test_source_failure_classification_is_sanitized_and_owner_fenced(self):
-        self.assertIn("private static String classifyStartError(boolean internal, Throwable failure)", SERVICE)
-        for reason in ("AUDIO_PERMISSION", "AUDIO_STATE", "AUDIO_ABI",
-                       "AUDIO_FORMAT", "AUDIO_START", "AUDIO_READ"):
-            self.assertIn(reason, SERVICE)
-        self.assertIn("stopSession(token, classifyStartError(internal, error), true)", SERVICE)
-        self.assertIn("startResults.fail(completedOwner, finalState)", SERVICE)
-        self.assertIn("startResults.failureFor(owner)", SERVICE)
-        self.assertIn("ClassicDjService.startFailureForOwner(sessionOwner)", INLINE)
+    def test_scene_state_is_original_gallery_shared_not_remote_record(self):
+        self.assertIn("ClassicSceneUiState.snapshot()", INLINE)
+        self.assertIn("ClassicSceneUiState.update(", INLINE)
+        self.assertIn("shownRevision != ClassicSceneUiState.revision()", INLINE)
+        self.assertIn("HorizontalScrollView effectsScroll", INLINE)
+        self.assertIn("chip.setOnClickListener(v -> selectScene(choice))", INLINE)
+        self.assertIn("ClassicDjEffectPreview.explanation(", INLINE)
+        self.assertIn("new ClassicDjPatternPreviewView(activity)", INLINE)
+        self.assertIn("Math.sin(", (UI / "ClassicDjPatternMath.java").read_text("utf-8"))
+        for label in ("Spektrum", "Ruhig", "Beat", "Puls", "Scanner", "Meteor", "Welle"):
+            self.assertIn(label, (UI / "ClassicSceneUiState.java").read_text("utf-8"))
+
+    def test_distinguishes_simulated_pattern_from_actual_ownership(self):
+        self.assertIn("keine bestätigte Auswahl", INLINE)
+        self.assertIn("ClassicOriginalMusicSelection.fresh()", INLINE)
+        self.assertIn("ClassicOriginalMusicSelection.originalGroupMemberCount()", INLINE)
+        self.assertIn("originalMusicSelectionStatus.setText(", INLINE)
+        self.assertIn("Nur Simulation", INLINE)
+        self.assertIn("keine Lampe wird angesteuert", INLINE)
+        self.assertIn("Eight abstract preview cells", PATTERN)
+        self.assertNotIn("getRemoteDeviceList(", INLINE)
+        self.assertNotIn("new String[0]", INLINE)
         self.assertIn("if (!ips.isEmpty())", SERVICE)
-        self.assertIn("new String[0]", INLINE)
 
-    def test_no_unapproved_device_or_oem_mutation(self):
-        for body in (INLINE, BROKER):
+    def test_private_capture_fence_and_sanitized_diagnostics_still_exist(self):
+        self.assertIn("private static String classifyStartError(boolean internal, Throwable failure)", SERVICE)
+        for reason in ("MIC_PERMISSION","MIC_STATE","MIC_FORMAT","MIC_ABI","MIC_START",
+                       "AUDIO_PERMISSION","AUDIO_STATE","AUDIO_ABI","AUDIO_FORMAT","AUDIO_START"):
+            self.assertIn(reason, SERVICE)
+        self.assertIn("sessionFence.cancel();", SERVICE)
+        self.assertIn("startResults.fail(completedOwner, finalState)", SERVICE)
+
+    def test_no_device_or_account_mutation_from_inline_ui(self):
+        for body in (INLINE, PATTERN, BROKER):
             for forbidden in ("set_power", "set_music", "Socket(", "HttpURLConnection",
-                              "getRemoteDeviceList(", "grantRuntimePermission"):
+                              "grantRuntimePermission", "Math.random()"):
                 self.assertNotIn(forbidden, body)
-        self.assertNotIn("startForegroundService(intent); // transient", INLINE)
 
 
 if __name__ == "__main__":
