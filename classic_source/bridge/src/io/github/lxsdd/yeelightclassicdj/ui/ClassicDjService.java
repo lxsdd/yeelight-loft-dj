@@ -437,7 +437,21 @@ public final class ClassicDjService extends Service {
             return "DJ-Start fehlgeschlagen · " +
                 (internal ? "internes Audio" : "Mikrofon") + " [" + code + "]";
         }
-        if (!internal) return "DJ-Start fehlgeschlagen · Mikrofon [MIC_START]";
+        // The owner Pixel6a sample reported MIC_START for an untyped
+        // failure. Keep raw OEM/AudioRecord details private, but distinguish
+        // the four standard Android exception classes instead of masking them
+        // all as unknown. Only a true unknown remains MIC_START.
+        if (!internal) {
+            if (failure instanceof SecurityException)
+                return "DJ-Start fehlgeschlagen · Mikrofon [MIC_PERMISSION]";
+            if (failure instanceof LinkageError)
+                return "DJ-Start fehlgeschlagen · Mikrofon [MIC_ABI]";
+            if (failure instanceof IllegalStateException)
+                return "DJ-Start fehlgeschlagen · Mikrofon [MIC_STATE]";
+            if (failure instanceof IllegalArgumentException)
+                return "DJ-Start fehlgeschlagen · Mikrofon [MIC_FORMAT]";
+            return "DJ-Start fehlgeschlagen · Mikrofon [MIC_START]";
+        }
         if (failure instanceof SecurityException)
             return "DJ-Start fehlgeschlagen · Audioberechtigung [AUDIO_PERMISSION]";
         if (failure instanceof LinkageError)
