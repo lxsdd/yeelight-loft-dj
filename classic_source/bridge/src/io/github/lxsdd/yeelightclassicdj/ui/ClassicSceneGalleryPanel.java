@@ -30,6 +30,15 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final Button[] cards = new Button[ClassicSceneUiState.SCENES.length];
     private final Button speed, direction, trail, brightness;
     private final TextView note;
+    private static final String[] EXPLANATIONS = {
+        "Frequenzbänder aus der Audioanalyse",
+        "Sanfter Verlauf passend zum Musikpegel",
+        "Helligkeitsimpulse auf erkannte Beats",
+        "Puls nach Beat oder frei gewähltem Tempo",
+        "Lichtpunkt wandert in geordneter Richtung",
+        "Kurzer Lichtschweif mit abklingender Spur",
+        "Lichtwelle durch die geordnete Auswahl"
+    };
     private Lease lease;
 
     private static final class Lease {
@@ -81,7 +90,18 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             !(sceneRoot instanceof FrameLayout)) return;
         try {
             synchronized (owned) {
-                if (owned.containsKey(owner)) return;
+                Lease previous = owned.get(owner);
+                if (previous != null) {
+                    if (previous.panel.getParent() == previous.root &&
+                        previous.original.getParent() == previous.root) {
+                        // Fragment revisits keep one gallery; reflect edits
+                        // made in the original MusicActivity immediately.
+                        previous.panel.redraw();
+                        return;
+                    }
+                    previous.detach();
+                    owned.remove(owner);
+                }
                 FrameLayout root = (FrameLayout) sceneRoot;
                 if (root.getChildCount() != 1) return;
                 View original = root.getChildAt(0);
@@ -262,7 +282,10 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
 
     private void redraw() {
         ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
+        note.setText(ClassicSceneUiState.LABELS[s.scene] + " · " +
+            EXPLANATIONS[s.scene] + " · ohne verifizierte Lampenauswahl nur Vorschau");
         for (int i = 0; i < cards.length; i++) {
+            cards[i].setSelected(i == s.scene);
             cards[i].setText((i == s.scene ? "✓ " : "") + ClassicSceneUiState.LABELS[i]);
             cards[i].setContentDescription(ClassicSceneUiState.LABELS[i] +
                 (i == s.scene ? ", ausgewählt" : ", Lichtszene wählen"));
