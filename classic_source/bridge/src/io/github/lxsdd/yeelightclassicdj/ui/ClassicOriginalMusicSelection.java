@@ -101,13 +101,14 @@ public final class ClassicOriginalMusicSelection {
     }
 
     private static boolean groupFreshAt(long nowMs) {
-        if (observedGroupCount < 0 || !freshAt(nowMs) ||
-            groupObservedAtMs == Long.MIN_VALUE || nowMs < groupObservedAtMs ||
-            nowMs - groupObservedAtMs > FRESH_MS) {
+        if (!freshAt(nowMs) || groupObservedAtMs == Long.MIN_VALUE ||
+            nowMs < groupObservedAtMs || nowMs - groupObservedAtMs > FRESH_MS) {
             resetGroup();
             return false;
         }
-        return true;
+        // A null/unreadable J1() list is UNKNOWN, not the end of an OEM
+        // group Activity. Its next valid refresh must still be accepted.
+        return observedGroupCount >= 0;
     }
 
     /** Closing OEM GroupMusic rejects further list callbacks, but leaves a
