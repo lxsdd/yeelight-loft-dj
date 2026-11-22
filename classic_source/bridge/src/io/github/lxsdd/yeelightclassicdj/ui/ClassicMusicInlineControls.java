@@ -1,608 +1,265 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
-import android.Manifest;
 import android.app.Activity;
-import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.Build;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.Button;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
- * Real controls inside the ORIGINAL Classic MusicActivity view tree.
+ * Embedded effect-only controls in the genuine original Classic MusicActivity.
  *
- * Never launches another Activity, invents a device list or replaces the OEM
- * DiscoFragment. Until the OEM Music/Device session contract is verified,
- * the explicit start action runs microphone analysis with ZERO lamp targets.
- * Existing Classic music, scenes, color picker and navigation remain intact.
+ * The original DiscoFragment is the ONLY visible owner of audio source,
+ * microphone permission, Play/Pause and its music-device controls. Until an
+ * exact OEM audio-session contract is qualified, this panel never starts a
+ * second AudioRecord or MediaProjection and does not call ClassicDjService.
+ * Pattern motion is a deliberately labeled local SIMULATION, never bulb
+ * output, real PCM, group selection or an OEM session status assertion.
+ *
+ * The old diagnostic Class/Service remains a separately gated test path; it
+ * must never be wired back into this primary Original-Classic music surface.
+ * Programmatic tones are consistent with the Classic pink visual identity,
+ * not a claim that OEM Classic has been wholly migrated to Material 3.
  */
 public final class ClassicMusicInlineControls extends LinearLayout {
-    private static final String[] SCENES =
-        {"SPECTRUM", "AMBIENT", "BEAT", "PULSE", "SCANNER", "METEOR", "WAVE"};
-    private static final String[] SCENE_LABELS =
-        {"Spektrum", "Ruhig", "Beat", "Puls", "Scanner", "Meteor", "Welle"};
-    private static final double[] GAINS = {0.5, 1.0, 2.0, 4.0};
+    private static final int PINK = Color.rgb(255, 46, 121);
+    private static final int INK = Color.rgb(54, 48, 62);
+    private static final int MUTED = Color.rgb(106, 98, 112);
+    private static final int TINT = Color.rgb(255, 236, 244);
+    private static final String[] NAMES = ClassicSceneUiState.LABELS;
+
     private final Activity host;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final TextView status;
-    private final LinearLayout expanded;
-    // In-place bounded controls. They reserve the OEM player's real viewport
-    // instead of opening a modal dialog or overlapping the player.
+    private final TextView header;
     private final ScrollView inlineSheet;
+    private final LinearLayout content;
+    private final TextView originalMusicSelectionStatus;
+    private final TextView description;
+    private final TextView stateNotice;
+    private final ClassicDjPatternPreviewView preview;
+    private final TextView[] choices = new TextView[NAMES.length];
     private final int compactHeightPx;
     private final int detailsHeightPx;
+    private boolean attached;
+    private long shownRevision = -1L;
+    private int shownGroupCount = Integer.MIN_VALUE;
+    private boolean shownDeviceWitness;
+    private int activeScene = -1;
     interface DockHeightListener { void onHeightChanged(int pixels); }
     private DockHeightListener dockHeightListener;
-    void setDockHeightListener(DockHeightListener callback) {
-        dockHeightListener = callback;
-        notifyDockHeight();
-    }
-    private void notifyDockHeight() {
-        if (dockHeightListener != null)
-            dockHeightListener.onHeightChanged(compactHeightPx +
-                (inlineSheet.getVisibility() == View.VISIBLE ? detailsHeightPx : 0));
-    }
-    private final Button entryButton;
-    private final Button startButton;
-    private final TextView sourceHelp;
-    private final TextView originalMusicSelectionStatus;
-    private boolean originalMusicSelectionObserved;
-    private int originalGroupCountObserved = -1;
 
-    private static String originalSelectionMessage(boolean selected, int groupCount) {
-        if (!selected) return "Original-Classic-Gerätezuordnung noch nicht bestätigt";
-        if (groupCount < 0)
-            return "Original-Classic-Gerätekontext erkannt · Gruppenzuordnung offen · DJ-Lampen NICHT freigegeben";
-        return "Zuletzt gelesene Original-Classic-Gruppenliste: " + groupCount +
-            " Mitglieder (keine bestätigte Auswahl) · DJ-Lampen NICHT freigegeben";
+    private static GradientDrawable rounded(int color, int corner, int stroke) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color);
+        d.setCornerRadius(corner);
+        if (stroke != 0) d.setStroke(1, stroke);
+        return d;
     }
-    private final TextView liveFeedback;
-    private final TextView effectFeedback;
-    private final ProgressBar[] bandMeters = new ProgressBar[4];
-    private final ProgressBar effectMeter;
-    private boolean consentFlowPending;
-    private final TextView sceneButton;
-    private final Button[] sceneChoices = new Button[SCENES.length];
-    // The original SceneFragment owns scene tuning; Music only selects and displays.
-    private final TextView sceneParametersReadOnly;
-    private static final int[] SPATIAL_SPEEDS = {50, 75, 100, 150, 200};
-    private static final int[] SPATIAL_TRAILS = {1, 2, 4, 6, 8};
-    private static final int[][] SPATIAL_RANGES = {{1, 100}, {5, 60}, {20, 85}};
-    private int spatialSpeedIndex = 2, spatialTrailIndex = 2, spatialRangeIndex = 0;
-    private boolean spatialReverse;
-    private final Button sourceButton;
-    private boolean preferInternal;
-    private boolean internalOwned;
-    private final Button gainButton;
-    // These are DSP-only envelope presets. They never assert a lamp power state.
-    private static final int[][] PULSE_SHAPES = {
-        {12, 65, 160, 900}, {8, 100, 70, 330}, {12, 90, 90, 600}
-    };
-    private static final double[] PULSE_GAMMAS = {2.2, 1.2, 2.0};
-    private static final String[] PULSE_SHAPE_LABELS = {"Sanft", "Kräftig", "Normal"};
-    private int pulseShape = 2;
-    private static final int[] PULSE_TEMPOS = {60, 90, 120, 150, 180};
-    private int pulseTempo = 2;
-    private boolean beatPulse = true;
-    private int scene = 0;
-    private int gain = 1;
-    private long observedSceneRevision = -1L;
-    private boolean locallyStarted = false;
-    private String sessionOwner;
-    private long requestedAtMs;
-    private boolean micPermissionRequested;
-    private static final long START_ACK_TIMEOUT_MS = 8_000L;
-    // Local explicit-button request; the OEM permission callback is not our start trigger.
-    private static final int MICROPHONE_PERMISSION_REQUEST = 0x6D41;
-    private boolean attached = false;
-    private final Runnable refresh = new Runnable() {
-        @Override public void run() {
-            if (!attached) return;
-            if (locallyStarted) {
-                String failure = ClassicDjService.startFailureForOwner(sessionOwner);
-                if (failure != null) {
-                    // A service start can be accepted by Android but fail later.
-                    // Only the exact owner may clear its UI state; never restart implicitly.
-                    locallyStarted = false;
-                    internalOwned = false;
-                    sessionOwner = null;
-                    status.setText(failure + " · erneut starten möglich");
-                    entryButton.setText("Loft DJ · Fehler");
-                } else if (ClassicDjService.hasActiveSession()) {
-                    status.setText((internalOwned ? "Internes Audio" : "Mikrofon") +
-                        " · " + ClassicDjService.uiStatus());
-                } else if (SystemClock.elapsedRealtime() - requestedAtMs >= START_ACK_TIMEOUT_MS) {
-                    // Do not drop ownership of a start still queued by Android.
-                    status.setText("Analyse-Start nicht bestätigt · erst Stopp, dann erneut");
-                } else {
-                    status.setText((internalOwned ? "Interne Audiofreigabe" :
-                        "Mikrofonanalyse") + " wird vorbereitet · keine Lampenbefehle");
-                }
-            }
-            // A SceneFragment edit can occur while an internal-audio session
-            // remains foreground-owned. Refresh visible controls on the real
-            // MusicActivity, without implicitly starting or reconfiguring audio.
-            if (ClassicSceneUiState.revision() != observedSceneRevision)
-                syncSceneFromGallery();
-            // Only the original device-selection click can set this witness.
-            // A witnessed OEM ID is NOT permission to command a bulb.
-            boolean selected = ClassicOriginalMusicSelection.fresh();
-            int groupCount = ClassicOriginalMusicSelection.originalGroupMemberCount();
-            if (selected != originalMusicSelectionObserved ||
-                groupCount != originalGroupCountObserved) {
-                originalMusicSelectionObserved = selected;
-                originalGroupCountObserved = groupCount;
-                originalMusicSelectionStatus.setText(
-                    originalSelectionMessage(selected, groupCount));
-            }
-            // Genuine FFT/beat-derived data, never synthetic device state.
-            renderLiveFeedback();
-            handler.postDelayed(this, 650L);
-        }
-    };
+
+    private int dp(float value) {
+        return (int)(value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private TextView caption(String text, int sp, int color) {
+        TextView view = new TextView(host);
+        view.setText(text);
+        view.setTextSize(sp);
+        view.setTextColor(color);
+        return view;
+    }
 
     public ClassicMusicInlineControls(Activity activity) {
         super(activity);
         host = activity;
-        setOrientation(VERTICAL);
-        setGravity(Gravity.CENTER_VERTICAL);
-        int pad = (int) (6 * getResources().getDisplayMetrics().density + 0.5f);
-        setPadding(pad, pad, pad, pad);
         setTag("io.github.lxsdd.yeelightclassicdj.music.inline");
+        setOrientation(VERTICAL);
+        setBackgroundColor(Color.WHITE);
+        setPadding(dp(10), dp(5), dp(10), dp(5));
 
-        android.util.DisplayMetrics dm = activity.getResources().getDisplayMetrics();
-        compactHeightPx = (int) (56f * dm.density + 0.5f) + pad * 2;
-        detailsHeightPx = Math.max((int) (180f * dm.density + 0.5f),
-            Math.min((int) (dm.heightPixels * 0.42f), (int) (360f * dm.density + 0.5f)));
-        entryButton = new Button(activity);
-        entryButton.setText("Licht & Musik");
-        entryButton.setAllCaps(false);
-        entryButton.setContentDescription("Loft DJ Steuerung in Classic-Musik einblenden");
-        entryButton.setLayoutParams(new LinearLayout.LayoutParams(
-            -1, (int) (56f * dm.density + 0.5f), 0f));
-        addView(entryButton);
+        // A smaller, genuinely reserved viewport avoids clipping the original
+        // WaveView and gives the OEM player back most of the display height.
+        int screen = activity.getResources().getDisplayMetrics().heightPixels;
+        compactHeightPx = dp(46) + dp(10);
+        detailsHeightPx = Math.min(dp(242), Math.max(dp(170), (int)(screen * 0.26f)));
 
-        // The original OEM view remains the direct child of android.R.id.content.
-        expanded = new LinearLayout(activity);
-        expanded.setOrientation(VERTICAL);
-        expanded.setPadding(pad * 2, pad * 2, pad * 2, pad * 2);
+        header = caption("Licht-Effekte  ·  Vorschau    ﹀", 15, Color.WHITE);
+        header.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL);
+        header.setBackground(rounded(PINK, dp(22), 0));
+        header.setContentDescription("Licht-Effekte innerhalb der Original-Classic-Musikansicht öffnen");
+        header.setClickable(true);
+        addView(header, new LinearLayout.LayoutParams(-1, dp(46)));
+
         inlineSheet = new ScrollView(activity);
         inlineSheet.setFillViewport(false);
-        inlineSheet.addView(expanded);
+        content = new LinearLayout(activity);
+        content.setOrientation(VERTICAL);
+        content.setPadding(dp(4), dp(12), dp(4), dp(8));
+        content.setBackground(rounded(Color.WHITE, dp(18), 0));
+        inlineSheet.addView(content);
         inlineSheet.setVisibility(View.GONE);
-        addView(inlineSheet, new LinearLayout.LayoutParams(-1, detailsHeightPx, 0f));
-        entryButton.setOnClickListener(v -> {
-            if (inlineSheet.getVisibility() == View.VISIBLE) closeControlSheet();
-            else openControlSheet();
+        addView(inlineSheet, new LinearLayout.LayoutParams(-1, detailsHeightPx));
+        header.setOnClickListener(v -> {
+            if (inlineSheet.getVisibility() == View.VISIBLE) closeSheet();
+            else openSheet();
         });
 
-        status = new TextView(activity);
-        status.setText("Quelle wählen · keine Loft-DJ-Lampen freigegeben");
-        status.setContentDescription("Loft DJ Status innerhalb Classic Music");
-        expanded.addView(status);
+        TextView source = caption(
+            "Audioquelle und Start/Stopp: oben in Classic. Keine zweite Aufnahme.", 12, MUTED);
+        source.setContentDescription(
+            "Originale Classic-Musiksteuerung ist die einzige Audioquellen- und Wiedergabesteuerung");
+        content.addView(source);
 
-        sourceButton = new Button(activity);
-        sourceButton.setText("Quelle: Mikrofon");
-        sourceButton.setContentDescription("Analysequelle zwischen Mikrofon und internem Android-Audio wählen");
-        expanded.addView(sourceButton);
-        sourceHelp = new TextView(activity);
-        sourceHelp.setText("Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
-        expanded.addView(sourceHelp);
-        originalMusicSelectionStatus = new TextView(activity);
-        originalMusicSelectionObserved = ClassicOriginalMusicSelection.fresh();
-        originalGroupCountObserved = ClassicOriginalMusicSelection.originalGroupMemberCount();
-        originalMusicSelectionStatus.setText(
-            originalSelectionMessage(originalMusicSelectionObserved, originalGroupCountObserved));
+        TextView title = caption("Lichteffekt auswählen", 16, INK);
+        title.setPadding(0, dp(10), 0, dp(7));
+        content.addView(title);
+
+        HorizontalScrollView effectsScroll = new HorizontalScrollView(activity);
+        effectsScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout chips = new LinearLayout(activity);
+        chips.setOrientation(HORIZONTAL);
+        for (int i = 0; i < NAMES.length; i++) {
+            final int choice = i;
+            TextView chip = caption(NAMES[i], 14, INK);
+            chip.setGravity(Gravity.CENTER);
+            chip.setPadding(dp(15), dp(10), dp(15), dp(10));
+            chip.setClickable(true);
+            chip.setContentDescription("Effekt " + NAMES[i] + " als Vorschau auswählen");
+            chip.setOnClickListener(v -> selectScene(choice));
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
+            p.setMargins(0, 0, dp(7), 0);
+            chips.addView(chip, p);
+            choices[i] = chip;
+        }
+        effectsScroll.addView(chips);
+        content.addView(effectsScroll);
+
+        preview = new ClassicDjPatternPreviewView(activity);
+        LinearLayout.LayoutParams pv = new LinearLayout.LayoutParams(-1, dp(48));
+        pv.setMargins(0, dp(9), 0, dp(5));
+        content.addView(preview, pv);
+        preview.setContentDescription(
+            "Animierte theoretische Lichtfolge; keine echten Lampen, Audiodaten oder Gerätepositionen");
+
+        description = caption("", 13, INK);
+        content.addView(description);
+
+        originalMusicSelectionStatus = caption("", 12, MUTED);
+        originalMusicSelectionStatus.setPadding(0, dp(9), 0, 0);
         originalMusicSelectionStatus.setContentDescription(
-            "Lesende Classic-Geräteauswahl; noch keine Freigabe für Loft DJ Lampen");
-        expanded.addView(originalMusicSelectionStatus);
-        TextView zeroTargets = new TextView(activity);
-        zeroTargets.setText("Effekte wirken hier zunächst nur auf die Auswertung. " +
-            "Keine zusätzlichen Lampen freigegeben; Original-Musikfluss bleibt unabhängig.");
-        expanded.addView(zeroTargets);
+            "Lesende Original-Classic-Gruppenliste; keine autorisierte DJ-Auswahl");
+        content.addView(originalMusicSelectionStatus);
 
-        // These four bars display real FFT bands from the existing DSP.
-        // No made-up frequency bins, scanning, AudioRecord or lamp side effects.
-        liveFeedback = new TextView(activity);
-        liveFeedback.setText("PCM-Analyse noch nicht gestartet");
-        liveFeedback.setContentDescription("Tatsächlich gemessener Audiostatus");
-        expanded.addView(liveFeedback);
-        String[] labels = {"Bass", "Mitten", "Präsenz", "Höhen"};
-        for (int i = 0; i < labels.length; i++) {
-            TextView caption = new TextView(activity);
-            caption.setText(labels[i]);
-            expanded.addView(caption);
-            ProgressBar meter = new ProgressBar(activity, null,
-                android.R.attr.progressBarStyleHorizontal);
-            meter.setMax(100);
-            meter.setProgress(0);
-            meter.setContentDescription("Echtes FFT-Band " + labels[i]);
-            bandMeters[i] = meter;
-            expanded.addView(meter);
-        }
-        effectFeedback = new TextView(activity);
-        effectFeedback.setText("Vorschau: Spektrum · vier tatsächlich gemessene Frequenzbänder");
-        expanded.addView(effectFeedback);
-        effectMeter = new ProgressBar(activity, null,
-            android.R.attr.progressBarStyleHorizontal);
-        effectMeter.setMax(100);
-        effectMeter.setProgress(0);
-        effectMeter.setContentDescription(
-            "Nur berechnete Effektvorschau, keine Steuerung von Lampen");
-        expanded.addView(effectMeter);
+        stateNotice = caption(
+            "Nur Simulation – nicht mit der Original-Audiositzung oder Lampen verbunden.", 12, MUTED);
+        stateNotice.setPadding(0, dp(7), 0, 0);
+        content.addView(stateNotice);
 
-        // Two readable rows instead of four tightly packed action buttons.
-        LinearLayout actions = new LinearLayout(activity);
-        actions.setOrientation(HORIZONTAL);
-        startButton = new Button(activity);
-        startButton.setText("Analyse starten");
-        startButton.setAllCaps(false);
-        startButton.setContentDescription("Gewählte Audioquelle starten, ohne Lampen");
-        startButton.setOnClickListener(v -> startAnalysisOnly());
-        // Listener registration must follow construction of both final views;
-        // otherwise javac correctly rejects uninitialized captured fields.
-        sourceButton.setOnClickListener(v -> {
-            if (locallyStarted || ClassicDjService.hasActiveSession()) {
-                status.setText("Quelle nur nach Stopp wechseln");
-                return;
-            }
-            preferInternal = !preferInternal;
-            sourceButton.setText(preferInternal ?
-                "Quelle: Internes Android-Audio" : "Quelle: Mikrofon");
-            sourceHelp.setText(preferInternal ?
-                "Interner Ton: Start öffnet die Android-Bildschirmfreigabe. " +
-                "Wir verarbeiten nur erlaubtes App-Audio, kein Bildschirmvideo. " +
-                "Eine Freigabe ist pro Sitzung erforderlich." :
-                "Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
-            startButton.setText(preferInternal ? "Audio freigeben" : "Analyse starten");
-            entryButton.setText("Licht & Musik");
-        });
-        actions.addView(startButton, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        LinearLayout settings = new LinearLayout(activity);
-        settings.setOrientation(HORIZONTAL);
-        sceneButton = new TextView(activity);
-        sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
-        settings.addView(sceneButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        // Readable two-column choices within the OEM MusicActivity viewport.
-        // No second scene database or lamp selection.
-        for (int rowIndex = 0; rowIndex < 4; rowIndex++) {
-            if (rowIndex == 0 || rowIndex == 2) {
-                TextView heading = new TextView(activity);
-                heading.setText(rowIndex == 0 ? "Musikreaktionen" : "Räumliche Lichtszene");
-                expanded.addView(heading);
-            }
-            LinearLayout choices = new LinearLayout(activity);
-            choices.setOrientation(HORIZONTAL);
-            int first = rowIndex * 2;
-            int limit = Math.min(first + 2, SCENES.length);
-            for (int index = first; index < limit; index++) {
-                final int selectedScene = index;
-                Button choice = new Button(activity);
-                choice.setAllCaps(false);
-                choice.setOnClickListener(v -> selectScene(selectedScene));
-                sceneChoices[index] = choice;
-                choices.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
-            }
-            expanded.addView(choices);
-        }
-        refreshSceneChoices();
-
-        sceneParametersReadOnly = new TextView(activity);
-        sceneParametersReadOnly.setContentDescription(
-            "Effektparameter im Classic-Lichtszenenbereich bearbeiten");
-        expanded.addView(sceneParametersReadOnly);
-
-        gainButton = new Button(activity);
-        gainButton.setText("Empfindlichkeit: 1×");
-        gainButton.setOnClickListener(v -> {
-            gain = (gain + 1) % GAINS.length;
-            gainButton.setText("Empfindlichkeit: " + GAINS[gain] + "×");
-            configureIfOwned();
-        });
-        settings.addView(gainButton, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        Button stop = new Button(activity);
-        stop.setText("Stopp");
-        stop.setContentDescription("Eigene Loft DJ Audioanalyse stoppen");
-        stop.setOnClickListener(v -> stopOwned());
-        actions.addView(stop, new LinearLayout.LayoutParams(0, -2, 1f));
-        expanded.addView(actions);
-        expanded.addView(settings);
-
-        // Pulse envelope and tempo settings now belong to the original Scene gallery.
+        // There is intentionally no sourceButton, startButton, stop button,
+        // second Play/Pause path or Android screen-capture consent in this view.
+        redraw();
     }
 
-    private void refreshSceneChoices() {
-        for (int i = 0; i < sceneChoices.length; i++) {
-            Button choice = sceneChoices[i];
-            if (choice == null) continue;
-            boolean selected = i == scene;
-            choice.setText((selected ? "✓ " : "") + SCENE_LABELS[i]);
-            choice.setContentDescription(SCENE_LABELS[i] +
-                (selected ? ", ausgewählte Lichtszene" : ", Lichtszene auswählen"));
-        }
-    }
-
-    private void updateSceneParameterSummary() {
-        if (scene == 3) {
-            sceneParametersReadOnly.setText("Puls: " + (beatPulse ? "Beat" :
-                PULSE_TEMPOS[pulseTempo] + " BPM Timer") + " · " +
-                PULSE_SHAPE_LABELS[pulseShape] + " · Im Bereich Lichtszene bearbeiten");
-        } else if (scene >= 4) {
-            sceneParametersReadOnly.setText("Tempo " + SPATIAL_SPEEDS[spatialSpeedIndex] +
-                "% · " + (spatialReverse ? "Rückwärts" : "Vorwärts") +
-                " · Schweif " + SPATIAL_TRAILS[spatialTrailIndex] +
-                " · Helligkeit " + SPATIAL_RANGES[spatialRangeIndex][0] +
-                "–" + SPATIAL_RANGES[spatialRangeIndex][1] +
-                "% · Im Bereich Lichtszene bearbeiten");
-        } else {
-            sceneParametersReadOnly.setText("Wirkung im Classic-Lichtszenenbereich bearbeiten");
-        }
-    }
-
-    /** The original SceneFragment and MusicActivity share one transient scene model. */
-    private void publishSharedScene() {
-        ClassicSceneUiState.update(scene, spatialSpeedIndex, spatialReverse,
-            spatialTrailIndex, spatialRangeIndex);
-        ClassicSceneUiState.updateAudio(gain, beatPulse, pulseTempo, pulseShape);
-        observedSceneRevision = ClassicSceneUiState.revision();
-    }
-
-    private void syncSceneFromGallery() {
-        ClassicSceneUiState.Selection stored = ClassicSceneUiState.snapshot();
-        scene = stored.scene;
-        spatialSpeedIndex = stored.speedIndex;
-        spatialReverse = stored.reverse;
-        spatialTrailIndex = stored.trailIndex;
-        spatialRangeIndex = stored.rangeIndex;
-        gain = stored.gainIndex;
-        beatPulse = stored.beatPulse;
-        pulseTempo = stored.pulseTempoIndex;
-        pulseShape = stored.pulseShapeIndex;
-        gainButton.setText("Empfindlichkeit: " + GAINS[gain] + "×");
-        refreshSceneChoices();
-        sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
-        updateSceneParameterSummary();
-        observedSceneRevision = ClassicSceneUiState.revision();
-        renderLiveFeedback();
-    }
-
-    private void selectScene(int requested) {
-        if (requested < 0 || requested >= SCENES.length) return;
-        scene = requested;
-        publishSharedScene();
-        refreshSceneChoices();
-        sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
-        updateSceneParameterSummary();
-        effectFeedback.setText("Vorschau: " +
-            ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
-        renderLiveFeedback();
-        configureIfOwned();
-    }
-
-    /** Poll only this session's fresh source-local measurements. */
-    private void renderLiveFeedback() {
-        ClassicDjLiveFrame frame = ClassicDjService.frameForOwner(sessionOwner);
-        liveFeedback.setText(frame.summary());
-        float[] bands = frame.fresh() ? frame.bands() : new float[4];
-        for (int i = 0; i < bandMeters.length; i++) {
-            bandMeters[i].setProgress(Math.round(bands[i] * 100f));
-        }
-        effectFeedback.setText("Nur Vorschau · " +
-            ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
-        effectMeter.setProgress(ClassicDjEffectPreview.intensity(
-            SCENES[scene], frame, beatPulse, PULSE_TEMPOS[pulseTempo],
-            SystemClock.elapsedRealtime()));
-    }
-
-    /** No dialog or new Activity; the embedded view reserves OEM viewport space. */
-    private void openControlSheet() {
-        if (host.isFinishing() || host.isDestroyed() ||
-            inlineSheet.getVisibility() == View.VISIBLE) return;
-        inlineSheet.setVisibility(View.VISIBLE);
+    void setDockHeightListener(DockHeightListener callback) {
+        dockHeightListener = callback;
         notifyDockHeight();
     }
-    private void closeControlSheet() {
+
+    private void notifyDockHeight() {
+        if (dockHeightListener != null) dockHeightListener.onHeightChanged(
+            compactHeightPx + (inlineSheet.getVisibility() == View.VISIBLE ? detailsHeightPx : 0));
+    }
+
+    private void openSheet() {
+        if (host.isFinishing() || host.isDestroyed()) return;
+        if (inlineSheet.getVisibility() == View.VISIBLE) return;
+        inlineSheet.setVisibility(View.VISIBLE);
+        header.setText("Licht-Effekte  ·  Vorschau    ﹀");
+        notifyDockHeight();
+        redraw();
+    }
+
+    private void closeSheet() {
         if (inlineSheet.getVisibility() == View.GONE) return;
         inlineSheet.setVisibility(View.GONE);
         notifyDockHeight();
     }
 
-    public void onHostResumed() {
-        attached = true;
-        syncSceneFromGallery();
-        ClassicInternalAudioConsentActivity.Result result =
-            ClassicInternalAudioConsentActivity.takeResult();
-        boolean returnFromConsent = consentFlowPending && result != null;
-        if (result != null) consentFlowPending = false;
-        if (result != null && internalOwned && result.owner.equals(sessionOwner)) {
-            if (result.started) {
-                status.setText("Internes Audio freigegeben · Analyse startet");
-            } else {
-                locallyStarted = false;
-                internalOwned = false;
-                sessionOwner = null;
-                status.setText("Interne Android-Audiofreigabe nicht erteilt");
-            }
-        }
-        // A MediaProjection service may continue while the owner opens a
-        // separate music app. Only reattach the exact same-process owned session.
-        if (!locallyStarted) {
-            String owned = ClassicDjService.ownerForInternal();
-            if (owned != null) {
-                locallyStarted = true;
-                internalOwned = true;
-                preferInternal = true;
-                sessionOwner = owned;
-                sourceButton.setText("Quelle: Internes Android-Audio");
-                startButton.setText("Audio freigeben");
-                sourceHelp.setText(
-                    "Interner Ton: Start öffnet die Android-Bildschirmfreigabe. " +
-                    "Wir verarbeiten nur erlaubtes App-Audio, kein Bildschirmvideo. " +
-                    "Eine Freigabe ist pro Sitzung erforderlich.");
-            }
-        }
-        handler.removeCallbacks(refresh);
-        handler.post(refresh);
-        renderLiveFeedback();
-        if (returnFromConsent) openControlSheet();
+    private void selectScene(int index) {
+        if (index < 0 || index >= NAMES.length) return;
+        // Atomic revisioned shared scene UI (same original SceneFragment); no
+        // fabricated OEM scene record, remote effect or secondary database.
+        ClassicSceneUiState.Selection current = ClassicSceneUiState.snapshot();
+        if (!ClassicSceneUiState.update(index, current.speedIndex, current.reverse,
+                                        current.trailIndex, current.rangeIndex))
+            return;
+        redraw();
     }
 
-    /** Do not wait for network/device state or keep an orphaned analyzer alive. */
+    private void redraw() {
+        ClassicSceneUiState.Selection selected = ClassicSceneUiState.snapshot();
+        boolean changed = shownRevision != ClassicSceneUiState.revision() ||
+                          selected.scene != activeScene;
+        if (changed) {
+            activeScene = selected.scene;
+            shownRevision = ClassicSceneUiState.revision();
+            for (int i = 0; i < choices.length; i++) {
+                boolean active = i == activeScene;
+                TextView v = choices[i];
+                v.setBackground(rounded(active ? PINK : TINT, dp(18),
+                    active ? 0 : Color.rgb(255, 214, 233)));
+                v.setTextColor(active ? Color.WHITE : INK);
+                v.setText((active ? "✓ " : "") + NAMES[i]);
+                v.setSelected(active);
+            }
+            preview.setMode(selected.scene, selected.beatPulse,
+                new int[]{60, 90, 120, 150, 180}[selected.pulseTempoIndex]);
+            String explanation = ClassicDjEffectPreview.explanation(
+                ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse);
+            description.setText(explanation + " · Vorschau ohne Lampen");
+            header.setText("Licht-Effekte  ·  " + NAMES[selected.scene] + "    ﹀");
+            stateNotice.setText(selected.scene < 4 && (selected.scene != 3 || selected.beatPulse)
+                ? "Kein Original-Audiositzungsbeleg – reaktive Analyse ist noch nicht verbunden."
+                : "Zeitbasierte Bewegungsvorschau – keine Lampe wird angesteuert.");
+        }
+
+        boolean witnessed = ClassicOriginalMusicSelection.fresh();
+        int members = ClassicOriginalMusicSelection.originalGroupMemberCount();
+        if (shownDeviceWitness != witnessed || shownGroupCount != members) {
+            shownDeviceWitness = witnessed;
+            shownGroupCount = members;
+            originalMusicSelectionStatus.setText(
+                !witnessed ? "Original-Classic-Gruppenwahl noch nicht bestätigt." :
+                members < 0 ? "Original-Gerätekontext gelesen · Gruppenzuordnung offen." :
+                "Zuletzt gelesene Original-Classic-Gruppenliste: " + members +
+                  " Mitglieder (keine bestätigte Auswahl).");
+        }
+        if (inlineSheet.getVisibility() == View.VISIBLE) preview.invalidate();
+    }
+
+    private final Runnable refresh = new Runnable() {
+        @Override public void run() {
+            if (!attached) return;
+            redraw();
+            handler.postDelayed(this,
+                inlineSheet.getVisibility() == View.VISIBLE ? 120L : 650L);
+        }
+    };
+
+    public void onHostResumed() {
+        attached = true;
+        handler.removeCallbacks(refresh);
+        handler.post(refresh);
+    }
+
     public void onHostPaused() {
         attached = false;
         handler.removeCallbacks(refresh);
-        // PlaybackCapture must remain alive while the foreground app plays
-        // permitted audio. Microphone analysis still stops with MusicActivity.
-        if (!internalOwned) stopOwned();
-        // Collapse only our embedded controls while the original host pauses.
-        closeControlSheet();
-    }
-
-    private void startAnalysisOnly() {
-        if (locallyStarted) {
-            status.setText("Analyse bereits angefordert · bei Bedarf zuerst Stopp");
-            return;
-        }
-        if (ClassicDjService.hasActiveSession() || ClassicDjService.isStopping()) {
-            status.setText("Vorherige DJ-Sitzung noch aktiv oder wird beendet");
-            return;
-        }
-        // Explicit button gesture, no automatic start on a later permission result.
-        // Android owns the prompt; do not override any OEM Activity callback.
-        if (Build.VERSION.SDK_INT >= 23 &&
-                host.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
-                    PackageManager.PERMISSION_GRANTED) {
-            if (!micPermissionRequested) {
-                micPermissionRequested = true;
-                try {
-                    host.requestPermissions(
-                        new String[]{Manifest.permission.RECORD_AUDIO},
-                        MICROPHONE_PERMISSION_REQUEST);
-                    status.setText("Mikrofon erlauben · danach Analyse erneut tippen");
-                } catch (RuntimeException blocked) {
-                    status.setText("Mikrofon-Anfrage nicht möglich · App-Berechtigungen prüfen");
-                }
-            } else {
-                status.setText("Mikrofon noch nicht erlaubt · App-Berechtigungen prüfen");
-            }
-            return;
-        }
-        String newOwner = java.util.UUID.randomUUID().toString();
-        Intent intent = new Intent(host, preferInternal ?
-            ClassicInternalAudioConsentActivity.class : ClassicDjService.class);
-        intent.setAction(preferInternal ?
-            ClassicDjService.ACTION_INTERNAL : ClassicDjService.ACTION_MIC);
-        intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, newOwner);
-        intent.putExtra(ClassicDjActivity.EXTRA_SELECTED_IPS, new String[0]);
-        intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
-        intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
-        addPulseSettings(intent);
-        addSpatialSettings(intent);
-        try {
-            if (preferInternal) {
-                if (Build.VERSION.SDK_INT < 29) {
-                    status.setText("Internes Audio erfordert Android 10 oder neuer");
-                    return;
-                }
-                consentFlowPending = true;
-                host.startActivity(intent); // transient Android consent broker; no DJ screen
-            } else if (Build.VERSION.SDK_INT >= 26) {
-                host.startForegroundService(intent);
-            } else {
-                host.startService(intent);
-            }
-            sessionOwner = newOwner;
-            internalOwned = preferInternal;
-            locallyStarted = true;
-            requestedAtMs = SystemClock.elapsedRealtime();
-            status.setText(preferInternal ?
-                "Interne Android-Audiofreigabe angefordert · keine Lampen" :
-                "Mikrofonanalyse angefordert · keine Lampenbefehle");
-        } catch (RuntimeException error) {
-            consentFlowPending = false;
-            status.setText("Analyse nicht gestartet · keine Lampenbefehle");
-        }
-    }
-
-    private void addPulseSettings(Intent intent) {
-        // The existing OEM picker remains the color authority.
-        intent.putExtra(ClassicDjService.EXTRA_PULSE_MODE, beatPulse ? "BEAT" : "TIMER");
-        intent.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) PULSE_TEMPOS[pulseTempo]);
-        int[] envelope = PULSE_SHAPES[pulseShape];
-        intent.putExtra(ClassicDjService.EXTRA_PULSE_MIN, (double) envelope[0]);
-        intent.putExtra(ClassicDjService.EXTRA_PULSE_MAX, (double) envelope[1]);
-        intent.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, (double) envelope[2]);
-        intent.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, (double) envelope[3]);
-        intent.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, PULSE_GAMMAS[pulseShape]);
-    }
-
-    private void addSpatialSettings(Intent intent) {
-        // The Service reads these as doubles, validates the complete snapshot
-        // and applies it ONCE. Do not supply a fake original picker colour.
-        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_SPEED,
-            (double) SPATIAL_SPEEDS[spatialSpeedIndex]);
-        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_REVERSE, spatialReverse);
-        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_TRAIL,
-            (double) SPATIAL_TRAILS[spatialTrailIndex]);
-        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_MIN,
-            (double) SPATIAL_RANGES[spatialRangeIndex][0]);
-        intent.putExtra(ClassicDjService.EXTRA_SPATIAL_MAX,
-            (double) SPATIAL_RANGES[spatialRangeIndex][1]);
-    }
-
-    private void configureIfOwned() {
-        // Every explicit UI change updates one shared, transient scene model,
-        // even when audio is stopped. Never auto-start a source or lamp.
-        publishSharedScene();
-        if (!locallyStarted || sessionOwner == null ||
-                !ClassicDjService.hasActiveSession()) return;
-        Intent intent = new Intent(host, ClassicDjService.class);
-        intent.setAction(ClassicDjService.ACTION_CONFIG);
-        intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, sessionOwner);
-        intent.putExtra(ClassicDjService.EXTRA_GAIN, GAINS[gain]);
-        intent.putExtra(ClassicDjService.EXTRA_SCENE, SCENES[scene]);
-        addPulseSettings(intent);
-        addSpatialSettings(intent);
-        try {
-            host.startService(intent);
-        } catch (RuntimeException error) {
-            status.setText("Einstellung nicht übernommen");
-        }
-    }
-
-    private void stopOwned() {
-        if (!locallyStarted) return;
-        String oldOwner = sessionOwner;
-        locallyStarted = false;
-        internalOwned = false;
-        sessionOwner = null;
-        if (oldOwner == null) return;
-        // This same-process path fences an already-running session before
-        // Android restricts a background startService on Activity pause.
-        if (!ClassicDjService.stopOwnedFromUi(oldOwner)) {
-            // Service startup may still be queued; enqueue a generation-matched
-            // stop rather than blindly terminating another Activity's service.
-            Intent intent = new Intent(host, ClassicDjService.class);
-            intent.setAction(ClassicDjService.ACTION_STOP);
-            intent.putExtra(ClassicDjService.EXTRA_UI_OWNER, oldOwner);
-            try {
-                host.startService(intent);
-            } catch (RuntimeException blockedInBackground) {
-                status.setText("Stopp unbestätigt · Sitzungsstatus prüfen");
-                return;
-            }
-        }
-        status.setText("Analyse wird beendet · Classic-Musik unverändert");
-        entryButton.setText("Licht & Musik");
+        closeSheet(); // original player controls remain visible on return
     }
 }
