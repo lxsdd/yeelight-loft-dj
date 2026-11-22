@@ -52,6 +52,47 @@ class SceneGalleryHookTest(unittest.TestCase):
                 with self.assertRaises(GateFailure):
                     hook.patch_text(broken)
 
+    def test_shared_scene_model_is_actual_jdk_executable(self):
+        import shutil
+        import subprocess
+        if not shutil.which("javac") or not shutil.which("java"):
+            self.skipTest("Java toolchain not installed")
+        source = Path(__file__).resolve().parents[1] / (
+            "bridge/src/io/github/lxsdd/yeelightclassicdj/ui/ClassicSceneUiState.java")
+        harness = r'''
+package io.github.lxsdd.yeelightclassicdj.ui;
+public class SceneStateHarness {
+    public static void main(String[] args) {
+        ClassicSceneUiState.Selection initial = ClassicSceneUiState.snapshot();
+        if (initial.scene != 0 || initial.gainIndex != 1) throw new AssertionError("default");
+        if (!ClassicSceneUiState.update(5, 4, true, 1, 2)) throw new AssertionError("gallery");
+        ClassicSceneUiState.Selection gallery = ClassicSceneUiState.snapshot();
+        if (gallery.scene != 5 || gallery.speedIndex != 4 || !gallery.reverse)
+            throw new AssertionError("gallery state");
+        if (!ClassicSceneUiState.updateAudio(3, false, 4, 0))
+            throw new AssertionError("music state");
+        ClassicSceneUiState.Selection music = ClassicSceneUiState.snapshot();
+        if (music.scene != 5 || music.gainIndex != 3 || music.beatPulse ||
+            music.pulseTempoIndex != 4 || music.pulseShapeIndex != 0)
+            throw new AssertionError("music state");
+        if (ClassicSceneUiState.update(20, 0, false, 0, 0) ||
+            ClassicSceneUiState.updateAudio(100, true, 0, 0))
+            throw new AssertionError("invalid state accepted");
+        ClassicSceneUiState.Selection after = ClassicSceneUiState.snapshot();
+        if (after.scene != 5 || after.gainIndex != 3)
+            throw new AssertionError("invalid state mutated owner");
+        if (gallery.scene != 5 || gallery.gainIndex != 1)
+            throw new AssertionError("immutable snapshot");
+    }
+}
+'''
+        with tempfile.TemporaryDirectory() as t:
+            helper = Path(t) / "SceneStateHarness.java"
+            helper.write_text(harness)
+            subprocess.run(["javac", "-d", t, str(source), str(helper)], check=True)
+            subprocess.run(["java", "-cp", t,
+                "io.github.lxsdd.yeelightclassicdj.ui.SceneStateHarness"], check=True)
+
     def test_staged_private_copy_only_and_idempotence(self):
         with tempfile.TemporaryDirectory() as t:
             path = Path(t) / hook.SOURCE_PATH
@@ -79,6 +120,11 @@ class OriginalGalleryProductionSourceTest(unittest.TestCase):
             self.assertIn("ClassicSceneUiState", txt)
         self.assertIn("ClassicSceneUiState.snapshot()", gallery)
         self.assertIn("syncSceneFromGallery();", music)
+        self.assertIn("ClassicSceneUiState.updateAudio(", music)
+        self.assertIn("ClassicDjService.ACTION_CONFIG", gallery)
+        self.assertIn("ClassicDjService.ownerForInternal()", gallery)
+        self.assertIn("ClassicDjService.EXTRA_SPATIAL_SPEED", gallery)
+        self.assertIn("ClassicDjService.EXTRA_PULSE_MODE", gallery)
         self.assertIn("publishSharedScene();", music)
         for forbidden in ("startTimedScene(", "set_power", "startForegroundService(", "new Dialog("):
             self.assertNotIn(forbidden, gallery)

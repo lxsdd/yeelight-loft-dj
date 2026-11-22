@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.content.Context;
+import android.content.Intent;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -157,7 +158,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
                 card.setOnClickListener(v -> {
                     ClassicSceneUiState.Selection old = ClassicSceneUiState.snapshot();
                     if (ClassicSceneUiState.update(index, old.speedIndex, old.reverse,
-                            old.trailIndex, old.rangeIndex)) redraw();
+                            old.trailIndex, old.rangeIndex)) onSceneEdited();
                 });
                 cards[i] = card;
                 row.addView(card, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -172,7 +173,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, (s.speedIndex + 1) %
                 ClassicSceneUiState.SPEEDS.length, s.reverse, s.trailIndex, s.rangeIndex);
-            redraw();
+            onSceneEdited();
         });
         row.addView(speed, new LinearLayout.LayoutParams(0, -2, 1f));
         direction = new Button(context);
@@ -181,7 +182,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, s.speedIndex, !s.reverse,
                 s.trailIndex, s.rangeIndex);
-            redraw();
+            onSceneEdited();
         });
         row.addView(direction, new LinearLayout.LayoutParams(0, -2, 1f));
         content.addView(row);
@@ -193,7 +194,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, s.speedIndex, s.reverse,
                 (s.trailIndex + 1) % ClassicSceneUiState.TRAILS.length, s.rangeIndex);
-            redraw();
+            onSceneEdited();
         });
         second.addView(trail, new LinearLayout.LayoutParams(0, -2, 1f));
         brightness = new Button(context);
@@ -202,7 +203,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, s.speedIndex, s.reverse,
                 s.trailIndex, (s.rangeIndex + 1) % ClassicSceneUiState.RANGES.length);
-            redraw();
+            onSceneEdited();
         });
         second.addView(brightness, new LinearLayout.LayoutParams(0, -2, 1f));
         content.addView(second);
@@ -211,6 +212,52 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             + "Lampen starten erst nach einer separat verifizierten Auswahl.");
         content.addView(info);
         redraw();
+    }
+
+    /**
+     * An explicit tap may update an already-owned internal-audio session.
+     * There is no OEM participant lookup and NO session/transport start.
+     * Every Intent goes through the original single owner-fenced service.
+     */
+    private void onSceneEdited() {
+        redraw();
+        String owner = ClassicDjService.ownerForInternal();
+        if (owner == null || !ClassicDjService.hasActiveSession()) return;
+        if (!CLONE_PACKAGE.equals(getContext().getPackageName())) return;
+        ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
+        Intent config = new Intent(getContext(), ClassicDjService.class);
+        config.setAction(ClassicDjService.ACTION_CONFIG);
+        config.putExtra(ClassicDjService.EXTRA_UI_OWNER, owner);
+        config.putExtra(ClassicDjService.EXTRA_SCENE,
+            ClassicSceneUiState.SCENES[s.scene]);
+        double[] gains = {0.5, 1.0, 2.0, 4.0};
+        int[] tempos = {60, 90, 120, 150, 180};
+        double[] gammas = {2.2, 1.2, 2.0};
+        double[][] shapes = {{12, 65, 160, 900}, {8, 100, 70, 330},
+                             {12, 90, 90, 600}};
+        config.putExtra(ClassicDjService.EXTRA_GAIN, gains[s.gainIndex]);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_MODE,
+            s.beatPulse ? "BEAT" : "TIMER");
+        config.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) tempos[s.pulseTempoIndex]);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_MIN, shapes[s.pulseShapeIndex][0]);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_MAX, shapes[s.pulseShapeIndex][1]);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, shapes[s.pulseShapeIndex][2]);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, shapes[s.pulseShapeIndex][3]);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, gammas[s.pulseShapeIndex]);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_SPEED,
+            (double) ClassicSceneUiState.SPEEDS[s.speedIndex]);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_REVERSE, s.reverse);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_TRAIL,
+            (double) ClassicSceneUiState.TRAILS[s.trailIndex]);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_MIN,
+            (double) ClassicSceneUiState.RANGES[s.rangeIndex][0]);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_MAX,
+            (double) ClassicSceneUiState.RANGES[s.rangeIndex][1]);
+        try {
+            getContext().startService(config);
+        } catch (RuntimeException ignored) {
+            note.setText("Szenenwahl gespeichert · laufende Audioanalyse nicht aktualisiert");
+        }
     }
 
     private void redraw() {

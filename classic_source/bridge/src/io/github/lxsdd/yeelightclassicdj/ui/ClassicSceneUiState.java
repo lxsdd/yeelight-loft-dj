@@ -18,24 +18,32 @@ final class ClassicSceneUiState {
 
     static final class Selection {
         final int scene, speedIndex, trailIndex, rangeIndex;
-        final boolean reverse;
+        final boolean reverse, beatPulse;
+        final int gainIndex, pulseTempoIndex, pulseShapeIndex;
         Selection(int scene, int speedIndex, boolean reverse,
-                  int trailIndex, int rangeIndex) {
+                  int trailIndex, int rangeIndex, int gainIndex,
+                  boolean beatPulse, int pulseTempoIndex, int pulseShapeIndex) {
             this.scene = scene;
             this.speedIndex = speedIndex;
             this.reverse = reverse;
             this.trailIndex = trailIndex;
             this.rangeIndex = rangeIndex;
+            this.gainIndex = gainIndex;
+            this.beatPulse = beatPulse;
+            this.pulseTempoIndex = pulseTempoIndex;
+            this.pulseShapeIndex = pulseShapeIndex;
         }
     }
 
-    private static Selection current = new Selection(0, 2, false, 2, 0);
+    private static Selection current =
+        new Selection(0, 2, false, 2, 0, 1, true, 2, 2);
     private ClassicSceneUiState() {}
 
     static synchronized Selection snapshot() {
         Selection v = current;
         return new Selection(v.scene, v.speedIndex, v.reverse,
-            v.trailIndex, v.rangeIndex);
+            v.trailIndex, v.rangeIndex, v.gainIndex, v.beatPulse,
+            v.pulseTempoIndex, v.pulseShapeIndex);
     }
 
     static synchronized boolean update(int scene, int speedIndex,
@@ -44,7 +52,21 @@ final class ClassicSceneUiState {
             speedIndex < 0 || speedIndex >= SPEEDS.length ||
             trailIndex < 0 || trailIndex >= TRAILS.length ||
             rangeIndex < 0 || rangeIndex >= RANGES.length) return false;
-        current = new Selection(scene, speedIndex, reverse, trailIndex, rangeIndex);
+        Selection old = current;
+        current = new Selection(scene, speedIndex, reverse, trailIndex, rangeIndex,
+            old.gainIndex, old.beatPulse, old.pulseTempoIndex, old.pulseShapeIndex);
+        return true;
+    }
+
+    static synchronized boolean updateAudio(int gainIndex, boolean beatPulse,
+                                            int pulseTempoIndex, int pulseShapeIndex) {
+        if (gainIndex < 0 || gainIndex >= 4 || pulseTempoIndex < 0 ||
+            pulseTempoIndex >= 5 || pulseShapeIndex < 0 || pulseShapeIndex >= 3)
+            return false;
+        Selection old = current;
+        current = new Selection(old.scene, old.speedIndex, old.reverse,
+            old.trailIndex, old.rangeIndex, gainIndex, beatPulse,
+            pulseTempoIndex, pulseShapeIndex);
         return true;
     }
 }

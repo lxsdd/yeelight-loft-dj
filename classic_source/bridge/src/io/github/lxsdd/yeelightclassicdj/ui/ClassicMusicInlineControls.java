@@ -414,6 +414,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private void publishSharedScene() {
         ClassicSceneUiState.update(scene, spatialSpeedIndex, spatialReverse,
             spatialTrailIndex, spatialRangeIndex);
+        ClassicSceneUiState.updateAudio(gain, beatPulse, pulseTempo, pulseShape);
     }
 
     private void syncSceneFromGallery() {
@@ -423,6 +424,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         spatialReverse = stored.reverse;
         spatialTrailIndex = stored.trailIndex;
         spatialRangeIndex = stored.rangeIndex;
+        gain = stored.gainIndex;
+        beatPulse = stored.beatPulse;
+        pulseTempo = stored.pulseTempoIndex;
+        pulseShape = stored.pulseShapeIndex;
+        gainButton.setText("Empfindlichkeit: " + GAINS[gain] + "×");
+        pulseModeButton.setText(beatPulse ? "Puls: Beat" : "Puls: Timer");
+        pulseTempoButton.setText(PULSE_TEMPOS[pulseTempo] + " BPM");
+        pulseTempoButton.setEnabled(!beatPulse);
+        pulseShapeButton.setText("Puls: " + PULSE_SHAPE_LABELS[pulseShape]);
         refreshSceneChoices();
         sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
         spatialControls.setVisibility(scene >= 4 ? View.VISIBLE : View.GONE);
@@ -619,6 +629,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     private void configureIfOwned() {
+        // Every explicit UI change updates one shared, transient scene model,
+        // even when audio is stopped. Never auto-start a source or lamp.
+        publishSharedScene();
         if (!locallyStarted || sessionOwner == null ||
                 !ClassicDjService.hasActiveSession()) return;
         Intent intent = new Intent(host, ClassicDjService.class);
