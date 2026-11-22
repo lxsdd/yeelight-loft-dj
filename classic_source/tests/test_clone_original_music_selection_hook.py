@@ -50,7 +50,10 @@ class OriginalMusicSelectionHookTest(unittest.TestCase):
 
     def test_high_register_keeps_exact_original_register(self):
         changed = hook.patch_text(ORIGINAL.replace(
-            "move-result-object v2", "move-result-object v19", 1
+            "Lcom/yeelight/yeelib/device/base/c;->G()Ljava/lang/String;\n"
+            "    move-result-object v2",
+            "Lcom/yeelight/yeelib/device/base/c;->G()Ljava/lang/String;\n"
+            "    move-result-object v19", 1
         ))
         self.assertIn("{v19 .. v19}", changed)
         self.assertNotIn(".locals 5", changed)
