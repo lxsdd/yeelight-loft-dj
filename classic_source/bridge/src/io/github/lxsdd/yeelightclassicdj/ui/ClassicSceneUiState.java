@@ -35,9 +35,13 @@ final class ClassicSceneUiState {
         }
     }
 
+    private static long revision;
     private static Selection current =
         new Selection(0, 2, false, 2, 0, 1, true, 2, 2);
     private ClassicSceneUiState() {}
+
+    /** Monotonic in-process UI-change marker, not a persisted OEM scene ID. */
+    static synchronized long revision() { return revision; }
 
     static synchronized Selection snapshot() {
         Selection v = current;
@@ -55,6 +59,7 @@ final class ClassicSceneUiState {
         Selection old = current;
         current = new Selection(scene, speedIndex, reverse, trailIndex, rangeIndex,
             old.gainIndex, old.beatPulse, old.pulseTempoIndex, old.pulseShapeIndex);
+        revision++;
         return true;
     }
 
@@ -67,6 +72,7 @@ final class ClassicSceneUiState {
         current = new Selection(old.scene, old.speedIndex, old.reverse,
             old.trailIndex, old.rangeIndex, gainIndex, beatPulse,
             pulseTempoIndex, pulseShapeIndex);
+        revision++;
         return true;
     }
 }
