@@ -90,6 +90,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private boolean beatPulse = true;
     private int scene = 0;
     private int gain = 1;
+    private long observedSceneRevision = -1L;
     private boolean locallyStarted = false;
     private String sessionOwner;
     private long requestedAtMs;
@@ -122,6 +123,11 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                         "Mikrofonanalyse") + " wird vorbereitet · keine Lampenbefehle");
                 }
             }
+            // A SceneFragment edit can occur while an internal-audio session
+            // remains foreground-owned. Refresh visible controls on the real
+            // MusicActivity, without implicitly starting or reconfiguring audio.
+            if (ClassicSceneUiState.revision() != observedSceneRevision)
+                syncSceneFromGallery();
             // Genuine FFT/beat-derived data, never synthetic device state.
             renderLiveFeedback();
             handler.postDelayed(this, 650L);
@@ -415,6 +421,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         ClassicSceneUiState.update(scene, spatialSpeedIndex, spatialReverse,
             spatialTrailIndex, spatialRangeIndex);
         ClassicSceneUiState.updateAudio(gain, beatPulse, pulseTempo, pulseShape);
+        observedSceneRevision = ClassicSceneUiState.revision();
     }
 
     private void syncSceneFromGallery() {
@@ -439,6 +446,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
         pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
         updateSpatialLabels();
+        observedSceneRevision = ClassicSceneUiState.revision();
         renderLiveFeedback();
     }
 
