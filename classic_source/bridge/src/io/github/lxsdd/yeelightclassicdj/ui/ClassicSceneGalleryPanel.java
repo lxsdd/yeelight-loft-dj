@@ -29,6 +29,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final ScrollView details;
     private final Button[] cards = new Button[ClassicSceneUiState.SCENES.length];
     private final Button speed, direction, trail, brightness;
+    private final LinearLayout spatialEditor, pulseEditor;
+    private final Button pulseMode, pulseTempo, pulseShape;
     private final TextView note;
     private static final String[] EXPLANATIONS = {
         "Frequenzbänder aus der Audioanalyse",
@@ -185,6 +187,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             }
             content.addView(row);
         }
+        spatialEditor = new LinearLayout(context);
+        spatialEditor.setOrientation(VERTICAL);
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(HORIZONTAL);
         speed = new Button(context);
@@ -205,7 +209,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             onSceneEdited();
         });
         row.addView(direction, new LinearLayout.LayoutParams(0, -2, 1f));
-        content.addView(row);
+        spatialEditor.addView(row);
         LinearLayout second = new LinearLayout(context);
         second.setOrientation(HORIZONTAL);
         trail = new Button(context);
@@ -226,7 +230,42 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             onSceneEdited();
         });
         second.addView(brightness, new LinearLayout.LayoutParams(0, -2, 1f));
-        content.addView(second);
+        spatialEditor.addView(second);
+        content.addView(spatialEditor);
+
+        pulseEditor = new LinearLayout(context);
+        pulseEditor.setOrientation(VERTICAL);
+        LinearLayout pulseRow = new LinearLayout(context);
+        pulseRow.setOrientation(HORIZONTAL);
+        pulseMode = new Button(context);
+        pulseMode.setAllCaps(false);
+        pulseMode.setContentDescription("Puls zwischen Beat und Timer umschalten");
+        pulseMode.setOnClickListener(v -> {
+            ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
+            if (ClassicSceneUiState.updateAudio(s.gainIndex, !s.beatPulse,
+                    s.pulseTempoIndex, s.pulseShapeIndex)) onSceneEdited();
+        });
+        pulseRow.addView(pulseMode, new LinearLayout.LayoutParams(0, -2, 1f));
+        pulseTempo = new Button(context);
+        pulseTempo.setAllCaps(false);
+        pulseTempo.setContentDescription("Zeitgesteuertes Puls-Tempo einstellen");
+        pulseTempo.setOnClickListener(v -> {
+            ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
+            if (ClassicSceneUiState.updateAudio(s.gainIndex, s.beatPulse,
+                    (s.pulseTempoIndex + 1) % 5, s.pulseShapeIndex)) onSceneEdited();
+        });
+        pulseRow.addView(pulseTempo, new LinearLayout.LayoutParams(0, -2, 1f));
+        pulseEditor.addView(pulseRow);
+        pulseShape = new Button(context);
+        pulseShape.setAllCaps(false);
+        pulseShape.setContentDescription("Pulsform wechseln");
+        pulseShape.setOnClickListener(v -> {
+            ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
+            if (ClassicSceneUiState.updateAudio(s.gainIndex, s.beatPulse,
+                    s.pulseTempoIndex, (s.pulseShapeIndex + 1) % 3)) onSceneEdited();
+        });
+        pulseEditor.addView(pulseShape);
+        content.addView(pulseEditor);
         TextView info = new TextView(context);
         info.setText("Szenenparameter gelten auch im originalen Musikbereich. "
             + "Lampen starten erst nach einer separat verifizierten Auswahl.");
@@ -290,6 +329,14 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             cards[i].setContentDescription(ClassicSceneUiState.LABELS[i] +
                 (i == s.scene ? ", ausgewählt" : ", Lichtszene wählen"));
         }
+        spatialEditor.setVisibility(s.scene >= 4 ? View.VISIBLE : View.GONE);
+        pulseEditor.setVisibility(s.scene == 3 ? View.VISIBLE : View.GONE);
+        pulseMode.setText(s.beatPulse ? "Puls: Beat" : "Puls: Timer");
+        int[] pulseTempos = {60, 90, 120, 150, 180};
+        String[] pulseShapes = {"Sanft", "Kräftig", "Normal"};
+        pulseTempo.setText(pulseTempos[s.pulseTempoIndex] + " BPM");
+        pulseTempo.setEnabled(!s.beatPulse);
+        pulseShape.setText("Pulsform: " + pulseShapes[s.pulseShapeIndex]);
         speed.setText("Tempo " + ClassicSceneUiState.SPEEDS[s.speedIndex] + "%");
         direction.setText(s.reverse ? "Rückwärts" : "Vorwärts");
         trail.setText("Schweif " + ClassicSceneUiState.TRAILS[s.trailIndex]);
