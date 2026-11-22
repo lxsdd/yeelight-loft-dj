@@ -28,7 +28,10 @@ class NativePulseControlsTest(unittest.TestCase):
             self.assertNotIn(forbidden, INLINE)
         self.assertIn("Audioquelle und Start/Stopp: oben in Classic", INLINE)
         self.assertIn("preview.setMode(selected.scene, selected.beatPulse,", INLINE)
-        self.assertIn("Kein Original-Audiositzungsbeleg", INLINE)
+        self.assertIn("ClassicOriginalMusicAudioSignal.snapshot()", INLINE)
+        self.assertIn("preview.setOriginalFrame(audio)", INLINE)
+        # Only actual OEM audio events may claim a measured signal.
+        self.assertIn("if (audio.fresh)", INLINE)
         self.assertIn("if (!ips.isEmpty())", SERVICE)
         self.assertIn("target.applySceneSettings(new DjRuntime.SceneSettings(", SERVICE)
         self.assertIn("ClassicPulseScene.Options(", RUNTIME)
