@@ -372,8 +372,12 @@ public final class ClassicDjEntryProvider extends ContentProvider
         MusicDockLease lease = musicDocks.remove(a);
         if (lease != null) lease.detach();
         // A previous host must not invalidate a newer configuration-change host.
-        if (observedMusicHost.get() == a)
+        if (observedMusicHost.get() == a) {
             observedMusicHost = new WeakReference<>(null);
+            // Original selection is a transient read-only witness, not a
+            // transferable authorization from a destroyed MusicActivity.
+            ClassicOriginalMusicSelection.clear();
+        }
     }
 
     // No queryable state or remote control surface. Manifest exported=false.
