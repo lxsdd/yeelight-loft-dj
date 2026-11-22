@@ -48,10 +48,11 @@ class ClassicPlaybackContract(unittest.TestCase):
         self.assertIn("resultCode != RESULT_OK", CONSENT)
         self.assertIn("ClassicDjService.ACTION_INTERNAL", CONSENT)
         self.assertIn("EXTRA_CONSENT_DATA", CONSENT)
-        self.assertIn("host.startActivity(intent)", INLINE)
-        self.assertIn("sourceButton.setOnClickListener", INLINE)
-        self.assertIn("if (!internalOwned) stopOwned()", INLINE)
-        self.assertIn("ClassicDjService.ownerForInternal()", INLINE)
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", INLINE)
+        self.assertNotIn("host.startActivity(", INLINE)
+        self.assertNotIn("sourceButton", INLINE)
+        self.assertNotIn("stopOwned(", INLINE)
+        self.assertIn("ownerForInternal()", SERVICE)
         for denied in ("pm grant", "set_power", "set_music", "startDiscovery"):
             self.assertNotIn(denied, CONSENT)
 

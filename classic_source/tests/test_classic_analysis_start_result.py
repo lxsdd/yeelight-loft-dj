@@ -64,30 +64,25 @@ class ClassicAnalysisStartResultTest(unittest.TestCase):
             self.assertEqual(executed.returncode, 0, executed.stderr)
             self.assertIn("PASS Classic analysis", executed.stdout)
 
-    def test_real_ui_displays_exact_owner_failure_and_allows_explicit_retry(self):
+    def test_owner_failures_are_fenced_in_private_service_not_original_music(self):
         ui = (UI / "ClassicMusicInlineControls.java").read_text("utf-8")
         service = (UI / "ClassicDjService.java").read_text("utf-8")
-        self.assertIn("ClassicDjService.startFailureForOwner(sessionOwner)", ui)
-        self.assertIn("locallyStarted = false;", ui)
-        self.assertIn("sessionOwner = null;", ui)
-        self.assertIn("requestedAtMs = SystemClock.elapsedRealtime();", ui)
-        self.assertIn("Analyse-Start nicht bestätigt", ui)
-        self.assertIn("ClassicDjService.isStopping()", ui)
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", ui)
+        for forbidden in ("startFailureForOwner(", "startForegroundService(",
+                          "host.startService(", "startAnalysisOnly(",
+                          "locallyStarted", "sessionOwner", "startButton"):
+            self.assertNotIn(forbidden, ui)
         self.assertIn("startResults.begin(requestedOwner);", service)
         self.assertIn("startResults.fail(completedOwner, finalState);", service)
         self.assertIn("startResults.clear(completedOwner);", service)
         self.assertIn("sessionFence.cancel();", service)
 
-    def test_microphone_prompt_requires_explicit_tap_never_starts_on_permission_callback(self):
+    def test_original_player_audio_permission_not_duplicated(self):
         ui = (UI / "ClassicMusicInlineControls.java").read_text("utf-8")
-        self.assertIn("host.checkSelfPermission(Manifest.permission.RECORD_AUDIO)", ui)
-        self.assertIn("host.requestPermissions(", ui)
-        self.assertIn("MICROPHONE_PERMISSION_REQUEST", ui)
-        self.assertIn("micPermissionRequested = true;", ui)
-        self.assertNotIn("onRequestPermissionsResult(", ui)
-        self.assertNotIn("set_power", ui)
-        self.assertNotIn("set_music", ui)
-        self.assertIn("new String[0]", ui)
+        for forbidden in ("requestPermissions(", "MICROPHONE_PERMISSION_REQUEST",
+                          "onRequestPermissionsResult(", "new Intent(",
+                          "new String[0]", "set_power", "set_music"):
+            self.assertNotIn(forbidden, ui)
 
     def test_mic_start_failure_is_classified_at_real_runtime_and_service_boundary(self):
         interface = (ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj/runtime/DjRuntime.java").read_text("utf-8")
