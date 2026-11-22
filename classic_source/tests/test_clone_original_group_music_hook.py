@@ -37,6 +37,18 @@ ENTRY = """
     move-result-object v4
     return-void
 .end method
+.method protected onPause()V
+    .locals 2
+    invoke-virtual {v0}, Lcom/yeelight/yeelib/device/c;->J1()Ljava/util/List;
+    move-result-object v1
+    return-void
+.end method
+.method protected onResume()V
+    .locals 2
+    invoke-virtual {v0}, Lcom/yeelight/yeelib/device/c;->J1()Ljava/util/List;
+    move-result-object v1
+    return-void
+.end method
 """
 
 
@@ -49,7 +61,16 @@ class OriginalGroupObserverTests(unittest.TestCase):
                       changed)
         self.assertIn("move-result-object v23\n    invoke-static/range {v23 .. v23}, ",
                       changed)
-        self.assertEqual(changed.count("->J1()Ljava/util/List;"), 4)
+        self.assertEqual(changed.count("->J1()Ljava/util/List;"), 6)
+        for name in ("onPause()V", "onResume()V"):
+            self.assertEqual(
+                group._method(changed, name).group(),
+                group._method(ENTRY, name).group(),
+                "Original OEM lifecycle method changed",
+            )
+        self.assertEqual(
+            group._method(changed, "a0()V").group().count(group.ORIGINAL_MEMBERS), 4
+        )
         self.assertEqual(changed.count("->j0(Ljava/lang/String;)"), 1)
         self.assertEqual(changed.count(".locals 24"), 1)
         with self.assertRaises(GateFailure):
@@ -65,6 +86,12 @@ class OriginalGroupObserverTests(unittest.TestCase):
             ENTRY.replace("->J1()Ljava/util/List;", "->notMembers()Ljava/util/List;", 1),
             ENTRY.replace("move-result-object v7", "move-result v7"),
             ENTRY.replace("move-result-object v23", "move-result v23"),
+            ENTRY.replace(".method protected onPause()V", ".method protected onStop()V"),
+            ENTRY.replace(".method protected onResume()V", ".method protected onStart()V"),
+            ENTRY.replace("    move-result-object v1\n    return-void\n.end method\n",
+                          "    move-result-object v1\n    return-void\n.end method\n"
+                          "    invoke-virtual {v0}, Lcom/yeelight/yeelib/device/c;->J1()Ljava/util/List;\n"
+                          "    move-result-object v2\n", 1),
             ENTRY.replace("    return-void\n.end method",
                           "    invoke-virtual {v0}, Lcom/yeelight/yeelib/device/c;->J1()Ljava/util/List;\n    move-result-object v3\n    return-void\n.end method", 1),
             ENTRY.replace("    move-result-object v7",

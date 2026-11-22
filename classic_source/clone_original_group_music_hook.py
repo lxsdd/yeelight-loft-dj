@@ -78,9 +78,14 @@ def patch_text(source: str) -> str:
         raise GateFailure("CLASSIC_GROUP_ORIGINAL_ENTRY_ORDER_UNVERIFIED")
     member_method = _method(source, "a0()V")
     body = member_method.group()
-    # Atlas classes2.dex: exactly four original J1() reads in a0().
-    # One observation after the first read; later OEM reads stay untouched.
-    if body.count(ORIGINAL_MEMBERS) != 4:
+    # SHA-pinned private 3.5.4 atlas: J1() is called four times in a0(),
+    # once in onPause() and once in onResume(). Check ALL six callsites.
+    pause_body = _method(source, "onPause()V").group()
+    resume_body = _method(source, "onResume()V").group()
+    if (body.count(ORIGINAL_MEMBERS) != 4 or
+        pause_body.count(ORIGINAL_MEMBERS) != 1 or
+        resume_body.count(ORIGINAL_MEMBERS) != 1 or
+        source.count(ORIGINAL_MEMBERS) != 6):
         raise GateFailure("CLASSIC_GROUP_ORIGINAL_MEMBER_CHAIN_UNVERIFIED")
     first = _result_after_first(body, ORIGINAL_MEMBERS)
     key_call = (
@@ -104,7 +109,10 @@ def patch_text(source: str) -> str:
                changed[refreshed.end():])
     if (changed.count(ENTRY_BRIDGE) != 1 or
         changed.count(MEMBERS_BRIDGE) != 1 or
-        changed.count(ORIGINAL_MEMBERS) != 4 or
+        changed.count(ORIGINAL_MEMBERS) != 6 or
+        _method(changed, "a0()V").group().count(ORIGINAL_MEMBERS) != 4 or
+        _method(changed, "onPause()V").group() != pause_body or
+        _method(changed, "onResume()V").group() != resume_body or
         changed.count(ORIGINAL_GROUP_LOOKUP) != 1):
         raise GateFailure("CLASSIC_GROUP_ORIGINAL_RECHECK_FAILED")
     return changed
