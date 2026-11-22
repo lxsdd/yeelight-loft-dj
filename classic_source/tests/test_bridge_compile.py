@@ -397,6 +397,10 @@ public class TextView extends android.view.View {
  public void setTextColor(int color){} public void setGravity(int value){}
  public void setPadding(int a,int b,int c,int d){}
 }''',
+'android/view/Gravity.java': '''package android.view; public class Gravity {
+ public static final int TOP=48, BOTTOM=80, END=8388613;
+ public static final int CENTER_VERTICAL=16,CENTER_HORIZONTAL=1,CENTER=17;
+}''',
 'android/widget/HorizontalScrollView.java': '''package android.widget;
 public class HorizontalScrollView extends android.view.View {
  public HorizontalScrollView(android.content.Context c){super(c);}
