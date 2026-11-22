@@ -121,7 +121,10 @@ fun main() {
             check(runCatching { choreography.frame(mode,badIndex,14,10,.1,false) }.isFailure)
         }
         check(runCatching { choreography.frame(mode,0,0,10,.1,false) }.isFailure)
-        check(runCatching { choreography.frame(mode,0,15,10,.1,false) }.isFailure)
+        // 15 is now an ordinary valid fleet size, not a historical cap.
+        check(runCatching { choreography.frame(mode,0,15,10,.1,false) }.isSuccess)
+        check(runCatching { choreography.frame(mode,14,15,10,.1,false) }.isSuccess)
+        check(runCatching { choreography.frame(mode,15,15,10,.1,false) }.isFailure)
         check(runCatching { choreography.frame(mode,0,4,-1,.1,false) }.isFailure)
         for(bad in listOf(-1.0,Double.NaN,Double.POSITIVE_INFINITY,1.1)) {
             check(runCatching { choreography.frame(mode,0,4,10,bad,false) }.isFailure)
