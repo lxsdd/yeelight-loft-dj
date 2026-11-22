@@ -189,7 +189,9 @@ class CheckpointRuntime : DjRuntime {
 
     private fun startCapture(selectedLampIps: List<String>, listener: DjRuntime.Listener,
                              sourceInput: (() -> ClassicPcmCaptureSession.Input)?) {
-        require(selectedLampIps.size <= 4 && selectedLampIps.distinct().size == selectedLampIps.size)
+        // Every current and subsequently added explicitly selected lamp is eligible.
+        // Validation is per target; no arbitrary 4/14/other fleet-size ceiling.
+        require(selectedLampIps.distinct().size == selectedLampIps.size)
         require(selectedLampIps.all(ClassicYeelightMusicTransport::validLanIp))
         val independentScene = sourceInput == null
         synchronized(lock) {

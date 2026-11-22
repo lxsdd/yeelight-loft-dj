@@ -356,5 +356,63 @@ fun main() {
     check(runCatching {
         independent.startTimedScene(Context(), listOf("192.168.55.42"), Listener())
     }.isFailure)
+    // Real Android-independent runtime path, not only a pure geometry helper:
+    // an expanded explicitly selected fleet keeps one owned reverse session
+    // per lamp, without MIC/Visualizer capture for a timed scene or any
+    // fixed four/14-lamp restriction. No actual network I/O is performed.
+    for (fleetSize in listOf(5, 15, 33, 72)) {
+        val ids = (1..fleetSize).map { "192.168.61.$it" }
+        val fleetRuntime = CheckpointRuntime()
+        val fleetListener = Listener()
+        fleetRuntime.inputFactory = { error("Timed fleet must not open microphone") }
+        fleetRuntime.visualizerFactory = { error("Timed fleet must not open Visualizer") }
+        fleetRuntime.wifiAddress = { "192.168.0.12" }
+        fleetRuntime.clock = { System.nanoTime() / 1_000_000L }
+        fleetRuntime.idle = { Thread.sleep(4L) }
+        check(fleetRuntime.configure(1.0, "WAVE"))
+        val activeIds = ids.associateWith { false }.toMutableMap()
+        val startedIds = linkedSetOf<String>()
+        val stoppedIds = linkedSetOf<String>()
+        val renderedIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        fleetRuntime.transportFactory = { localIp, participants ->
+            check(localIp == "192.168.0.12" && participants == ids.toSet())
+            object : loftdj.classic.ClassicMusicCoordinator.Transport {
+                override fun readMusic(id: String): Boolean? = activeIds[id]
+                override fun requestStart(id: String): Boolean {
+                    check(id in ids && startedIds.add(id))
+                    activeIds[id] = true
+                    return true
+                }
+                override fun reverseConnected(id: String): Boolean = id in startedIds
+                override fun requestStop(id: String): Boolean {
+                    check(id in startedIds && stoppedIds.add(id))
+                    activeIds[id] = false
+                    return true
+                }
+                override fun closeReverse(id: String) {}
+                override fun sendReverseFrame(id: String, generation: Long,
+                    rgb: Int, brightness: Int): Boolean {
+                    check(id in startedIds && generation > 0 &&
+                        rgb in 0..0xFFFFFF && brightness in 1..100)
+                    renderedIds.add(id)
+                    return true
+                }
+            }
+        }
+        fleetRuntime.startTimedScene(Context(), ids, fleetListener)
+        check(fleetListener.states.contains("SCENE_TIMED_${fleetSize}_LAMPS"))
+        check(startedIds == ids.toSet())
+        var attempts = 0
+        while (renderedIds.size < fleetSize && attempts++ < 70) Thread.sleep(20L)
+        check(renderedIds == ids.toSet()) {
+            "Actual timed runtime did not render all $fleetSize selected peers"
+        }
+        fleetRuntime.stop()
+        check(stoppedIds == ids.toSet() && activeIds.values.none { it })
+        val priorFrames = renderedIds.size
+        Thread.sleep(40L)
+        check(renderedIds.size == priorFrames)
+    }
+    println("PASS dynamic 5/15/33/72 selected LAN peers through real timed runtime")
     println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")
 }

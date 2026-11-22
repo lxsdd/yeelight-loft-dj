@@ -33,7 +33,10 @@ class ClassicYeelightMusicTransport(
     private val sessions = peers.associateWith { Session() }
     init {
         require(localIp.isNotEmpty() && validLanIp(localIp)) { "Need an active private Wi-Fi IPv4 address" }
-        require(peers.isNotEmpty() && peers.size <= 4 && peers.all(::validLanIp) && peers.size == sessions.size)
+        // One reverse session per explicitly selected IP. The Yeelight TCP-client
+        // quota applies PER LAMP, not to the number of lamps in a group.
+        // Keep every participant's own state/budget; no fixed fleet ceiling.
+        require(peers.isNotEmpty() && peers.all(::validLanIp) && peers.size == sessions.size)
         require(tcpPort in 1..65535)
         require(peers.none { it == localIp } || tcpPort != 55443)
     }

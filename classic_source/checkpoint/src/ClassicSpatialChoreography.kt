@@ -10,8 +10,8 @@ import kotlin.math.sin
  * power on/off or command a lamp. Unlit tail uses 1% (visible), not OFF.
  *
  * The existing ClassicLiveLightStyle rate limiter still gates delivery.
- * Simulated layouts can contain up to 14 lamps, but this is NOT an assertion
- * that OEM Classic has qualified a 14-device Music socket budget.
+ * Ordered scenes support the entire dynamically selected participant list.
+ * A 14-position test is only a test case, never a product limit or OEM claim.
  */
 internal class ClassicSpatialChoreography {
     enum class Mode { SCANNER, METEOR, WAVE }
@@ -42,31 +42,34 @@ internal class ClassicSpatialChoreography {
 
     fun frame(mode: Mode, index: Int, count: Int, timestampMs: Long,
               loudness: Double, beat: Boolean): ClassicLiveLightStyle.Frame {
-        require(count in 1..14 && index in 0 until count)
+        require(count > 0 && index in 0 until count)
         require(timestampMs >= 0)
         require(loudness.isFinite() && loudness in 0.0..1.0)
         val position = if (options.reverse) count - 1 - index else index
         val intensity = when (mode) {
             Mode.SCANNER -> {
-                val span = (count - 1).coerceAtLeast(1)
-                val cycle = span * 2
+                // Long arithmetic keeps the scanner cycle correct as the
+                // selected fleet grows beyond earlier fixed test layouts.
+                val span = (count.toLong() - 1L).coerceAtLeast(1L)
+                val cycle = span * 2L
                 val stepMs = 21_000L / options.speedPercent
-                val phase = ((timestampMs / stepMs) % cycle).toInt()
+                val phase = (timestampMs / stepMs) % cycle
                 val head = if (phase <= span) phase else cycle - phase
-                val distance = abs(position - head)
+                val distance = abs(position.toLong() - head)
                 when (distance) {
-                    0 -> 1.0
-                    1 -> 0.22
-                    in 2..options.trailLength -> exp(-distance.toDouble() * 1.5) * 0.22
+                    0L -> 1.0
+                    1L -> 0.22
+                    in 2L..options.trailLength.toLong() ->
+                        exp(-distance.toDouble() * 1.5) * 0.22
                     else -> 0.0
                 }
             }
             Mode.METEOR -> {
-                val cycle = count + options.trailLength
+                val cycle = count.toLong() + options.trailLength
                 val stepMs = 16_500L / options.speedPercent
-                val head = ((timestampMs / stepMs) % cycle).toInt()
-                val age = head - position
-                if (age in 0..options.trailLength)
+                val head = (timestampMs / stepMs) % cycle
+                val age = head - position.toLong()
+                if (age in 0L..options.trailLength.toLong())
                     exp(-age.toDouble() * (3.0 / options.trailLength)) else 0.0
             }
             Mode.WAVE -> {

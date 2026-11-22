@@ -219,5 +219,42 @@ fun main() {
     check(engine.clockTick(tickTime).sent.isEmpty())
     check(transport.calls.count { it.startsWith("stop:") } == 4)
     check(transport.calls.none { it.contains("foreign") })
-    println("PASS Classic 14-point scanner/meteor/wave geometry, 4 OWNED session routing, no nonparticipants, live switching, stop and validation")
+    // Dynamic fleet sizes are not protocol ceilings. The very same
+    // OWNED-only production coordinator/engine must render all selected
+    // members even after expanding beyond the original 4/14 samples.
+    for (fleetSize in listOf(1, 5, 14, 15, 32, 64, 128)) {
+        val fleetWire = SpatialMockTransport()
+        val fleetCoordinator = ClassicMusicCoordinator(fleetWire)
+        val fleetIds = (1..fleetSize).map { "selected-$it" }
+        for (id in fleetIds) {
+            fleetCoordinator.register(id, true)
+            fleetWire.active[id] = false
+        }
+        fleetCoordinator.register("foreign-$fleetSize", true)
+        fleetWire.active["foreign-$fleetSize"] = true
+        val fleetEngine = ClassicDjEngine(fleetCoordinator)
+        val states = fleetEngine.select(fleetIds)
+        check(states.size == fleetSize && states.values.all {
+            it == ClassicMusicCoordinator.State.OWNED
+        })
+        check(fleetEngine.selected() == fleetIds.toSet())
+        for (mode in modes) {
+            check(fleetEngine.setScene(mode.name))
+            val tick = fleetEngine.clockTick(350L + modes.indexOf(mode) * 350L)
+            check(tick.sent == fleetIds.toSet() && tick.failed.isEmpty()) {
+                "Effect $mode did not reach every selected lamp for fleet size $fleetSize"
+            }
+        }
+        check(fleetWire.sent.all { it.first in fleetIds })
+        check(fleetWire.calls.none { it.contains("foreign-$fleetSize") })
+        check(fleetWire.calls.count { it.startsWith("start:") } == fleetSize)
+        val stopped = fleetEngine.stop()
+        check(stopped.size == fleetSize && stopped.values.all {
+            it == ClassicMusicCoordinator.State.IDLE
+        })
+        check(fleetWire.calls.count { it.startsWith("stop:") } == fleetSize)
+        check(fleetEngine.clockTick(2000L).sent.isEmpty())
+    }
+    println("PASS dynamic participant counts 1/5/14/15/32/64/128, OWNED-only frames and stop")
+    println("PASS Classic scanner/meteor/wave geometry, owned routing, no nonparticipants, live switching, stop and validation")
 }
