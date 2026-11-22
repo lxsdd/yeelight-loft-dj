@@ -60,10 +60,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private boolean consentFlowPending;
     private final TextView sceneButton;
     private final Button[] sceneChoices = new Button[SCENES.length];
-    // UI-only controls of the SAME atomic SceneSettings transaction.
-    private final LinearLayout spatialControls;
-    private final Button spatialSpeedButton, spatialDirectionButton;
-    private final Button spatialTrailButton, spatialRangeButton;
+    // The original SceneFragment owns scene tuning; Music only selects and displays.
+    private final TextView sceneParametersReadOnly;
     private static final int[] SPATIAL_SPEEDS = {50, 75, 100, 150, 200};
     private static final int[] SPATIAL_TRAILS = {1, 2, 4, 6, 8};
     private static final int[][] SPATIAL_RANGES = {{1, 100}, {5, 60}, {20, 85}};
@@ -73,11 +71,6 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private boolean preferInternal;
     private boolean internalOwned;
     private final Button gainButton;
-    private final Button pulseModeButton;
-    private Button pulseTempoButton;
-    private Button pulseShapeButton;
-    private LinearLayout pulseControls;
-    private LinearLayout pulseShapeControls;
     // These are DSP-only envelope presets. They never assert a lamp power state.
     private static final int[][] PULSE_SHAPES = {
         {12, 65, 160, 900}, {8, 100, 70, 330}, {12, 90, 90, 600}
@@ -273,63 +266,10 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         }
         refreshSceneChoices();
 
-        spatialControls = new LinearLayout(activity);
-        spatialControls.setOrientation(VERTICAL);
-        spatialControls.setVisibility(View.GONE);
-        TextView hint = new TextView(activity);
-        hint.setText("Szenenparameter · Farbe bleibt beim Classic-Effekt. " +
-            "Ohne verifizierte Lampenauswahl nur Vorschau.");
-        spatialControls.addView(hint);
-
-        LinearLayout top = new LinearLayout(activity);
-        top.setOrientation(HORIZONTAL);
-        spatialSpeedButton = new Button(activity);
-        spatialSpeedButton.setAllCaps(false);
-        spatialSpeedButton.setContentDescription("Szenengeschwindigkeit einstellen");
-        spatialSpeedButton.setOnClickListener(v -> {
-            spatialSpeedIndex = (spatialSpeedIndex + 1) % SPATIAL_SPEEDS.length;
-            updateSpatialLabels();
-            publishSharedScene();
-            configureIfOwned();
-        });
-        top.addView(spatialSpeedButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        spatialDirectionButton = new Button(activity);
-        spatialDirectionButton.setAllCaps(false);
-        spatialDirectionButton.setContentDescription("Richtung der Lichtszene umschalten");
-        spatialDirectionButton.setOnClickListener(v -> {
-            spatialReverse = !spatialReverse;
-            updateSpatialLabels();
-            publishSharedScene();
-            configureIfOwned();
-        });
-        top.addView(spatialDirectionButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        spatialControls.addView(top);
-
-        LinearLayout bottom = new LinearLayout(activity);
-        bottom.setOrientation(HORIZONTAL);
-        spatialTrailButton = new Button(activity);
-        spatialTrailButton.setAllCaps(false);
-        spatialTrailButton.setContentDescription("Schweiflänge der Lichtszene einstellen");
-        spatialTrailButton.setOnClickListener(v -> {
-            spatialTrailIndex = (spatialTrailIndex + 1) % SPATIAL_TRAILS.length;
-            updateSpatialLabels();
-            publishSharedScene();
-            configureIfOwned();
-        });
-        bottom.addView(spatialTrailButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        spatialRangeButton = new Button(activity);
-        spatialRangeButton.setAllCaps(false);
-        spatialRangeButton.setContentDescription("Helligkeitsbereich der Lichtszene einstellen");
-        spatialRangeButton.setOnClickListener(v -> {
-            spatialRangeIndex = (spatialRangeIndex + 1) % SPATIAL_RANGES.length;
-            updateSpatialLabels();
-            publishSharedScene();
-            configureIfOwned();
-        });
-        bottom.addView(spatialRangeButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        spatialControls.addView(bottom);
-        expanded.addView(spatialControls);
-        updateSpatialLabels();
+        sceneParametersReadOnly = new TextView(activity);
+        sceneParametersReadOnly.setContentDescription(
+            "Effektparameter im Classic-Lichtszenenbereich bearbeiten");
+        expanded.addView(sceneParametersReadOnly);
 
         gainButton = new Button(activity);
         gainButton.setText("Empfindlichkeit: 1×");
@@ -348,52 +288,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         expanded.addView(actions);
         expanded.addView(settings);
 
-        // DSP-only pulse controls in the original MusicActivity hierarchy.
-        // Never create a second color picker or synthesize OEM device identities.
-        pulseControls = new LinearLayout(activity);
-        pulseControls.setOrientation(HORIZONTAL);
-        pulseControls.setVisibility(View.GONE);
-        pulseModeButton = new Button(activity);
-        pulseModeButton.setText("Puls: Beat");
-        pulseModeButton.setContentDescription("Puls zwischen Beat und Zeitsteuerung umschalten");
-        pulseModeButton.setOnClickListener(v -> {
-            beatPulse = !beatPulse;
-            pulseModeButton.setText(beatPulse ? "Puls: Beat" : "Puls: Timer");
-            pulseTempoButton.setEnabled(!beatPulse);
-            effectFeedback.setText("Vorschau: " +
-                ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
-            renderLiveFeedback();
-            configureIfOwned();
-        });
-        pulseControls.addView(pulseModeButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        pulseTempoButton = new Button(activity);
-        pulseTempoButton.setText("120 BPM");
-        pulseTempoButton.setEnabled(false);
-        pulseTempoButton.setContentDescription("Puls-Tempo für Zeitsteuerung");
-        pulseTempoButton.setOnClickListener(v -> {
-            pulseTempo = (pulseTempo + 1) % PULSE_TEMPOS.length;
-            pulseTempoButton.setText(PULSE_TEMPOS[pulseTempo] + " BPM");
-            renderLiveFeedback();
-            configureIfOwned();
-        });
-        pulseControls.addView(pulseTempoButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        expanded.addView(pulseControls);
-
-        // Perceptual brightness/envelope shaping on the SAME Classic Music UI.
-        // No OEM color-picker replacement and no unverified lamp selection.
-        pulseShapeControls = new LinearLayout(activity);
-        pulseShapeControls.setOrientation(HORIZONTAL);
-        pulseShapeControls.setVisibility(View.GONE);
-        pulseShapeButton = new Button(activity);
-        pulseShapeButton.setText("Puls: Normal");
-        pulseShapeButton.setContentDescription("Pulsform zwischen Normal, Sanft und Kräftig wechseln");
-        pulseShapeButton.setOnClickListener(v -> {
-            pulseShape = (pulseShape + 1) % PULSE_SHAPES.length;
-            pulseShapeButton.setText("Puls: " + PULSE_SHAPE_LABELS[pulseShape]);
-            configureIfOwned();
-        });
-        pulseShapeControls.addView(pulseShapeButton);
-        expanded.addView(pulseShapeControls);
+        // Pulse envelope and tempo settings now belong to the original Scene gallery.
     }
 
     private void refreshSceneChoices() {
@@ -407,13 +302,21 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         }
     }
 
-    private void updateSpatialLabels() {
-        spatialSpeedButton.setText("Tempo " + SPATIAL_SPEEDS[spatialSpeedIndex] + "%");
-        spatialDirectionButton.setText(spatialReverse ? "Rückwärts" : "Vorwärts");
-        spatialTrailButton.setText("Schweif " + SPATIAL_TRAILS[spatialTrailIndex]);
-        spatialRangeButton.setText("Helligkeit " +
-            SPATIAL_RANGES[spatialRangeIndex][0] + "–" +
-            SPATIAL_RANGES[spatialRangeIndex][1] + "%");
+    private void updateSceneParameterSummary() {
+        if (scene == 3) {
+            sceneParametersReadOnly.setText("Puls: " + (beatPulse ? "Beat" :
+                PULSE_TEMPOS[pulseTempo] + " BPM Timer") + " · " +
+                PULSE_SHAPE_LABELS[pulseShape] + " · Im Bereich Lichtszene bearbeiten");
+        } else if (scene >= 4) {
+            sceneParametersReadOnly.setText("Tempo " + SPATIAL_SPEEDS[spatialSpeedIndex] +
+                "% · " + (spatialReverse ? "Rückwärts" : "Vorwärts") +
+                " · Schweif " + SPATIAL_TRAILS[spatialTrailIndex] +
+                " · Helligkeit " + SPATIAL_RANGES[spatialRangeIndex][0] +
+                "–" + SPATIAL_RANGES[spatialRangeIndex][1] +
+                "% · Im Bereich Lichtszene bearbeiten");
+        } else {
+            sceneParametersReadOnly.setText("Wirkung im Classic-Lichtszenenbereich bearbeiten");
+        }
     }
 
     /** The original SceneFragment and MusicActivity share one transient scene model. */
@@ -436,16 +339,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         pulseTempo = stored.pulseTempoIndex;
         pulseShape = stored.pulseShapeIndex;
         gainButton.setText("Empfindlichkeit: " + GAINS[gain] + "×");
-        pulseModeButton.setText(beatPulse ? "Puls: Beat" : "Puls: Timer");
-        pulseTempoButton.setText(PULSE_TEMPOS[pulseTempo] + " BPM");
-        pulseTempoButton.setEnabled(!beatPulse);
-        pulseShapeButton.setText("Puls: " + PULSE_SHAPE_LABELS[pulseShape]);
         refreshSceneChoices();
         sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
-        spatialControls.setVisibility(scene >= 4 ? View.VISIBLE : View.GONE);
-        pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
-        pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
-        updateSpatialLabels();
+        updateSceneParameterSummary();
         observedSceneRevision = ClassicSceneUiState.revision();
         renderLiveFeedback();
     }
@@ -456,9 +352,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         publishSharedScene();
         refreshSceneChoices();
         sceneButton.setText("Lichtszene: " + SCENE_LABELS[scene]);
-        spatialControls.setVisibility(scene >= 4 ? View.VISIBLE : View.GONE);
-        pulseControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
-        pulseShapeControls.setVisibility(scene == 3 ? View.VISIBLE : View.GONE);
+        updateSceneParameterSummary();
         effectFeedback.setText("Vorschau: " +
             ClassicDjEffectPreview.explanation(SCENES[scene], beatPulse));
         renderLiveFeedback();
