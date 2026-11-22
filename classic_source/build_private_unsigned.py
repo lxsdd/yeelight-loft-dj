@@ -335,6 +335,10 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             # A read-only selection witness, NEVER a lamp authorization or LAN target.
             from clone_original_music_selection_hook import patch_staged_clone as patch_original_music_selection
             smali_report['original_music_selection'] = patch_original_music_selection(staged)
+            # Only the original GroupMusic manager's key lookup and J1() list.
+            # Count-only UI witness; NO selected-member, endpoint or LAN grant.
+            from clone_original_group_music_hook import patch_staged_clone as patch_original_group
+            smali_report['original_group_membership'] = patch_original_group(staged)
         build_diagnostics.phase('APKTOOL_REBUILD')
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         build_diagnostics.phase('MULTIDEX_LAYOUT')

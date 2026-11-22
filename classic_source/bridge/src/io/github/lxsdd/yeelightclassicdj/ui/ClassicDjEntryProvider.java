@@ -367,6 +367,11 @@ public final class ClassicDjEntryProvider extends ContentProvider
     @Override public void onActivityStopped(Activity a) {}
     @Override public void onActivitySaveInstanceState(Activity a, Bundle state) {}
     @Override public void onActivityDestroyed(Activity a) {
+        // Read-only OEM group-context lifetime; never grants LAN targets.
+        if (CLONE_PACKAGE.equals(a.getPackageName()) &&
+            "com.yeelight.yeelib.ui.activity.GroupMusicModeManagerActivity".equals(
+                a.getClass().getName()))
+            ClassicOriginalMusicSelection.originalGroupClosed();
         cancelPending(a);
         pauseMusicPanel(a);
         MusicDockLease lease = musicDocks.remove(a);

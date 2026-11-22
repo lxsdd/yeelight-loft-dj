@@ -55,6 +55,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final TextView sourceHelp;
     private final TextView originalMusicSelectionStatus;
     private boolean originalMusicSelectionObserved;
+    private int originalGroupCountObserved = -1;
+
+    private static String originalSelectionMessage(boolean selected, int groupCount) {
+        if (!selected) return "Original-Classic-Gerätezuordnung noch nicht bestätigt";
+        if (groupCount < 0)
+            return "Original-Classic-Gerätekontext erkannt · Gruppenzuordnung offen · DJ-Lampen NICHT freigegeben";
+        return "Original-Classic-Gruppenliste gelesen: " + groupCount +
+            " Mitglieder (keine bestätigte Auswahl) · DJ-Lampen NICHT freigegeben";
+    }
     private final TextView liveFeedback;
     private final TextView effectFeedback;
     private final ProgressBar[] bandMeters = new ProgressBar[4];
@@ -126,11 +135,13 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             // Only the original device-selection click can set this witness.
             // A witnessed OEM ID is NOT permission to command a bulb.
             boolean selected = ClassicOriginalMusicSelection.fresh();
-            if (selected != originalMusicSelectionObserved) {
+            int groupCount = ClassicOriginalMusicSelection.originalGroupMemberCount();
+            if (selected != originalMusicSelectionObserved ||
+                groupCount != originalGroupCountObserved) {
                 originalMusicSelectionObserved = selected;
-                originalMusicSelectionStatus.setText(selected ?
-                    "Original-Classic-Gerätekontext erkannt · DJ-Lampen NICHT freigegeben" :
-                    "Original-Classic-Gerätezuordnung noch nicht bestätigt");
+                originalGroupCountObserved = groupCount;
+                originalMusicSelectionStatus.setText(
+                    originalSelectionMessage(selected, groupCount));
             }
             // Genuine FFT/beat-derived data, never synthetic device state.
             renderLiveFeedback();
@@ -187,9 +198,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         expanded.addView(sourceHelp);
         originalMusicSelectionStatus = new TextView(activity);
         originalMusicSelectionObserved = ClassicOriginalMusicSelection.fresh();
-        originalMusicSelectionStatus.setText(originalMusicSelectionObserved ?
-            "Original-Classic-Gerätekontext erkannt · DJ-Lampen NICHT freigegeben" :
-            "Original-Classic-Gerätezuordnung noch nicht bestätigt");
+        originalGroupCountObserved = ClassicOriginalMusicSelection.originalGroupMemberCount();
+        originalMusicSelectionStatus.setText(
+            originalSelectionMessage(originalMusicSelectionObserved, originalGroupCountObserved));
         originalMusicSelectionStatus.setContentDescription(
             "Lesende Classic-Geräteauswahl; noch keine Freigabe für Loft DJ Lampen");
         expanded.addView(originalMusicSelectionStatus);
