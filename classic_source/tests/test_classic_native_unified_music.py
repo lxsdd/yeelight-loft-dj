@@ -53,6 +53,21 @@ public class UnifiedPreviewHarness {
    }
    yes(level(3,0,0,false,0)==0f,"invalid timer BPM denied");
    yes(level(7,0,0,true,120)==0f,"unknown scene denied");
+   float[] bands = new float[]{.15f,.70f,.28f,.42f};
+   yes(ClassicDjPatternMath.reactiveLevel(0,1,.10f,true,true,.6f,bands,false)==.70f,
+       "spectrum uses real observed FFT bands");
+   yes(ClassicDjPatternMath.reactiveLevel(0,2,.30f,true,false,0f,bands,false)==.30f,
+       "inactive scene cannot claim audio provenance");
+   yes(ClassicDjPatternMath.reactiveLevel(2,0,.46f,true,false,0f,bands,false)==0f,
+       "beat never fabricated without original source");
+   yes(ClassicDjPatternMath.reactiveLevel(2,0,.46f,true,true,.68f,bands,true)==1f,
+       "original observed onset reaches beat scene");
+   yes(ClassicDjPatternMath.reactiveLevel(3,0,.20f,true,true,.50f,bands,false)==.06f,
+       "beat pulse requires real onset");
+   yes(ClassicDjPatternMath.reactiveLevel(4,3,1f,false,true,0f,bands,false)<.20f,
+       "real mic silence attenuates timed scanner");
+   yes(ClassicDjPatternMath.reactiveLevel(6,3,1f,false,true,1f,bands,false)==1f,
+       "real audio preserves full wave intensity");
    System.out.println("UNIFIED_PREVIEW_JAVA_PRODUCTION_MATH_PASS");
  }
 }
@@ -77,6 +92,8 @@ class UnifiedMusicNativeContract(unittest.TestCase):
 
     def test_android_view_consumes_only_pure_preview_math(self):
         self.assertIn("ClassicDjPatternMath.level(mode, i, clock", VIEW)
+        self.assertIn("ClassicDjPatternMath.reactiveLevel(mode, i, timed", VIEW)
+        self.assertIn("ClassicOriginalMusicAudioSignal.snapshot()", INLINE)
         self.assertIn("ClassicSceneUiState.snapshot()", INLINE)
         self.assertIn("ClassicOriginalMusicSelection.originalGroupMemberCount()", INLINE)
         self.assertNotIn("AudioRecord(", VIEW)

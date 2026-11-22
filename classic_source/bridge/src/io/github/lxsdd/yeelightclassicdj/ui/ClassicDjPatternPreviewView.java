@@ -10,8 +10,9 @@ import android.view.View;
 
 /**
  * Eight abstract preview cells. Never count, enumerate or address real bulbs.
- * SPECTRUM / AMBIENT / BEAT / beat-PULSE are intentionally static without a
- * verified OEM PCM session. Spatial and timed modes render distinct geometry.
+ * SPECTRUM / AMBIENT / BEAT / beat-PULSE animate ONLY when a real
+ * original OEM microphone/Visualizer frame has been observed; otherwise
+ * frequency/beat strength remains zero, never invented.
  * This is animation only: no OEM, microphone, LAN, scene or device side effects.
  */
 public final class ClassicDjPatternPreviewView extends View {
@@ -23,6 +24,7 @@ public final class ClassicDjPatternPreviewView extends View {
     private int mode;
     private boolean beatPulse = true;
     private int pulseTempo = 120;
+    private ClassicOriginalMusicAudioSignal.Snapshot originalFrame;
 
     public ClassicDjPatternPreviewView(Context context) { super(context); }
 
@@ -34,6 +36,12 @@ public final class ClassicDjPatternPreviewView extends View {
         invalidate();
     }
 
+    /** True source provenance only: data already captured by original Classic. */
+    public void setOriginalFrame(ClassicOriginalMusicAudioSignal.Snapshot frame) {
+        originalFrame = frame;
+        invalidate();
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         int w = getWidth(), h = getHeight();
@@ -42,13 +50,19 @@ public final class ClassicDjPatternPreviewView extends View {
         float cell = (w - gap * (CELLS - 1)) / CELLS;
         float radius = Math.min(h / 2f, cell / 2f);
         long clock = SystemClock.elapsedRealtime();
+        ClassicOriginalMusicAudioSignal.Snapshot source = originalFrame;
         for (int i = 0; i < CELLS; i++) {
             float left = i * (cell + gap);
             bounds.set(left, 2f, left + cell, h - 2f);
             paint.setColor(EMPTY);
             canvas.drawRoundRect(bounds, radius, radius, paint);
-            float intensity = Math.max(0f, Math.min(1f,
-                ClassicDjPatternMath.level(mode, i, clock, beatPulse, pulseTempo)));
+            float timed = ClassicDjPatternMath.level(mode, i, clock,
+                beatPulse, pulseTempo);
+            float intensity = ClassicDjPatternMath.reactiveLevel(mode, i, timed,
+                beatPulse, source != null && source.fresh,
+                source == null ? 0f : source.level,
+                source == null ? new float[4] : source.bands,
+                source != null && source.beat);
             paint.setColor(Color.argb(40 + Math.round(215f * intensity),
                 Color.red(PINK), Color.green(PINK), Color.blue(PINK)));
             canvas.drawRoundRect(bounds, radius, radius, paint);

@@ -16,11 +16,10 @@ import android.widget.TextView;
  * Embedded effect-only controls in the genuine original Classic MusicActivity.
  *
  * The original DiscoFragment is the ONLY visible owner of audio source,
- * microphone permission, Play/Pause and its music-device controls. Until an
- * exact OEM audio-session contract is qualified, this panel never starts a
- * second capture engine and does not call ClassicDjService.
- * Pattern motion is a deliberately labeled local SIMULATION, never bulb
- * output, real PCM, group selection or an OEM session status assertion.
+ * microphone permission, Play/Pause and its music-device controls. Original
+ * AudioRecord/Visualizer frames now feed the local effect signal directly,
+ * with NO second capture engine or independent ClassicDjService session.
+ * Timing geometry still uses abstract preview cells, never device targets.
  *
  * The old diagnostic Class/Service remains a separately gated test path; it
  * must never be wired back into this primary Original-Classic music surface.
@@ -156,7 +155,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         content.addView(originalMusicSelectionStatus);
 
         stateNotice = caption(
-            "Nur Simulation – nicht mit der Original-Audiositzung oder Lampen verbunden.", 12, MUTED);
+            "Nur Simulation ohne Original-Audio; keine Lampe wird angesteuert.", 12, MUTED);
         stateNotice.setPadding(0, dp(7), 0, 0);
         content.addView(stateNotice);
 
@@ -223,9 +222,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse);
             description.setText(explanation + " · Vorschau ohne Lampen");
             header.setText("Licht-Effekte  ·  " + NAMES[selected.scene] + "    ﹀");
-            stateNotice.setText(selected.scene < 4 && (selected.scene != 3 || selected.beatPulse)
-                ? "Kein Original-Audiositzungsbeleg – reaktive Analyse ist noch nicht verbunden."
-                : "Zeitbasierte Bewegungsvorschau – keine Lampe wird angesteuert.");
+            // Audio provenance is rendered from an actual callback below;
+            // scene changes cannot manufacture amplitude or beat events.
         }
 
         boolean witnessed = ClassicOriginalMusicSelection.fresh();
@@ -238,6 +236,18 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 members < 0 ? "Original-Gerätekontext gelesen · Gruppenzuordnung offen." :
                 "Zuletzt gelesene Original-Classic-Gruppenliste: " + members +
                   " Mitglieder (keine bestätigte Auswahl).");
+        }
+        ClassicOriginalMusicAudioSignal.Snapshot audio =
+            ClassicOriginalMusicAudioSignal.snapshot();
+        preview.setOriginalFrame(audio);
+        if (audio.fresh) {
+            stateNotice.setText("Echtes Original-Classic-" +
+                ("MIC".equals(audio.source) ? "Mikrofonsignal" : "Visualizer-FFT") +
+                " erkannt · Pegel " + Math.round(audio.level * 100f) +
+                "% · noch keine bestätigten DJ-Lampenziele.");
+        } else {
+            stateNotice.setText("Nur Simulation ohne Original-Audio; " +
+                "keine Lampe wird angesteuert.");
         }
         if (inlineSheet.getVisibility() == View.VISIBLE) preview.invalidate();
     }

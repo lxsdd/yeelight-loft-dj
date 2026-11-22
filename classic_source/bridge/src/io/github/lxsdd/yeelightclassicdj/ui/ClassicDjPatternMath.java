@@ -9,6 +9,37 @@ final class ClassicDjPatternMath {
     static final int CELLS = 8;
     private ClassicDjPatternMath() {}
 
+    /** Real source-derived light intensity for the existing original OEM audio.
+     * Never fabricates a beat when no actual original PCM/FFT event arrived.
+     * This is the mathematically testable effect signal, NOT a device transport.
+     */
+    static float reactiveLevel(int scene, int index, float timedLevel,
+                               boolean beatPulse, boolean fresh,
+                               float measuredLevel, float[] measuredBands,
+                               boolean measuredOnset) {
+        if (index < 0 || index >= CELLS ||
+            !Float.isFinite(timedLevel) || !Float.isFinite(measuredLevel) ||
+            timedLevel < 0f || timedLevel > 1f ||
+            measuredLevel < 0f || measuredLevel > 1f ||
+            measuredBands == null || measuredBands.length != 4) return 0f;
+        if (!fresh) return scene == 2 || (scene == 3 && beatPulse) ?
+            0f : timedLevel;
+        switch (scene) {
+            case 0: return clamp(measuredBands[index % 4]);
+            case 1: return clamp(.10f + .65f * measuredLevel);
+            case 2: return measuredOnset ? 1f : .05f;
+            case 3:
+                return beatPulse ? (measuredOnset ? 1f : .06f) : timedLevel;
+            case 4: case 5: case 6:
+                return clamp(timedLevel * (.18f + .82f * measuredLevel));
+            default: return 0f;
+        }
+    }
+
+    private static float clamp(float v) {
+        return Float.isFinite(v) ? Math.max(0f, Math.min(1f, v)) : 0f;
+    }
+
     static float level(int scene, int position, long time, boolean beat, int tempo) {
         if (position < 0 || position >= CELLS || time < 0) return 0f;
         switch (scene) {
