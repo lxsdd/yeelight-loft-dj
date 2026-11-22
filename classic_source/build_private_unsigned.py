@@ -331,6 +331,10 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             # device identity, gallery adapter or original scene write.
             from clone_scene_gallery_hook import patch_staged_clone as patch_scene_gallery
             smali_report['scene_gallery'] = patch_scene_gallery(staged)
+            # Exact original DiscoFragment device -> GroupMusic navigation.
+            # A read-only selection witness, NEVER a lamp authorization or LAN target.
+            from clone_original_music_selection_hook import patch_staged_clone as patch_original_music_selection
+            smali_report['original_music_selection'] = patch_original_music_selection(staged)
         build_diagnostics.phase('APKTOOL_REBUILD')
         run([*apktool, 'b', '-f', '-o', unsigned, staged], timeout=600)
         build_diagnostics.phase('MULTIDEX_LAYOUT')
