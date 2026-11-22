@@ -321,6 +321,90 @@ public class DisplayMetrics {
 }''',
 })
 
+# Framework API stubs only: the genuine Android SDK/JDK build remains
+# authoritative. Keep the synthetic host compile strict for the new compact
+# scene strip, rounded palette, Canvas preview and scrolling chips.
+STUBS.update({
+'android/graphics/Color.java': '''package android.graphics; public class Color {
+ public static final int WHITE=0xFFFFFFFF;
+ public static int rgb(int r,int g,int b){return (r<<16)|(g<<8)|b;}
+ public static int argb(int a,int r,int g,int b){return (a<<24)|(r<<16)|(g<<8)|b;}
+ public static int red(int c){return (c>>16)&255;}
+ public static int green(int c){return (c>>8)&255;}
+ public static int blue(int c){return c&255;}
+}''',
+'android/graphics/Canvas.java': '''package android.graphics; public class Canvas {
+ public void drawRoundRect(RectF r,float rx,float ry,Paint p){}
+}''',
+'android/graphics/Paint.java': '''package android.graphics; public class Paint {
+ public static final int ANTI_ALIAS_FLAG=1;
+ public Paint(int flags){}
+ public void setColor(int c){}
+}''',
+'android/graphics/RectF.java': '''package android.graphics; public class RectF {
+ public void set(float a,float b,float c,float d){}
+}''',
+'android/graphics/drawable/GradientDrawable.java': '''package android.graphics.drawable;
+public class GradientDrawable {
+ public void setColor(int c){}
+ public void setCornerRadius(float r){}
+ public void setStroke(int width,int color){}
+}''',
+'android/view/View.java': '''package android.view; public class View {
+ private final android.content.Context c; private Object tag;
+ public View(android.content.Context c){this.c=c;}
+ public void setContentDescription(CharSequence a){} public void setOnClickListener(OnClickListener x){}
+ public void setEnabled(boolean enabled){} public void setSelected(boolean selected){}
+ public android.content.Context getContext(){return c;}
+ public android.content.res.Resources getResources(){return new android.content.res.Resources();}
+ public void setTag(Object o){tag=o;} public Object getTag(){return tag;}
+ public boolean isShown(){return true;} public boolean isClickable(){return true;}
+ public void setClickable(boolean b){} public boolean isAttachedToWindow(){return true;}
+ public void setBackground(android.graphics.drawable.GradientDrawable background){}
+ public void setBackgroundColor(int color){}
+ public void invalidate(){}
+ protected void onDraw(android.graphics.Canvas canvas){}
+ public static final int IMPORTANT_FOR_ACCESSIBILITY_YES=1;
+ public static final int VISIBLE=0,GONE=8;
+ public void setVisibility(int visibility){} public int getVisibility(){return VISIBLE;}
+ public void setImportantForAccessibility(int value){}
+ public int getWidth(){return 1;} public int getHeight(){return 1;}
+ public void setElevation(float v){} public void bringToFront(){}
+ public boolean getGlobalVisibleRect(android.graphics.Rect r){return true;}
+ public android.view.ViewGroup getParent(){return null;}
+ public android.view.ViewGroup.LayoutParams getLayoutParams(){return null;}
+ public void setLayoutParams(android.view.ViewGroup.LayoutParams p){}
+ public interface OnClickListener {void onClick(View v);}
+}''',
+'android/widget/LinearLayout.java': '''package android.widget;
+public class LinearLayout extends android.view.View {
+ public static final int VERTICAL=1,HORIZONTAL=0;
+ public LinearLayout(android.content.Context c){super(c);}
+ public void setOrientation(int value){} public void setPadding(int a,int b,int c,int d){}
+ public void setGravity(int gravity){} public void addView(android.view.View view){}
+ public void addView(android.view.View view,LayoutParams p){}
+ public static class LayoutParams extends android.view.ViewGroup.LayoutParams {
+  public LayoutParams(int width,int height){super(width,height);}
+  public LayoutParams(int width,int height,float weight){super(width,height);}
+  public void setMargins(int a,int b,int c,int d){}
+ }
+}''',
+'android/widget/TextView.java': '''package android.widget;
+public class TextView extends android.view.View {
+ public TextView(android.content.Context c){super(c);}
+ public TextView(android.content.Context c,android.util.AttributeSet a){super(c);}
+ public void setText(CharSequence text){} public void setTextSize(float s){}
+ public void setTextColor(int color){} public void setGravity(int value){}
+ public void setPadding(int a,int b,int c,int d){}
+}''',
+'android/widget/HorizontalScrollView.java': '''package android.widget;
+public class HorizontalScrollView extends android.view.View {
+ public HorizontalScrollView(android.content.Context c){super(c);}
+ public void setHorizontalScrollBarEnabled(boolean visible){}
+ public void addView(android.view.View child){}
+}''',
+})
+
 class BridgeCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('javac'), 'javac not present')
     def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):

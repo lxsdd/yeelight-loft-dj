@@ -18,7 +18,7 @@ import android.widget.TextView;
  * The original DiscoFragment is the ONLY visible owner of audio source,
  * microphone permission, Play/Pause and its music-device controls. Until an
  * exact OEM audio-session contract is qualified, this panel never starts a
- * second AudioRecord or MediaProjection and does not call ClassicDjService.
+ * second capture engine and does not call ClassicDjService.
  * Pattern motion is a deliberately labeled local SIMULATION, never bulb
  * output, real PCM, group selection or an OEM session status assertion.
  *
@@ -160,8 +160,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         stateNotice.setPadding(0, dp(7), 0, 0);
         content.addView(stateNotice);
 
-        // There is intentionally no sourceButton, startButton, stop button,
-        // second Play/Pause path or Android screen-capture consent in this view.
+        // Original OEM owns microphone, internal playback and transport.
+        // No independent interactive recording controls are added here.
         redraw();
     }
 
