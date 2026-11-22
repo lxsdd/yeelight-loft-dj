@@ -53,6 +53,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final Button entryButton;
     private final Button startButton;
     private final TextView sourceHelp;
+    private final TextView originalMusicSelectionStatus;
+    private boolean originalMusicSelectionObserved;
     private final TextView liveFeedback;
     private final TextView effectFeedback;
     private final ProgressBar[] bandMeters = new ProgressBar[4];
@@ -121,6 +123,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             // MusicActivity, without implicitly starting or reconfiguring audio.
             if (ClassicSceneUiState.revision() != observedSceneRevision)
                 syncSceneFromGallery();
+            // Only the original device-selection click can set this witness.
+            // A witnessed OEM ID is NOT permission to command a bulb.
+            boolean selected = ClassicOriginalMusicSelection.fresh();
+            if (selected != originalMusicSelectionObserved) {
+                originalMusicSelectionObserved = selected;
+                originalMusicSelectionStatus.setText(selected ?
+                    "Original-Classic-Gerätekontext erkannt · DJ-Lampen NICHT freigegeben" :
+                    "Original-Classic-Gerätezuordnung noch nicht bestätigt");
+            }
             // Genuine FFT/beat-derived data, never synthetic device state.
             renderLiveFeedback();
             handler.postDelayed(this, 650L);
@@ -174,6 +185,14 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         sourceHelp = new TextView(activity);
         sourceHelp.setText("Mikrofon: Start verwendet nur den Ton der Umgebung, ohne Bildschirmfreigabe.");
         expanded.addView(sourceHelp);
+        originalMusicSelectionStatus = new TextView(activity);
+        originalMusicSelectionObserved = ClassicOriginalMusicSelection.fresh();
+        originalMusicSelectionStatus.setText(originalMusicSelectionObserved ?
+            "Original-Classic-Gerätekontext erkannt · DJ-Lampen NICHT freigegeben" :
+            "Original-Classic-Gerätezuordnung noch nicht bestätigt");
+        originalMusicSelectionStatus.setContentDescription(
+            "Lesende Classic-Geräteauswahl; noch keine Freigabe für Loft DJ Lampen");
+        expanded.addView(originalMusicSelectionStatus);
         TextView zeroTargets = new TextView(activity);
         zeroTargets.setText("Effekte wirken hier zunächst nur auf die Auswertung. " +
             "Keine zusätzlichen Lampen freigegeben; Original-Musikfluss bleibt unabhängig.");
