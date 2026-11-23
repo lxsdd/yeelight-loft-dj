@@ -505,6 +505,65 @@ STUBS['android/view/View.java'] = STUBS['android/view/View.java'].replace(
  ' public android.view.View findViewWithTag(Object tag){return null;}' +
  ' public void setOnLongClickListener(OnLongClickListener l){}')
 
+
+# Host-only API stubs for the original GroupMusic ListAdapter read-through.
+# The real Android SDK remains authoritative in separate verify-and-build CI.
+STUBS.update({
+'android/database/DataSetObserver.java': '''package android.database;
+public abstract class DataSetObserver {
+ public void onChanged(){} public void onInvalidated(){}
+}''',
+'android/widget/Adapter.java': '''package android.widget;
+public interface Adapter {
+ int getCount(); Object getItem(int position); long getItemId(int position);
+ boolean hasStableIds(); int getItemViewType(int position); int getViewTypeCount();
+ boolean isEmpty(); android.view.View getView(int position,android.view.View reuse,
+    android.view.ViewGroup parent);
+ void registerDataSetObserver(android.database.DataSetObserver observer);
+ void unregisterDataSetObserver(android.database.DataSetObserver observer);
+}''',
+'android/widget/ListAdapter.java': '''package android.widget;
+public interface ListAdapter extends Adapter {
+ boolean areAllItemsEnabled(); boolean isEnabled(int position);
+}''',
+'android/widget/WrapperListAdapter.java': '''package android.widget;
+public interface WrapperListAdapter extends ListAdapter {
+ ListAdapter getWrappedAdapter();
+}''',
+'android/widget/BaseAdapter.java': '''package android.widget;
+public abstract class BaseAdapter implements ListAdapter {
+ public void registerDataSetObserver(android.database.DataSetObserver observer){}
+ public void unregisterDataSetObserver(android.database.DataSetObserver observer){}
+ public void notifyDataSetChanged(){} public void notifyDataSetInvalidated(){}
+ public boolean hasStableIds(){return false;}
+ public boolean areAllItemsEnabled(){return true;}
+ public boolean isEnabled(int position){return true;}
+ public int getItemViewType(int position){return 0;}
+ public int getViewTypeCount(){return 1;}
+ public boolean isEmpty(){return getCount()==0;}
+}''',
+'android/widget/ListView.java': '''package android.widget;
+public class ListView extends android.view.ViewGroup {
+ public ListView(android.content.Context c){super(c);}
+ public void setAdapter(ListAdapter adapter){}
+}''',
+})
+STUBS['android/view/View.java'] = STUBS['android/view/View.java'].replace(
+ ' public interface OnClickListener {void onClick(View v);}',
+ ''' public void addOnAttachStateChangeListener(OnAttachStateChangeListener listener){}
+ public interface OnAttachStateChangeListener {
+  void onViewAttachedToWindow(View v);
+  void onViewDetachedFromWindow(View v);
+ }
+ public interface OnClickListener {void onClick(View v);}''')
+STUBS['android/widget/FrameLayout.java'] = STUBS['android/widget/FrameLayout.java'].replace(
+ ' public void removeView(android.view.View v){}',
+ ''' public void removeView(android.view.View v){}
+ public void addView(android.view.View v,int index,LayoutParams params){}''').replace(
+ 'public LayoutParams(int w,int h,int gravity){super(w,h);}',
+ '''public LayoutParams(int w,int h,int gravity){super(w,h);}
+  public LayoutParams(int w,int h){super(w,h);}''')
+
 class BridgeCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('javac'), 'javac not present')
     def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):
