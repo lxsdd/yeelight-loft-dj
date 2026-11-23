@@ -14,7 +14,7 @@ MANIFEST = (ROOT / "classic_first.py").read_text("utf-8")
 
 class ClassicPlaybackContract(unittest.TestCase):
     def test_same_pcm_dsp_pipeline_for_mic_and_playback(self):
-        self.assertIn("startCapture(selectedLampIps, listener) { inputFactory() }", RUNTIME)
+        self.assertIn("startCapture(selectedLampIps, listener, sourceInput = { inputFactory() })", RUNTIME)
         self.assertIn("ClassicPlaybackCaptureInput.open(projection", RUNTIME)
         self.assertEqual(RUNTIME.count("ClassicPcmDjBridge(newEngine"), 1)
         self.assertEqual(RUNTIME.count("ClassicPcmCaptureSession(bridge"), 1)

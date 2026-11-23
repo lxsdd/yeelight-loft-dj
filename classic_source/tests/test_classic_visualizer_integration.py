@@ -15,7 +15,7 @@ class VisualizerSourceContract(unittest.TestCase):
     def test_same_production_pcm_and_generation_owned_dsp(self):
         self.assertIn("startVisualizer(Context context, int audioSessionId", INTERFACE)
         self.assertIn("ClassicAndroidVisualizerInput.open(", RUNTIME)
-        self.assertIn("startCapture(selectedLampIps, listener) {", RUNTIME)
+        self.assertIn("startCapture(selectedLampIps, listener, sourceInput = { visualizerFactory(audioSessionId) })", RUNTIME)
         self.assertEqual(RUNTIME.count("ClassicPcmDjBridge(newEngine"), 1)
         self.assertEqual(RUNTIME.count("ClassicPcmCaptureSession(bridge"), 1)
         self.assertIn("session.startVisualizer(this, audioSessionId, ips, callback)", SERVICE)
