@@ -32,6 +32,7 @@ class CheckpointRuntime : DjRuntime {
     private var inputBridge: ClassicPcmDjBridge? = null
     private var clockOnly = false
     private var originalCallbackOwner = false
+    private var originalOutputGuard: DjRuntime.ConsentGuard? = null
     private data class OriginalFrame(
         val timestampMs: Long, val bands: DoubleArray, val beat: Boolean,
         val bpm: Double, val confidence: Double
@@ -193,9 +194,12 @@ class CheckpointRuntime : DjRuntime {
      * Caller must supply a separately verified, consented OEM-ID -> LAN-IP
      * snapshot, never naked OEM keys.
      */
-    fun startOriginalAudio(selectedLampIps: List<String>, listener: DjRuntime.Listener) {
+    fun startOriginalAudio(selectedLampIps: List<String>, listener: DjRuntime.Listener,
+                           consent: DjRuntime.ConsentGuard) {
         require(selectedLampIps.isNotEmpty()) { "Original source requires confirmed endpoints" }
-        startCapture(selectedLampIps, listener, sourceInput = null, originalCallbacks = true)
+        check(consent.isStillAuthorized()) { "Original owner or selected cohort revoked" }
+        startCapture(selectedLampIps, listener, sourceInput = null,
+                     originalCallbacks = true, originalAuthorization = consent)
     }
 
     /** Nonblocking bounded frame handoff from the genuine OEM DSP monitor.
@@ -208,7 +212,8 @@ class CheckpointRuntime : DjRuntime {
             !frame.confidence.isFinite() || frame.confidence !in 0f..1f ||
             !frame.level.isFinite() || frame.level !in 0f..1f) return false
         synchronized(lock) {
-            if (state != State.RUNNING || !originalCallbackOwner || engine == null)
+            if (state != State.RUNNING || !originalCallbackOwner || engine == null ||
+                originalOutputGuard?.isStillAuthorized() != true)
                 return false
             pendingOriginal = OriginalFrame(clock(),
                 DoubleArray(4) { frame.bands[it].toDouble() },
@@ -229,7 +234,8 @@ class CheckpointRuntime : DjRuntime {
 
     private fun startCapture(selectedLampIps: List<String>, listener: DjRuntime.Listener,
                              sourceInput: (() -> ClassicPcmCaptureSession.Input)?,
-                             originalCallbacks: Boolean = false) {
+                             originalCallbacks: Boolean = false,
+                             originalAuthorization: DjRuntime.ConsentGuard? = null) {
         // Every current and subsequently added explicitly selected lamp is eligible.
         // Validation is per target; no arbitrary 4/14/other fleet-size ceiling.
         require(selectedLampIps.distinct().size == selectedLampIps.size)
@@ -239,6 +245,9 @@ class CheckpointRuntime : DjRuntime {
             check(state == State.NEW) { "Session cannot be restarted" }
             if (independentScene) check(clockSceneAllowed(scene, pulse)) {
                 "Audio-dependent effects require live audio"
+            }
+            if (originalCallbacks) check(originalAuthorization?.isStillAuthorized() == true) {
+                "Original output consent missing or revoked"
             }
             state = State.STARTING
             this.listener = listener
@@ -277,13 +286,23 @@ class CheckpointRuntime : DjRuntime {
             // The staged engine still cleans up any confirmed OWNED socket on abort.
             val states = if (selectedLampIps.isEmpty()) emptyMap() else
                 newEngine.select(selectedLampIps) {
-                    synchronized(lock) { state == State.STARTING }
+                    synchronized(lock) { state == State.STARTING } &&
+                        (originalAuthorization?.isStillAuthorized() ?: true)
                 }
             val owned = states.filterValues { it == ClassicMusicCoordinator.State.OWNED }.keys
             if (selectedLampIps.isNotEmpty() && owned.isEmpty()) {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
-            synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
+            // Original-Classic confirmation covers the ENTIRE selected group.
+            // One foreign, offline or unconfirmed peer revokes that proposal.
+            if (originalCallbacks && owned.size != selectedLampIps.size)
+                error("Original cohort only partially owned")
+            synchronized(lock) {
+                check(state == State.STARTING) { "Session stopped during setup" }
+                if (originalCallbacks) check(originalAuthorization?.isStillAuthorized() == true) {
+                    "Original output consent revoked during handshake"
+                }
+            }
             val bridge = if (sourceInput == null) null else
                 ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = if (bridge == null) null else
@@ -311,6 +330,7 @@ class CheckpointRuntime : DjRuntime {
                 inputBridge = bridge
                 clockOnly = independentScene
                 originalCallbackOwner = originalCallbacks
+                originalOutputGuard = originalAuthorization
                 pendingOriginal = null
                 engine = newEngine
                 state = State.RUNNING
@@ -337,8 +357,13 @@ class CheckpointRuntime : DjRuntime {
         try {
             while (true) {
                 if (!synchronized(lock) { state == State.RUNNING && mine == generation }) break
+                val consent = synchronized(lock) { originalOutputGuard }
+                if (consent != null && !consent.isStillAuthorized())
+                    error("Original output owner revoked")
                 val session = synchronized(lock) { capture }
                 val received = session?.poll(bufferSize = WINDOW_SIZE) ?: false
+                if (consent != null && !consent.isStillAuthorized())
+                    error("Original output owner revoked after audio poll")
                 val original = synchronized(lock) {
                     if (state == State.RUNNING && mine == generation && originalCallbackOwner) {
                         val next = pendingOriginal
@@ -396,6 +421,7 @@ class CheckpointRuntime : DjRuntime {
             inputBridge = null
             clockOnly = false
             originalCallbackOwner = false
+            originalOutputGuard = null
             pendingOriginal = null
             localWorker = worker; worker = null
             callback = listener; listener = null
