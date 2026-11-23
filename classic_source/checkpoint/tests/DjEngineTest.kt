@@ -48,12 +48,14 @@ fun main() {
     // Confirmed survivors are stopped once; the failed/foreign devices
     // are not sent speculative STOP commands.
     check(failed && engine.selected().isEmpty())
+    check(engine.uncertainOutput()) { "Uncertain reverse frame lost before STOP" }
     check(listOf("a","c","d").all { fake.active[it] == false })
     check(fake.active["b"] == true && fake.active["foreign"] == true)
     val before = fake.frames.size
     check(!engine.audio(100L,doubleArrayOf(1.0,1.0,1.0,1.0)).beat)
     check(fake.frames.size == before)
     check(engine.stop().isEmpty()) // Survivors already stopped on failure.
+    check(engine.uncertainOutput()) { "STOP must not erase uncertain peer" }
     check(listOf("a","c","d").all { fake.active[it] == false })
     check(fake.active["foreign"] == true && fake.active["b"] == true)
     check(engine.selected().isEmpty())

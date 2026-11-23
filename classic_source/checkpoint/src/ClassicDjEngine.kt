@@ -11,6 +11,10 @@ class ClassicDjEngine(
                       val bass: Double = 0.0, val mid: Double = 0.0,
                       val presence: Double = 0.0, val treble: Double = 0.0)
     private val active = linkedMapOf<String, Long>()
+    // A failed reverse frame has an uncertain remote outcome. This fact must
+    // survive engine.stop(), even after every surviving owned peer was stopped.
+    private var outputUncertain = false
+    @Synchronized fun uncertainOutput(): Boolean = outputUncertain
     private var lastAudioMs = -1L
     // Both PCM and synthetic clock frames share one monotonic output clock.
     // A stale audio callback must not reset or overtake an already emitted tick.
@@ -132,6 +136,7 @@ class ClassicDjEngine(
             }
         }
         if (failed.isNotEmpty()) {
+            outputUncertain = true
             val survivors = active.keys.toList()
             active.clear() // Fence all later PCM, original and clock frames.
             // Only independently confirmed OWNED peers get their own STOP.

@@ -641,7 +641,9 @@ fun main() {
     check(originalFault.first["192.168.71.22"] == true) {
         "Uncertain remote state must not receive speculative STOP"
     }
-    failedOriginal.stop()
+    check(runCatching { failedOriginal.stop() }.isFailure) {
+        "Uncertain ORIGINAL remote frame must quarantine output admission"
+    }
 
     val (failedTimed, timedFault) = failingFleetRuntime()
     val timedFaultListener = Listener()
@@ -650,7 +652,9 @@ fun main() {
         listOf("192.168.71.21", "192.168.71.22", "192.168.71.23"),
         timedFaultListener)
     awaitFaultCleanup(timedFaultListener, timedFault.second, timedFault.third)
-    failedTimed.stop()
+    check(runCatching { failedTimed.stop() }.isFailure) {
+        "Uncertain timed reverse frame must quarantine output admission"
+    }
 
     val (failedMic, micFault) = failingFleetRuntime()
     val micFaultInput = MockMic()
@@ -661,7 +665,9 @@ fun main() {
         micFaultListener)
     awaitFaultCleanup(micFaultListener, micFault.second, micFault.third)
     check(micFaultInput.closed) { "Mic remained open after reverse-output failure" }
-    failedMic.stop()
+    check(runCatching { failedMic.stop() }.isFailure) {
+        "Uncertain microphone reverse frame must quarantine output admission"
+    }
 
     check(originalFault.third.count { it == "192.168.71.22" } == 1)
     check(timedFault.third.count { it == "192.168.71.22" } == 1)
@@ -812,6 +818,43 @@ fun main() {
           secondStopped.await(5L,TimeUnit.SECONDS))
     check(stopFault.get()==null && stopCount.get()==1 && remoteStopped.get()) {
         "Concurrent stop callers did not share ONE confirmed close"
+    }
+
+
+    // Even when reverse requestStop returns without throwing, a negative ACK
+    // must not be mistaken for safe shutdown and a new Music owner admitted.
+    val unconfirmedStop = CheckpointRuntime()
+    val remoteStillActive = java.util.concurrent.atomic.AtomicBoolean(false)
+    val stopAttemptCount = java.util.concurrent.atomic.AtomicInteger()
+    unconfirmedStop.wifiAddress = { "192.168.72.10" }
+    unconfirmedStop.transportFactory = { _, _ ->
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = remoteStillActive.get()
+            override fun requestStart(id: String): Boolean {
+                remoteStillActive.set(true)
+                return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                stopAttemptCount.incrementAndGet()
+                return false // Synthetic firmware rejects ownership STOP.
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String,gen: Long,rgb: Int,bri: Int)=true
+        }
+    }
+    val unconfirmedListener = Listener()
+    unconfirmedStop.startOriginalAudio(listOf("192.168.72.21"),
+        unconfirmedListener, delayedGuard)
+    check(runCatching { unconfirmedStop.stop() }.isFailure) {
+        "Negative remote STOP ACK must not release original Music lease"
+    }
+    check(stopAttemptCount.get()==1 && remoteStillActive.get())
+    check(runCatching { unconfirmedStop.stop() }.isFailure) {
+        "Subsequent UI cleanup cannot falsely turn an uncertain STOP into success"
+    }
+    check(unconfirmedListener.states.contains("STOP_UNCONFIRMED")) {
+        "Original Music host must receive truthful STOP uncertainty"
     }
 
     println("PASS original Classic PCM/FFT -> production owned-only reverse frames; no second recorder, foreign-session takeover, or post-stop output")

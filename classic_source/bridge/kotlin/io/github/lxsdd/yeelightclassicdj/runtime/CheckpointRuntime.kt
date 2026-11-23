@@ -41,6 +41,11 @@ class CheckpointRuntime : DjRuntime {
     private var clockOnly = false
     private var originalCallbackOwner = false
     private var originalOutputGuard: DjRuntime.ConsentGuard? = null
+    // A failed reverse write/STOP may leave a remote music_on state unknown.
+    // Once uncertain, all later stop callers must fail closed instead of
+    // releasing the process-wide UI output admission fence.
+    private var remoteUncertain = false
+    private var shutdownConfirmed = true
     private data class OriginalFrame(
         val timestampMs: Long, val bands: DoubleArray, val beat: Boolean,
         val bpm: Double, val confidence: Double
@@ -300,6 +305,8 @@ class CheckpointRuntime : DjRuntime {
                     synchronized(lock) { state == State.STARTING } &&
                         (originalAuthorization?.isStillAuthorized() ?: true)
                 }
+            if (states.values.any { it == ClassicMusicCoordinator.State.QUARANTINED })
+                synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
             val owned = states.filterValues { it == ClassicMusicCoordinator.State.OWNED }.keys
             if (selectedLampIps.isNotEmpty() && owned.isEmpty()) {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
@@ -320,7 +327,10 @@ class CheckpointRuntime : DjRuntime {
                 ClassicPcmCaptureSession(bridge, checkNotNull(createdInput), clock) { output ->
                 // The engine has already stopped confirmed surviving peers.
                 // Closing this worker also closes PCM and reports the failure.
-                if (output.failed.isNotEmpty()) error("Owned music output lost")
+                if (output.failed.isNotEmpty()) {
+                    synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
+                    error("Owned music output lost")
+                }
                 val current = synchronized(lock) {
                     if (state == State.RUNNING) this.listener else null
                 }
@@ -360,8 +370,20 @@ class CheckpointRuntime : DjRuntime {
                              else "DJ_ACTIVE_${owned.size}_LAMPS")
         } catch (error: Throwable) {
             // Canceling during a network handshake must not leave an owned music session.
-            try { stagedEngine?.stop() } catch (cleanup: Throwable) { error.addSuppressed(cleanup) }
-            synchronized(lock) { state = State.CLOSED; this.listener = null }
+            try {
+                val cleanup = stagedEngine?.stop()
+                if (stagedEngine?.uncertainOutput() == true ||
+                    cleanup?.values?.any { it != ClassicMusicCoordinator.State.IDLE } == true)
+                    synchronized(lock) { remoteUncertain = true }
+            } catch (cleanup: Throwable) {
+                synchronized(lock) { remoteUncertain = true }
+                error.addSuppressed(cleanup)
+            }
+            synchronized(lock) {
+                state = State.CLOSED
+                this.listener = null
+                if (remoteUncertain) shutdownConfirmed = false
+            }
             try { createdInput?.close() } catch (close: Throwable) { error.addSuppressed(close) }
             throw error
         } finally {
@@ -402,7 +424,10 @@ class CheckpointRuntime : DjRuntime {
                     val output = current?.originalFrame(original.timestampMs,
                         original.bands, original.beat, original.bpm, original.confidence)
                     if (output != null) {
-                        if (output.failed.isNotEmpty()) error("Owned original music output lost")
+                        if (output.failed.isNotEmpty()) {
+                            synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
+                            error("Owned original music output lost")
+                        }
                         val cb = synchronized(lock) {
                             if (state == State.RUNNING && mine == generation) listener else null
                         }
@@ -420,8 +445,10 @@ class CheckpointRuntime : DjRuntime {
                         if (state == State.RUNNING && mine == generation) engine else null
                     }
                     val tick = current?.clockTick(clock())
-                    if (tick?.failed?.isNotEmpty() == true)
+                    if (tick?.failed?.isNotEmpty() == true) {
+                        synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
                         error("Owned timed music output lost")
+                    }
                     idle()
                 }
             }
@@ -430,7 +457,11 @@ class CheckpointRuntime : DjRuntime {
                 if (state == State.RUNNING && mine == generation) listener else null
             }
             try { callback?.onError("Audio/scene runtime stopped safely") }
-            finally { stop() }
+            finally {
+                // A failed STOP remains observable by the foreground UI's
+                // subsequent stop call and permanently fences new output.
+                try { stop() } catch (_: RuntimeException) { }
+            }
         }
     }
 
@@ -443,7 +474,12 @@ class CheckpointRuntime : DjRuntime {
             val pendingStart: CountDownLatch?
             val pendingStarter: Thread?
             synchronized(lock) {
-                if (state == State.STOPPING || state == State.CLOSED) return
+                if (state == State.STOPPING || state == State.CLOSED) {
+                    check(shutdownConfirmed && !remoteUncertain) {
+                        "Owned Music shutdown not confirmed"
+                    }
+                    return
+                }
                 // A STARTING session owns a temporary engine which is not yet
                 // published in 'engine'. That starter, not this stop caller,
                 // must roll it back; STOP cannot report success first.
@@ -461,9 +497,21 @@ class CheckpointRuntime : DjRuntime {
                 localWorker = worker; worker = null
                 callback = listener; listener = null
             }
+            var confirmed = false
             try {
-                session?.close()
-                localEngine?.stop()
+                // Always try remote cleanup even if capture close fails.
+                var closeError: Throwable? = null
+                try { session?.close() } catch (failure: Throwable) {
+                    closeError = failure
+                }
+                val states = try { localEngine?.stop() } catch (failure: Throwable) {
+                    if (closeError == null) closeError = failure
+                    else closeError.addSuppressed(failure)
+                    null
+                }
+                if (localEngine?.uncertainOutput() == true ||
+                    states?.values?.any { it != ClassicMusicCoordinator.State.IDLE } == true)
+                    synchronized(lock) { remoteUncertain = true }
                 if (localWorker != null && localWorker !== Thread.currentThread()) {
                     localWorker.join(1200L)
                 }
@@ -475,9 +523,17 @@ class CheckpointRuntime : DjRuntime {
                         "Original Music handshake cleanup not confirmed"
                     }
                 }
+                if (closeError != null ||
+                    synchronized(lock) { remoteUncertain || !shutdownConfirmed }) {
+                    throw IllegalStateException("Owned Music cleanup not confirmed", closeError)
+                }
+                confirmed = true
             } finally {
-                synchronized(lock) { state = State.CLOSED }
-                callback?.onState("STOPPED")
+                synchronized(lock) {
+                    state = State.CLOSED
+                    shutdownConfirmed = confirmed
+                }
+                callback?.onState(if (confirmed) "STOPPED" else "STOP_UNCONFIRMED")
             }
         }
     }
