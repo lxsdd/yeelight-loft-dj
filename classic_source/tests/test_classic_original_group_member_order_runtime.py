@@ -42,6 +42,19 @@ public final class GroupMusicModeManagerActivity {
     private final Context context;
     public int lastDrawn=-1;
     public View forced;
+    private final ArrayList<android.database.DataSetObserver> observers = new ArrayList<>();
+    @Override public void registerDataSetObserver(android.database.DataSetObserver next){
+      observers.add(next);
+    }
+    @Override public void unregisterDataSetObserver(android.database.DataSetObserver old){
+      observers.remove(old);
+    }
+    @Override public void notifyDataSetChanged(){
+      for(android.database.DataSetObserver observer:new ArrayList<>(observers))observer.onChanged();
+    }
+    @Override public void notifyDataSetInvalidated(){
+      for(android.database.DataSetObserver observer:new ArrayList<>(observers))observer.onInvalidated();
+    }
     public g(Context ctx, String... ids){
       context=ctx;
       for(String id:ids) items.add(new e(id));
@@ -292,6 +305,12 @@ public final class GroupMemberOrderHarness {
         ClassicOriginalMusicSelection.leaseForOriginalOutput();
     check(lease!=null && ClassicOriginalMusicSelection.isOutputLeaseCurrent(lease),
         "verified one-device output lease exists");
+    long oldStatusGeneration=live.revision();
+    liveOEM.notifyDataSetChanged();
+    check(live.revision()>oldStatusGeneration,
+        "original row status refresh expires prior drag generation");
+    check(ClassicOriginalMusicSelection.isOutputLeaseCurrent(lease),
+        "identical OEM IDs keep an active verified Music session");
     final int[] nativeClicks={0};
     liveList.setOnItemClickListener((parent,row,pos,id)->{
       nativeClicks[0]++;
@@ -319,6 +338,44 @@ public final class GroupMemberOrderHarness {
         "original callback failure cannot revive a lamp grant");
     check(live.getItem(0)==liveOEM.getItem(0),
         "source click mode cleared even after OEM exception");
+    // No additional J1() observation is needed to detect a changed OEM
+    // adapter. The existing owned Music lease must be revoked immediately.
+    check(ClassicOriginalMusicSelection.acceptLanProof(justLamp,justLamp,
+        witness.resolveAll(justLamp,observed)),"re-arm synthetic Music grant");
+    ClassicOriginalMusicSelection.OutputLease swapped =
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(swapped!=null,"rearmed Music grant exists");
+    long oldMemberGeneration=live.revision();
+    liveOEM.items.set(0,new e("0x00000000000000bb"));
+    liveOEM.notifyDataSetChanged();
+    check(live.revision()>oldMemberGeneration,"new member revokes old row generation");
+    check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(swapped),
+        "changed OEM identity invalidates a running Music grant");
+    check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
+        "old Music endpoint cannot survive original member replacement");
+    check(!live.markDjMember(lamp,true,live.revision()),
+        "unknown OEM replacement cannot inherit DJ consent");
+    // A separate original host invalidating its complete dataset must also
+    // revoke its own active grant without touching unrelated device sockets.
+    owner("room-invalidated");
+    ListView invalidList=new ListView(context);
+    g invalidOEM=new g(context,lamp);
+    ClassicOriginalGroupMemberOrder.installGroupAdapter(invalidList,invalidOEM);
+    ClassicOriginalGroupMemberOrder.OrderedGroupAdapter invalidAdapter=installed(invalidList);
+    ClassicOriginalMusicSelection.observedOriginalGroupMembers(invalidOEM.items);
+    check(invalidAdapter.getItem(0)==invalidOEM.getItem(0),"invalidated row baseline");
+    check(invalidAdapter.markDjMember(lamp,true,invalidAdapter.revision()),
+        "explicit invalidation fixture DJ consent");
+    check(ClassicOriginalMusicSelection.acceptLanProof(justLamp,justLamp,
+        witness.resolveAll(justLamp,observed)),"invalidated fixture LAN proof");
+    ClassicOriginalMusicSelection.OutputLease toInvalidate=
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(toInvalidate!=null,"invalidated fixture active lease");
+    invalidOEM.notifyDataSetInvalidated();
+    check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(toInvalidate),
+        "invalidated OEM dataset revokes the owned Music lease");
+    check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
+        "invalidated OEM dataset retains no LAN addresses");
     // Real original app / unknown adapter ownership must always fall back.
     ListView originalPackage=new ListView(new OriginalContext());
     g unowned=new g(context,"x","y");

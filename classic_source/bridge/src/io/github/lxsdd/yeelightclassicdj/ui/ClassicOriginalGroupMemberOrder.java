@@ -74,17 +74,29 @@ public final class ClassicOriginalGroupMemberOrder {
         // A positional OEM click must observe source-indexed getItem/getItemId
         // during that one synchronous callback, not the DnD display indices.
         private final ThreadLocal<Boolean> originalClickIndex = new ThreadLocal<>();
+        /** Preserve an owned Music lease on status-only refresh, but revoke
+         * it immediately when the original adapter's member set changes.
+         * The original J1() hook may not run again before the next OEM bind.
+         */
+        private synchronized void observedOriginalAdapterChange(boolean invalidated) {
+            if (revoked || !scope.equals(ClassicOriginalMusicSelection.originalGroupDisplayScope()))
+                return;
+            boolean wasVerified = verified;
+            List<String> previous = new ArrayList<>(sourceIds);
+            revision++;
+            verified = false;
+            boolean sameMembers = !invalidated && wasVerified &&
+                refresh() && previous.equals(sourceIds);
+            if (!sameMembers) ClassicOriginalMusicSelection.originalGroupRowAction();
+        }
+
         private final DataSetObserver observer = new DataSetObserver() {
             @Override public void onChanged() {
-                synchronized (OrderedGroupAdapter.this) {
-                    revision++; verified = false;
-                }
+                observedOriginalAdapterChange(false);
                 notifyDataSetChanged();
             }
             @Override public void onInvalidated() {
-                synchronized (OrderedGroupAdapter.this) {
-                    revision++; verified = false;
-                }
+                observedOriginalAdapterChange(true);
                 notifyDataSetInvalidated();
             }
         };
