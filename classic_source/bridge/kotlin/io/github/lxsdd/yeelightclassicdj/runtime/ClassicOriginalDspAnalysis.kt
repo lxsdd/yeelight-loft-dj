@@ -32,6 +32,22 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
     }
 
     /**
+     * Original AudioRecord/Visualizer stop or MusicActivity owner revocation.
+     * Erase the rolling PCM immediately and drop old tempo/gain/source state.
+     * No socket, service, permission or OEM capture lifecycle is changed.
+     */
+    @Synchronized override fun onCaptureClosed() {
+        resetPcmWindow()
+        beats.reset()
+        pcmBands = null
+        gain = 1.0
+        source = ""
+        rateHz = 0
+        lastTime = -1L
+        lastPcmAtMs = -1L
+    }
+
+    /**
      * The OEM may emit mic and Visualizer callbacks in overlapping workers.
      * Prefer genuine PCM while it is fresh, and reject delayed/duplicate
      * callbacks instead of corrupting the shared tempo estimator.

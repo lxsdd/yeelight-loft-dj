@@ -90,5 +90,22 @@ fun main() {
         1024, 48000, 750))
     check(changed.bpm == 0f) { "Source switch retained stale tempo" }
 
+    val cleanRestart = ClassicOriginalDspAnalysis()
+    checkNotNull(cleanRestart.onPcm(sine(90.0), 1024, 16000, 100))
+    cleanRestart.onCaptureClosed()  // real original AudioRecord stop / host revoke
+    val afterStop = checkNotNull(cleanRestart.onPcm(ShortArray(256), 256, 16000, 120))
+    check(afterStop.bands.all { it == 0f } && afterStop.bpm == 0f && !afterStop.beat) {
+        "New short microphone session inherited the old PCM window or tempo"
+    }
+    cleanRestart.onCaptureClosed()
+    checkNotNull(cleanRestart.onFft(fft, 44100000, 130)).also {
+        check(it.bpm == 0f) { "Stopped mic blocked independent OEM FFT fallback" }
+    }
+    cleanRestart.onCaptureClosed() // repeated release is harmless
+    val cleanAgain = checkNotNull(cleanRestart.onPcm(ShortArray(256), 256, 16000, 140))
+    check(cleanAgain.bands.all { it == 0f } && cleanAgain.bpm == 0f) {
+        "Repeated OEM release leaked DSP history into a new source"
+    }
+
     println("PASS: original OEM callbacks -> shared real PCM FFT, AGC, beat, BPM; source isolation")
 }

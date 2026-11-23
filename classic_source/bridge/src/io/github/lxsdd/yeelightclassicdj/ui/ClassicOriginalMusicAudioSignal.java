@@ -18,6 +18,8 @@ public final class ClassicOriginalMusicAudioSignal {
     public interface Analyzer {
         Frame onPcm(short[] pcm, int valid, int rateHz, long timestampMs);
         Frame onFft(byte[] fft, int rateMilliHz, long timestampMs);
+        /** Pure DSP reset only. An OEM stop cannot close another capture owner. */
+        default void onCaptureClosed() {}
     }
 
     public static final class Frame {
@@ -66,10 +68,25 @@ public final class ClassicOriginalMusicAudioSignal {
     }
 
     /** A stale Activity cannot detach the newer resumed Activity. */
-    public static synchronized void clearAnalyzer(Analyzer expected) {
-        if (expected != null && owner == expected) {
-            owner = null;
-            clearSignal();
+    public static void clearAnalyzer(Analyzer expected) {
+        boolean detached = false;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if (expected != null && owner == expected) {
+                owner = null;
+                clearSignal();
+                detached = true;
+            }
+        }
+        if (detached) closeDspSafely(expected);
+    }
+
+    /** No exception from the optional read-only observer may escape into OEM. */
+    private static void closeDspSafely(Analyzer expected) {
+        if (expected == null) return;
+        try {
+            expected.onCaptureClosed();
+        } catch (RuntimeException | LinkageError ignored) {
+            // The original Classic capture and player lifecycle is authoritative.
         }
     }
 
@@ -168,14 +185,30 @@ public final class ClassicOriginalMusicAudioSignal {
         return new Snapshot(true, beat, source, energy, bpm, confidence, bands);
     }
 
-    public static synchronized void observedOriginalMicStopped() {
+    public static void observedOriginalMicStopped() {
         MIC_COUNT.remove();
         MIC_RATE.remove();
-        if ("MIC".equals(source)) clearSignal();
+        Analyzer closing = null;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if ("MIC".equals(source)) {
+                closing = owner;
+                clearSignal();
+            }
+        }
+        // Never take the DSP monitor while holding this class monitor:
+        // an in-flight PCM worker acquires them in the opposite order.
+        closeDspSafely(closing);
     }
 
-    public static synchronized void observedOriginalVisualizerStopped() {
-        if ("FFT".equals(source)) clearSignal();
+    public static void observedOriginalVisualizerStopped() {
+        Analyzer closing = null;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if ("FFT".equals(source)) {
+                closing = owner;
+                clearSignal();
+            }
+        }
+        closeDspSafely(closing);
     }
 
     static synchronized void resetForTest() {

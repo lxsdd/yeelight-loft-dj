@@ -58,7 +58,8 @@ public final class OriginalMusicAudioHarness {
   static void check(boolean b, String name) { if (!b) throw new AssertionError(name); }
   static short[] pcm(int n) { short[] d = new short[n]; java.util.Arrays.fill(d,(short)8000); return d; }
   static final class Fake implements ClassicOriginalMusicAudioSignal.Analyzer {
-    int pcmCalls, fftCalls;
+    int pcmCalls, fftCalls, closeCalls;
+    public void onCaptureClosed() { closeCalls++; }
     public ClassicOriginalMusicAudioSignal.Frame onPcm(short[] x, int n, int hz, long ms) {
       pcmCalls++;
       check(hz == 16000,"original recorder format");
@@ -102,19 +103,33 @@ public final class OriginalMusicAudioHarness {
     s = ClassicOriginalMusicAudioSignal.snapshotAt(1101);
     check(first.fftCalls == 1 && s.fresh && s.source.equals("FFT"),"real original FFT");
     ClassicOriginalMusicAudioSignal.observedOriginalMicStopped();
+    check(first.closeCalls == 0, "old mic stop cannot reset current FFT DSP");
     check(ClassicOriginalMusicAudioSignal.snapshotAt(1101).fresh,
           "old mic stop cannot revoke FFT");
     ClassicOriginalMusicAudioSignal.observedFftAt(fft,0,1102);
     check(first.fftCalls == 1,"invalid original FFT format ignored");
+    ClassicOriginalMusicAudioSignal.observedOriginalVisualizerStopped();
+    check(first.closeCalls == 1, "real FFT owner stopped exactly once");
+    check(!ClassicOriginalMusicAudioSignal.snapshotAt(1103).fresh,
+          "FFT stop cleared the UI frame");
+    ClassicOriginalMusicAudioSignal.observedOriginalVisualizerStopped();
+    check(first.closeCalls == 1, "duplicate FFT release does not reset twice");
     Fake next = new Fake();
     ClassicOriginalMusicAudioSignal.installAnalyzer(next);
     check(!ClassicOriginalMusicAudioSignal.snapshotAt(1103).fresh,
           "new host invalidates old source");
     ClassicOriginalMusicAudioSignal.clearAnalyzer(first);
+    check(next.closeCalls == 0, "old owner must not close the new DSP");
     ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1200);
     check(next.pcmCalls == 1,"old host cannot cancel new host");
-    ClassicOriginalMusicAudioSignal.clearAnalyzer(next);
+    ClassicOriginalMusicAudioSignal.observedOriginalMicStopped();
+    check(next.closeCalls == 1, "real OEM mic release resets current DSP");
     check(!ClassicOriginalMusicAudioSignal.snapshotAt(1201).fresh,
+          "real mic stop revokes the visible source");
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1210);
+    ClassicOriginalMusicAudioSignal.clearAnalyzer(next);
+    check(next.closeCalls == 2, "MusicActivity pause resets current DSP");
+    check(!ClassicOriginalMusicAudioSignal.snapshotAt(1211).fresh,
           "real host pause revokes source");
     ClassicOriginalMusicAudioSignal.installAnalyzer(next);
     ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1300);
