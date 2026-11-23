@@ -30,6 +30,9 @@ public final class ClassicOriginalMusicSelection {
     private static String lanGroupOwner;
     private static long lanBoundAtMs = Long.MIN_VALUE;
     static final long LAN_FRESH_MS = 90_000L;
+    // Source- and user-originated participant changes invalidate all output
+    // authorizations; expiry of a one-shot LAN cache does not end an owned socket.
+    private static long outputRevision = 1L;
     private static void revokeLan() {
         lanTargets.clear();
         lanGroupOwner = null;
@@ -37,6 +40,37 @@ public final class ClassicOriginalMusicSelection {
     }
 
     private ClassicOriginalMusicSelection() {}
+
+    /** Immutable, in-process participant grant. Never persisted or exported. */
+    public static final class OutputLease {
+        private final long revision;
+        private final String owner;
+        private final java.util.List<String> ips;
+        private OutputLease(long revision, String owner, java.util.List<String> ips) {
+            this.revision = revision;
+            this.owner = owner;
+            this.ips = java.util.Collections.unmodifiableList(
+                new java.util.ArrayList<>(ips));
+        }
+        public java.util.List<String> targets() {
+            return new java.util.ArrayList<>(ips);
+        }
+        public int size() { return ips.size(); }
+    }
+
+    public static synchronized OutputLease leaseForOriginalOutput() {
+        return leaseForOriginalOutputAt(monotonicMs());
+    }
+    static synchronized OutputLease leaseForOriginalOutputAt(long nowMs) {
+        java.util.List<String> ips = resolvedOriginalLanIpsAt(nowMs);
+        return ips.isEmpty() || selectedId == null
+            ? null : new OutputLease(outputRevision, selectedId, ips);
+    }
+    /** The owner/participant revision, not a discovery TTL, fences live output. */
+    public static synchronized boolean isOutputLeaseCurrent(OutputLease lease) {
+        return lease != null && lease.revision == outputRevision &&
+            selectedId != null && selectedId.equals(lease.owner);
+    }
 
     /** Called only from the pinned private original click bridge. */
     public static synchronized void observedFromOriginalDevice(String originalId) {
@@ -99,8 +133,10 @@ public final class ClassicOriginalMusicSelection {
             originalMemberKeys.keysForDisplay());
         originalMemberKeys = ClassicOriginalGroupMemberWitness.inspect(members);
         if (!originalMemberKeys.identitiesVerified ||
-            !before.equals(new java.util.HashSet<>(originalMemberKeys.keysForDisplay())))
+            !before.equals(new java.util.HashSet<>(originalMemberKeys.keysForDisplay()))) {
+            ++outputRevision;
             revokeLan();
+        }
         if (originalMemberKeys.identitiesVerified)
             djIntentKeys.retainAll(originalMemberKeys.keysForDisplay());
         else djIntentKeys.clear();
@@ -203,6 +239,7 @@ public final class ClassicOriginalMusicSelection {
         // No Stream API: original Classic supports Android before API 24.
         for (String ip : exact.values())
             if (!ClassicOriginalLanDiscovery.privateIpv4(ip)) return false;
+        ++outputRevision;
         revokeLan();
         for (String id : originalAdapterIds)
             if (exact.containsKey(id)) lanTargets.put(id,exact.get(id));
@@ -241,6 +278,7 @@ public final class ClassicOriginalMusicSelection {
     static synchronized boolean markDjIntentAt(String id, boolean include, long nowMs) {
         if (verifiedIdentityCountAt(nowMs) <= 0 || id == null ||
             !originalMemberKeys.keysForDisplay().contains(id)) return false;
+        ++outputRevision;
         revokeLan();
         if (include) djIntentKeys.add(id);
         else djIntentKeys.remove(id);
@@ -251,6 +289,7 @@ public final class ClassicOriginalMusicSelection {
     }
     static synchronized boolean markAllDjIntentAt(boolean include, long nowMs) {
         if (verifiedIdentityCountAt(nowMs) <= 0) return false;
+        ++outputRevision;
         revokeLan();
         if (include) djIntentKeys.addAll(originalMemberKeys.keysForDisplay());
         else djIntentKeys.clear();
@@ -301,6 +340,7 @@ public final class ClassicOriginalMusicSelection {
     }
 
     private static void resetGroup() {
+        ++outputRevision;
         revokeLan();
         originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
         djIntentKeys.clear();
