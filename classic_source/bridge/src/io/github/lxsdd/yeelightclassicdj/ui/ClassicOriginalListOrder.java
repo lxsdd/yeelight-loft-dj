@@ -98,7 +98,7 @@ public final class ClassicOriginalListOrder {
         bind(adapter, holder, index, FAVORITE_ADAPTER);
     }
 
-    private static synchronized OrderedList favoriteListForAdapter(Object adapter) {
+    static synchronized OrderedList favoriteListForAdapter(Object adapter) {
         OrderedList list = ADAPTERS.get(adapter);
         return list != null && list.surface == ClassicOrderPolicy.Surface.FAVORITES &&
             FAVORITE_ADAPTER.equals(adapter.getClass().getName()) ? list : null;

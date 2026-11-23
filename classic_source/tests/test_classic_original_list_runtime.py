@@ -198,8 +198,8 @@ public final class OriginalModelListHarness {
   invalid.e(savedSource);
   check(ClassicOriginalListOrder.favoriteListForAdapter(invalid)==null,
       "unverified favorite category never wraps");
-  List<m> duplicate=new ArrayList<>(Arrays.asList(new m("same"),new m("same")));
-  another.e(duplicate);
+  List<m> duplicateFavorites=new ArrayList<>(Arrays.asList(new m("same"),new m("same")));
+  another.e(duplicateFavorites);
   check(ClassicOriginalListOrder.favoriteListForAdapter(another)==null,
       "ambiguous stable favorite IDs rejected");
   System.out.println("CLASSIC_ORIGINAL_SCENE_ROOM_FAVORITE_LIST_RUNTIME_PASS");
