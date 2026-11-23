@@ -54,24 +54,32 @@ internal class ClassicSpatialChoreography {
                 val span = (count.toLong() - 1L).coerceAtLeast(1L)
                 val cycle = span * 2L
                 val stepMs = 21_000L / options.speedPercent
-                val phase = (timestampMs / stepMs) % cycle
+                // Interpolate between adjacent lamps instead of jumping
+                // between integer steps at the bounded Music frame cadence.
+                // Modulo BEFORE converting to Double preserves fractional
+                // motion even after very long monotonic Android uptimes.
+                val phase = (timestampMs % (cycle * stepMs)) / stepMs.toDouble()
                 val head = if (phase <= span) phase else cycle - phase
-                val distance = abs(position.toLong() - head)
-                when (distance) {
-                    0L -> 1.0
-                    1L -> 0.22
-                    in 2L..options.trailLength.toLong() ->
-                        exp(-distance.toDouble() * 1.5) * 0.22
+                val distance = abs(position.toDouble() - head)
+                when {
+                    distance <= 1.0 -> 1.0 - 0.78 * distance
+                    distance <= options.trailLength.toDouble() ->
+                        0.22 * exp(-(distance - 1.0) * 1.5)
                     else -> 0.0
                 }
             }
             Mode.METEOR -> {
                 val cycle = count.toLong() + options.trailLength
                 val stepMs = 16_500L / options.speedPercent
-                val head = (timestampMs / stepMs) % cycle
-                val age = head - position.toLong()
-                if (age in 0L..options.trailLength.toLong())
-                    exp(-age.toDouble() * (3.0 / options.trailLength)) else 0.0
+                val head = (timestampMs % (cycle * stepMs)) / stepMs.toDouble()
+                val age = head - position.toDouble()
+                when {
+                    age < -1.0 || age > options.trailLength -> 0.0
+                    // A fractional leading edge fades the next participant in
+                    // before arrival, rather than skipping it entirely.
+                    age < 0.0 -> 1.0 + age
+                    else -> exp(-age * (3.0 / options.trailLength))
+                }
             }
             Mode.WAVE -> {
                 val phase = timestampMs.toDouble() * options.speedPercent / 50_000.0 -

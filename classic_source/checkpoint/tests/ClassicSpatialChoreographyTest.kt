@@ -51,6 +51,47 @@ fun main() {
             "A spatial scene has one explicit color identity: $mode"
         }
     }
+
+    // Full fleet Music output is frame-budgeted; fractional choreography
+    // interpolates BETWEEN 210ms scanner steps and 165ms meteor steps.
+    // Every sample remains an ordinary OWNED set_scene frame, never power-off.
+    val smoothScannerStart = (0 until count).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.SCANNER, it, count, 0L, .7, false).brightness
+    }
+    val smoothScannerHalf = (0 until count).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.SCANNER, it, count, 105L, .7, false).brightness
+    }
+    val smoothScannerNext = (0 until count).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.SCANNER, it, count, 210L, .7, false).brightness
+    }
+    check(smoothScannerStart[0] > smoothScannerStart[1] &&
+          smoothScannerNext[1] > smoothScannerNext[0])
+    check(kotlin.math.abs(smoothScannerHalf[0] - smoothScannerHalf[1]) <= 1 &&
+          smoothScannerHalf[0] > smoothScannerStart[1] &&
+          smoothScannerHalf[1] > smoothScannerStart[1]) {
+        "Scanner must crossfade neighbouring owned lamp positions"
+    }
+    val smoothMeteorStart = (0..2).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.METEOR, it, count, 0L, .7, false).brightness
+    }
+    val smoothMeteorHalf = (0..2).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.METEOR, it, count, 82L, .7, false).brightness
+    }
+    val smoothMeteorNext = (0..2).map {
+        choreography.frame(ClassicSpatialChoreography.Mode.METEOR, it, count, 165L, .7, false).brightness
+    }
+    check(smoothMeteorStart[1] == 1 && smoothMeteorHalf[1] > 1 &&
+          smoothMeteorHalf[1] < smoothMeteorNext[1] &&
+          smoothMeteorHalf[0] > 1) {
+        "Meteor must gradually illuminate its next owned position"
+    }
+    // Long uptime cannot silently freeze fractional scanner/meteor motion.
+    for (mode in listOf(ClassicSpatialChoreography.Mode.SCANNER,
+                        ClassicSpatialChoreography.Mode.METEOR)) {
+        val first = choreography.frame(mode, 2, count, Long.MAX_VALUE - 900L, .7, false)
+        val next = choreography.frame(mode, 2, count, Long.MAX_VALUE - 800L, .7, false)
+        check(first.brightness in 1..100 && next.brightness in 1..100)
+    }
     val scanner0=(0 until 14).map {
         choreography.frame(ClassicSpatialChoreography.Mode.SCANNER,it,14,0,.7,false).brightness
     }
@@ -91,6 +132,15 @@ fun main() {
         "Reverse scanner must begin at last selected participant"
     }
     check(reverseStart.all { it.rgb == 0x123456 && it.brightness in 4..85 })
+
+    val reverseHalf = (0 until 14).map { index ->
+        reverseChase.frame(ClassicSpatialChoreography.Mode.SCANNER,index,14,52L,.8,false).brightness
+    }
+    check(kotlin.math.abs(reverseHalf[13] - reverseHalf[12]) <= 1 &&
+          reverseHalf[13] > reverseStart[12].brightness) {
+        "Reverse scanner must interpolate backwards without swapping participant identities"
+    }
+
     val fastPhase = (0 until 14).map { index ->
         reverseChase.frame(ClassicSpatialChoreography.Mode.SCANNER,index,14,1050,.8,false).brightness
     }
@@ -270,6 +320,17 @@ fun main() {
             check(tick.sent == fleetIds.toSet() && tick.failed.isEmpty()) {
                 "Effect $mode did not reach every selected lamp for fleet size $fleetSize"
             }
+
+            if (fleetSize == 14 && mode == ClassicSpatialChoreography.Mode.SCANNER) {
+                val sample = fleetWire.sent.takeLast(fleetSize)
+                // A real multi-lamp output frame includes the interpolated
+                // leading edge at the next selected participant, not just
+                // a standalone zero-device preview computation.
+                check(sample[1].third > 1 && sample[2].third > 1) {
+                    "14-lamp OWNED scanner frame skipped its adjacent leading edge"
+                }
+            }
+
         }
         check(fleetWire.sent.all { it.first in fleetIds })
         check(fleetWire.calls.none { it.contains("foreign-$fleetSize") })
