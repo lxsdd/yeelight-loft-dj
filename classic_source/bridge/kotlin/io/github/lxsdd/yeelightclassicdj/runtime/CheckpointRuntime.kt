@@ -3,6 +3,8 @@ package io.github.lxsdd.yeelightclassicdj.runtime
 import android.content.Context
 import android.media.projection.MediaProjection
 import android.os.SystemClock
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import loftdj.classic.ClassicAndroidAudioRecordInput
 import loftdj.classic.ClassicAndroidVisualizerInput
 import loftdj.classic.ClassicDjEngine
@@ -25,6 +27,12 @@ import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal
  */
 class CheckpointRuntime : DjRuntime {
     private val lock = Any()
+    // Serialize all stop callers, including the runtime worker and Activity.
+    // Returning early from a concurrent STOP would release the UI output lease
+    // while owned reverse sockets were still being closed.
+    private val stopSerial = Any()
+    private var startFinished: CountDownLatch? = null
+    private var startThread: Thread? = null
     private var state = State.NEW
     private var worker: Thread? = null
     private var capture: ClassicPcmCaptureSession? = null
@@ -241,6 +249,7 @@ class CheckpointRuntime : DjRuntime {
         require(selectedLampIps.distinct().size == selectedLampIps.size)
         require(selectedLampIps.all(ClassicYeelightMusicTransport::validLanIp))
         val independentScene = sourceInput == null && !originalCallbacks
+        val thisStart = CountDownLatch(1)
         synchronized(lock) {
             check(state == State.NEW) { "Session cannot be restarted" }
             if (independentScene) check(clockSceneAllowed(scene, pulse)) {
@@ -250,6 +259,8 @@ class CheckpointRuntime : DjRuntime {
                 "Original output consent missing or revoked"
             }
             state = State.STARTING
+            startFinished = thisStart
+            startThread = Thread.currentThread()
             this.listener = listener
         }
         var createdInput: ClassicPcmCaptureSession.Input? = null
@@ -353,6 +364,16 @@ class CheckpointRuntime : DjRuntime {
             synchronized(lock) { state = State.CLOSED; this.listener = null }
             try { createdInput?.close() } catch (close: Throwable) { error.addSuppressed(close) }
             throw error
+        } finally {
+            // A concurrently requested STOP must wait until a partially
+            // negotiated Music group has either been committed or rolled back.
+            synchronized(lock) {
+                if (startFinished === thisStart) {
+                    startFinished = null
+                    startThread = null
+                }
+            }
+            thisStart.countDown()
         }
     }
 
@@ -414,34 +435,50 @@ class CheckpointRuntime : DjRuntime {
     }
 
     override fun stop() {
-        val session: ClassicPcmCaptureSession?
-        val localWorker: Thread?
-        val localEngine: ClassicDjEngine?
-        val callback: DjRuntime.Listener?
-        synchronized(lock) {
-            if (state == State.STOPPING || state == State.CLOSED) return
-            state = State.STOPPING
-            ++generation // fence all late read-loop callbacks
-            session = capture; capture = null
-            localEngine = engine; engine = null
-            inputBridge = null
-            clockOnly = false
-            originalCallbackOwner = false
-            originalOutputGuard = null
-            pendingOriginal = null
-            localWorker = worker; worker = null
-            callback = listener; listener = null
-        }
-        try {
-            // Source owned by this instance; never touches an OEM/foreign music session.
-            session?.close()
-            localEngine?.stop()
-            if (localWorker != null && localWorker !== Thread.currentThread()) {
-                localWorker.join(1200L)
+        synchronized(stopSerial) {
+            val session: ClassicPcmCaptureSession?
+            val localWorker: Thread?
+            val localEngine: ClassicDjEngine?
+            val callback: DjRuntime.Listener?
+            val pendingStart: CountDownLatch?
+            val pendingStarter: Thread?
+            synchronized(lock) {
+                if (state == State.STOPPING || state == State.CLOSED) return
+                // A STARTING session owns a temporary engine which is not yet
+                // published in 'engine'. That starter, not this stop caller,
+                // must roll it back; STOP cannot report success first.
+                pendingStart = if (state == State.STARTING) startFinished else null
+                pendingStarter = if (state == State.STARTING) startThread else null
+                state = State.STOPPING
+                ++generation // fence all late read-loop callbacks
+                session = capture; capture = null
+                localEngine = engine; engine = null
+                inputBridge = null
+                clockOnly = false
+                originalCallbackOwner = false
+                originalOutputGuard = null
+                pendingOriginal = null
+                localWorker = worker; worker = null
+                callback = listener; listener = null
             }
-        } finally {
-            synchronized(lock) { state = State.CLOSED }
-            callback?.onState("STOPPED")
+            try {
+                session?.close()
+                localEngine?.stop()
+                if (localWorker != null && localWorker !== Thread.currentThread()) {
+                    localWorker.join(1200L)
+                }
+                // No new Activity may acquire reverse output before the
+                // in-flight source/LAN handshake has finished its own cleanup.
+                // Timeout fails CLOSED and quarantines the UI output gate.
+                if (pendingStart != null && pendingStarter !== Thread.currentThread()) {
+                    check(pendingStart.await(12L, TimeUnit.SECONDS)) {
+                        "Original Music handshake cleanup not confirmed"
+                    }
+                }
+            } finally {
+                synchronized(lock) { state = State.CLOSED }
+                callback?.onState("STOPPED")
+            }
         }
     }
 

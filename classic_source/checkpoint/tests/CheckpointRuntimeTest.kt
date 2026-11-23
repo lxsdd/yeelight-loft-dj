@@ -667,6 +667,153 @@ fun main() {
     check(timedFault.third.count { it == "192.168.71.22" } == 1)
     check(micFault.third.count { it == "192.168.71.22" } == 1)
 
+
+    // Production startup/stop race: the private Music reverse handshake can
+    // be blocked inside a LAN call while the original Activity disappears.
+    // stop() must NOT return until that staged owner has rolled back its
+    // confirmed reverse socket; otherwise the next Activity can race it.
+    val delayed = CheckpointRuntime()
+    val delayedEntered = CountDownLatch(1)
+    val delayedRelease = CountDownLatch(1)
+    val delayedStartDone = CountDownLatch(1)
+    val delayedStopDone = CountDownLatch(1)
+    val delayedActive = java.util.concurrent.atomic.AtomicBoolean(false)
+    val delayedStops = java.util.concurrent.atomic.AtomicInteger()
+    val delayedStartFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+    val delayedStopFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+    delayed.wifiAddress = { "192.168.22.10" }
+    delayed.transportFactory = { _, ids ->
+        check(ids == setOf("192.168.22.21"))
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = delayedActive.get()
+            override fun requestStart(id: String): Boolean {
+                delayedEntered.countDown()
+                check(delayedRelease.await(5L, TimeUnit.SECONDS))
+                delayedActive.set(true)
+                return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                delayedStops.incrementAndGet()
+                delayedActive.set(false)
+                return true
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String,generation: Long,
+                rgb: Int,brightness: Int) = true
+        }
+    }
+    val delayedGuard = object : DjRuntime.ConsentGuard {
+        override fun isStillAuthorized() = true
+    }
+    val firstStarter = Thread {
+        try {
+            delayed.startOriginalAudio(listOf("192.168.22.21"), Listener(), delayedGuard)
+        } catch (t: Throwable) {
+            delayedStartFailure.set(t)
+        } finally { delayedStartDone.countDown() }
+    }
+    firstStarter.start()
+    check(delayedEntered.await(4L,TimeUnit.SECONDS)) {
+        "The injected ORIGINAL reverse handshake did not begin"
+    }
+    Thread {
+        try { delayed.stop() }
+        catch (t: Throwable) { delayedStopFailure.set(t) }
+        finally { delayedStopDone.countDown() }
+    }.start()
+    check(!delayedStopDone.await(80L,TimeUnit.MILLISECONDS)) {
+        "STOP returned while staged reverse Music handshake was still blocked"
+    }
+    delayedRelease.countDown()
+    check(delayedStartDone.await(5L,TimeUnit.SECONDS))
+    check(delayedStopDone.await(5L,TimeUnit.SECONDS)) {
+        "STOP did not wait for private staged Music cleanup"
+    }
+    check(delayedStartFailure.get()!=null && delayedStopFailure.get()==null)
+    check(!delayedActive.get() && delayedStops.get()==1) {
+        "Confirmed staged Music socket not closed before STOP returned"
+    }
+    check(!delayed.submitOriginalFrame(originalFrame)) {
+        "Late PCM callback escaped staged stop"
+    }
+    check(runCatching {
+        delayed.startOriginalAudio(listOf("192.168.22.21"), Listener(), delayedGuard)
+    }.isFailure) { "Closed runtime must not restart the old owner" }
+
+    // Duplicate STOP callers are serialized until the real owned transport
+    // confirms closure; a second caller must not prematurely release the
+    // process-global output gate.
+    val doubleStop = CheckpointRuntime()
+    val enteredStop = CountDownLatch(1)
+    val releaseStop = CountDownLatch(1)
+    val firstStopped = CountDownLatch(1)
+    val secondStopped = CountDownLatch(1)
+    val stopFault = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+    val remoteStopped = java.util.concurrent.atomic.AtomicBoolean(false)
+    val stopCount = java.util.concurrent.atomic.AtomicInteger()
+    doubleStop.wifiAddress = { "192.168.22.10" }
+    doubleStop.transportFactory = { _, _ ->
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = !remoteStopped.get()
+            override fun requestStart(id: String) = true
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                enteredStop.countDown()
+                check(releaseStop.await(5L,TimeUnit.SECONDS))
+                stopCount.incrementAndGet()
+                remoteStopped.set(true)
+                return true
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String,gen: Long,rgb: Int,bri: Int)=true
+        }
+    }
+    // Existing foreign music may not be taken over: use a separate initial
+    // false state before the explicit confirmed own start.
+    val ownInitially = java.util.concurrent.atomic.AtomicBoolean(false)
+    // Rebind real transport above to honor the initial negative state.
+    doubleStop.transportFactory = { _, _ ->
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? =
+                if (remoteStopped.get()) false else ownInitially.get()
+            override fun requestStart(id: String): Boolean {
+                ownInitially.set(true); return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                enteredStop.countDown()
+                check(releaseStop.await(5L,TimeUnit.SECONDS))
+                stopCount.incrementAndGet()
+                remoteStopped.set(true)
+                return true
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String,gen: Long,rgb: Int,bri: Int)=true
+        }
+    }
+    doubleStop.startOriginalAudio(listOf("192.168.22.22"), Listener(), delayedGuard)
+    Thread {
+        try { doubleStop.stop() }
+        catch (t: Throwable) { stopFault.set(t) }
+        finally { firstStopped.countDown() }
+    }.start()
+    check(enteredStop.await(4L,TimeUnit.SECONDS))
+    Thread {
+        try { doubleStop.stop() }
+        catch (t: Throwable) { stopFault.set(t) }
+        finally { secondStopped.countDown() }
+    }.start()
+    check(!secondStopped.await(80L,TimeUnit.MILLISECONDS)) {
+        "Second STOP returned before first reverse close finished"
+    }
+    releaseStop.countDown()
+    check(firstStopped.await(5L,TimeUnit.SECONDS) &&
+          secondStopped.await(5L,TimeUnit.SECONDS))
+    check(stopFault.get()==null && stopCount.get()==1 && remoteStopped.get()) {
+        "Concurrent stop callers did not share ONE confirmed close"
+    }
+
     println("PASS original Classic PCM/FFT -> production owned-only reverse frames; no second recorder, foreign-session takeover, or post-stop output")
     println("PASS dynamic 5/15/33/72 selected LAN peers through real timed runtime")
     println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")
