@@ -44,8 +44,11 @@ public final class ClassicOriginalCursorOrder {
                                ClassicOrderPolicy.Surface surface, String scope) {
         if (cursor instanceof OrderedCursor) {
             OrderedCursor previous = (OrderedCursor) cursor;
-            return previous.surface == surface && previous.scope.equals(scope)
-                ? cursor : previous.delegate;
+            if (previous.surface == surface && previous.scope.equals(scope))
+                return cursor;
+            // A recycled OEM cursor may be presented on another independent
+            // list surface. Unwrap first, then validate the new scope.
+            cursor = previous.delegate;
         }
         if (context == null || !CLONE.equals(context.getPackageName()) ||
             cursor == null || cursor.isClosed()) return cursor;
@@ -107,8 +110,10 @@ public final class ClassicOriginalCursorOrder {
         final OrderedCursor cursor;
         final Object adapter;
         final String id;
-        Drag(OrderedCursor cursor, Object adapter, String id) {
+        final long revision;
+        Drag(OrderedCursor cursor, Object adapter, String id, long revision) {
             this.cursor = cursor; this.adapter = adapter; this.id = id;
+            this.revision = revision;
         }
     }
 
@@ -116,6 +121,7 @@ public final class ClassicOriginalCursorOrder {
         private OrderedCursor cursor;
         private Object adapter;
         private String id;
+        private long revision;
 
         Handle(Context context) {
             super(context);
@@ -125,38 +131,42 @@ public final class ClassicOriginalCursorOrder {
             setGravity(Gravity.CENTER);
             setContentDescription("Sortieren: halten und auf einen anderen Griff ziehen");
             setOnLongClickListener(view -> {
-                if (android.os.Build.VERSION.SDK_INT < 24 || cursor == null || id == null)
-                    return false;
+                if (android.os.Build.VERSION.SDK_INT < 24 || cursor == null || id == null ||
+                    !cursor.validRevision(revision)) return false;
                 return startDragAndDrop(
                     android.content.ClipData.newPlainText("", ""),
-                    new View.DragShadowBuilder(this), new Drag(cursor, adapter, id), 0);
+                    new View.DragShadowBuilder(this),
+                    new Drag(cursor, adapter, id, revision), 0);
             });
             setOnDragListener((view, event) -> {
                 Object state = event.getLocalState();
                 if (!(state instanceof Drag) || cursor == null || id == null)
                     return false;
                 Drag moving = (Drag) state;
-                if (moving.cursor != cursor || moving.adapter != adapter) return false;
+                if (moving.cursor != cursor || moving.adapter != adapter ||
+                    moving.revision != revision || !cursor.validRevision(revision))
+                    return false;
                 if (event.getAction() == DragEvent.ACTION_DRAG_STARTED) return true;
                 if (event.getAction() == DragEvent.ACTION_DROP) {
-                    if (!cursor.moveTo(moving.id, id)) return false;
+                    if (!cursor.moveTo(moving.id, id, revision)) return false;
                     redraw(adapter);
                 }
                 return true;
             });
             setOnClickListener(view -> {
-                if (cursor == null || id == null) return;
+                if (cursor == null || id == null || !cursor.validRevision(revision))
+                    return;
                 PopupMenu menu = new PopupMenu(getContext(), this);
                 menu.getMenu().add("Nach oben").setOnMenuItemClickListener(item -> {
-                    if (!cursor.moveRelative(id, -1)) return false;
+                    if (!cursor.moveRelative(id, -1, revision)) return false;
                     redraw(adapter); return true;
                 });
                 menu.getMenu().add("Nach unten").setOnMenuItemClickListener(item -> {
-                    if (!cursor.moveRelative(id, 1)) return false;
+                    if (!cursor.moveRelative(id, 1, revision)) return false;
                     redraw(adapter); return true;
                 });
                 menu.getMenu().add("Rückgängig").setOnMenuItemClickListener(item -> {
-                    if (!cursor.undo()) return false;
+                    if (!cursor.undo(revision)) return false;
                     redraw(adapter); return true;
                 });
                 menu.show();
@@ -165,6 +175,7 @@ public final class ClassicOriginalCursorOrder {
 
         void bind(OrderedCursor cursor, Object adapter, String id) {
             this.cursor = cursor; this.adapter = adapter; this.id = id;
+            this.revision = cursor.revision();
         }
     }
 
@@ -179,6 +190,7 @@ public final class ClassicOriginalCursorOrder {
         private List<String> displayed;
         private int position = -1;
         private boolean invalid;
+        private long revision;
 
         OrderedCursor(Cursor cursor, ClassicLocalOrderStore store,
                       ClassicOrderPolicy.Surface surface, String scope) {
@@ -217,11 +229,21 @@ public final class ClassicOriginalCursorOrder {
         synchronized boolean validSnapshot() {
             if (invalid || delegate.isClosed()) return false;
             try {
-                if (!original.equals(scan(delegate))) invalid = true;
+                if (!original.equals(scan(delegate))) {
+                    invalid = true;
+                    revision++;
+                }
                 return !invalid;
             } catch (RuntimeException mismatch) {
-                invalid = true; return false;
+                invalid = true;
+                revision++;
+                return false;
             }
+        }
+
+        public synchronized long revision() { return revision; }
+        synchronized boolean validRevision(long expected) {
+            return validSnapshot() && revision == expected;
         }
 
         synchronized String idAt(int p) {
@@ -257,10 +279,16 @@ public final class ClassicOriginalCursorOrder {
             return getCount() > 0 && getPosition() == getCount()-1;
         }
 
+        public synchronized boolean moveTo(String dragged, String target, long expected) {
+            return validRevision(expected) && moveTo(dragged, target);
+        }
         public synchronized boolean moveTo(String dragged, String target) {
             if (!validSnapshot() || !displayed.contains(dragged) ||
                 !displayed.contains(target) || dragged.equals(target)) return false;
             return persist(dragged, displayed.indexOf(target));
+        }
+        public synchronized boolean moveRelative(String id, int direction, long expected) {
+            return validRevision(expected) && moveRelative(id, direction);
         }
         public synchronized boolean moveRelative(String id, int direction) {
             if (!validSnapshot() || (direction != -1 && direction != 1)) return false;
@@ -274,13 +302,18 @@ public final class ClassicOriginalCursorOrder {
                 return false;
             displayed = ClassicOrderPolicy.project(original, store.read(surface, scope));
             position = -1;
+            revision++;
             return true;
+        }
+        public synchronized boolean undo(long expected) {
+            return validRevision(expected) && undo();
         }
         public synchronized boolean undo() {
             if (!validSnapshot() ||
                 !store.undoLastUserDrop(surface, scope, original, displayed)) return false;
             displayed = ClassicOrderPolicy.project(original, store.read(surface, scope));
             position = -1;
+            revision++;
             return true;
         }
     }

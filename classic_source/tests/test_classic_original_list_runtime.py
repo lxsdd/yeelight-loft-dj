@@ -119,6 +119,27 @@ public final class OriginalModelListHarness {
   List<?> before=new ArrayList<>(original);
   check(ClassicOriginalListOrder.wrapScene(null,before)==before,
       "no unknown adapter writes");
+  // An OEM constructor may forward the same wrapped List back through the
+  // hook; the active adapter must keep its gesture owner and source identity.
+  List<?> same=ClassicOriginalListOrder.wrapScene(sceneAdapter,views);
+  check(same==views,"same adapter preserves original wrapper and drag owner");
+  long oldGeneration=sceneOrder.revision();
+  List<t> nextSource=new ArrayList<>(Arrays.asList(
+      new t("next-1"),new t("next-2"),new t("next-3")));
+  List<?> next=ClassicOriginalListOrder.wrapScene(sceneAdapter,nextSource);
+  check(next!=views,"same adapter fresh source gets new read-through view");
+  check(!sceneOrder.moveTo("s-4","s-1",oldGeneration),
+      "old holder cannot mutate local order after adapter replacement");
+  check("next-1".equals(scene(next,0).id),"new OEM list is displayed unchanged");
+  ClassicOriginalListOrder.OrderedList nextOrder=
+      (ClassicOriginalListOrder.OrderedList)next;
+  check(nextOrder.moveTo("next-3","next-1",nextOrder.revision()),
+      "new adapter model list remains draggable");
+  check("next-3".equals(scene(next,0).id),
+      "new list order projects without mutating underlying OEM model list");
+  List<?> foreign=ClassicOriginalListOrder.wrapRoom(roomAdapter, next);
+  check(foreign==nextSource,"room adapter cannot inherit a scene model wrapper");
+  check("next-1".equals(nextSource.get(0).id),"original model objects remain untouched");
   System.out.println("CLASSIC_ORIGINAL_SCENE_ROOM_LIST_RUNTIME_PASS");
  }
 }

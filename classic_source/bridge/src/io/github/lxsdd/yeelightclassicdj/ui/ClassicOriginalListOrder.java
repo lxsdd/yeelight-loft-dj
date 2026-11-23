@@ -61,14 +61,28 @@ public final class ClassicOriginalListOrder {
                                               String scope) {
         if (adapter == null || rows == null || application == null ||
             !adapterName.equals(adapter.getClass().getName())) return rows;
+        OrderedList previous = ADAPTERS.get(adapter);
+        // The OEM may reuse its adapter with an entirely new model list, or
+        // pass an already wrapped list back through the constructor bridge.
+        // Never leave two simultaneously writable gesture generations.
+        if (rows instanceof OrderedList) {
+            OrderedList supplied = (OrderedList) rows;
+            if (previous == supplied && supplied.matches(modelName, getter, surface, scope)
+                && supplied.valid()) return rows;
+            rows = supplied.source;
+        }
+        if (previous != null) {
+            previous.revoke();
+            ADAPTERS.remove(adapter);
+        }
         try {
-            if (rows instanceof OrderedList) return rows;
             OrderedList wrapper = new OrderedList(rows,
                 new ClassicLocalOrderStore(application), modelName, getter, surface, scope);
             ADAPTERS.put(adapter, wrapper);
             return wrapper;
         } catch (RuntimeException invalid) {
-            ADAPTERS.remove(adapter);
+            // Unknown OEM ABI or malformed refreshed identities: retain the
+            // authentic original list, never a stale foreign display view.
             return rows;
         }
     }
@@ -192,6 +206,18 @@ public final class ClassicOriginalListOrder {
         private List<String> original, displayed;
         private long revision;
         private boolean invalid;
+
+        synchronized boolean matches(String model, String key,
+                                      ClassicOrderPolicy.Surface candidate,
+                                      String stableScope) {
+            return modelName.equals(model) && getter.equals(key) &&
+                surface == candidate && scope.equals(stableScope);
+        }
+
+        synchronized void revoke() {
+            invalid = true;
+            revision++;
+        }
 
         OrderedList(List<?> source, ClassicLocalOrderStore store, String modelName,
                     String getter, ClassicOrderPolicy.Surface surface, String scope) {

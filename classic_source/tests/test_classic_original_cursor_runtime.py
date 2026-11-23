@@ -82,16 +82,21 @@ public final class ClassicOriginalCursorHarness {
   ok(ctx.prefs.writes==0,"read does not persist");
   ok(source.pos==-1,"constructor restores OEM cursor position");
   ok(wrapped.moveToPosition(2)&&wrapped.getLong(0)==30,"OEM row before user reorder");
-  ok(adapter.moveTo("30","10"),"drag last to first");
+  long dragGeneration=adapter.revision();
+  ok(adapter.moveTo("30","10",dragGeneration),"drag last to first");
+  ok(!adapter.moveTo("20","10",dragGeneration),"old drag rejected after reorder");
+  ok(!adapter.moveRelative("30",1,dragGeneration),"old accessible action rejected");
   ok(ctx.prefs.writes==1,"exactly one explicit local preference write");
   ok(wrapped.moveToPosition(0)&&wrapped.getLong(0)==30,"original cursor yields moved row");
   ok(wrapped.moveToPosition(1)&&wrapped.getLong(0)==10,"other OEM row preserved");
-  ok(adapter.moveRelative("30",1),"accessible move");
+  long secondGeneration=adapter.revision();
+  ok(adapter.moveRelative("30",1,secondGeneration),"accessible move");
+  ok(!adapter.undo(secondGeneration),"stale undo rejected after newer move");
   ok(ctx.prefs.writes==2,"move writes exactly once");
   ok(wrapped.moveToPosition(0)&&wrapped.getLong(0)==10,"relative order");
-  ok(adapter.undo(),"one move undo");
+  ok(adapter.undo(adapter.revision()),"one move undo");
   ok(wrapped.moveToPosition(0)&&wrapped.getLong(0)==30,"undo restores previous");
-  ok(!adapter.undo(),"undo cannot replay");
+  ok(!adapter.undo(adapter.revision()),"undo cannot replay");
   Cursor reopened=ClassicOriginalCursorOrder.wrapDevices(ctx,new Data(10,20,30,40));
   ok(reopened.moveToPosition(0)&&reopened.getLong(0)==30,"persistent restart");
   ok(reopened.moveToPosition(3)&&reopened.getLong(0)==40,"new OEM device retained");
@@ -102,9 +107,17 @@ public final class ClassicOriginalCursorHarness {
   ok(!adapter.moveRelative("10",1),"failed storage is a failure");
   ok(ctx.prefs.writes==writes,"failed storage no write");
   ctx.prefs.allow=true;
+  long preRefreshGeneration=adapter.revision();
   source.values[1]=200;
-  ok(!adapter.moveTo("20","30"),"changed OEM identity invalidates old adapter");
+  ok(!adapter.moveTo("20","30",preRefreshGeneration),
+     "changed OEM identity invalidates old adapter");
+  ok(!adapter.validRevision(preRefreshGeneration),
+     "source mutation revokes all old gestures");
   ok(ctx.prefs.writes==writes,"stale source did not mutate preference");
+  Cursor otherScope=ClassicOriginalCursorOrder.wrapGroups(ctx,wrapped);
+  ok(otherScope instanceof ClassicOriginalCursorOrder.OrderedCursor,
+     "cross-surface wrapped cursor is revalidated, not dropped");
+  ok(otherScope!=wrapped,"foreign surface never inherits old gesture scope");
   Data duplicates=new Data(1,1);
   ok(ClassicOriginalCursorOrder.wrapDevices(ctx,duplicates)==duplicates,
      "duplicate OEM ids refuse wrapper");
