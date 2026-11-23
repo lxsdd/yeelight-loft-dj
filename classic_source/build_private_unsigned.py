@@ -331,6 +331,11 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             # device identity, gallery adapter or original scene write.
             from clone_scene_gallery_hook import patch_staged_clone as patch_scene_gallery
             smali_report['scene_gallery'] = patch_scene_gallery(staged)
+            # Original device/group cursor-backed RecyclerViews get local clone-only
+            # stable-ID ordering on confirmed _id rows. No OEM database writes;
+            # other original Scene/Room/Favourite adapters remain untouched.
+            from clone_original_cursor_order_hook import patch_staged_clone as patch_original_cursor_order
+            smali_report['original_cursor_sort'] = patch_original_cursor_order(staged)
             # Exact original DiscoFragment device -> GroupMusic navigation.
             # A read-only selection witness, NEVER a lamp authorization or LAN target.
             from clone_original_music_selection_hook import patch_staged_clone as patch_original_music_selection

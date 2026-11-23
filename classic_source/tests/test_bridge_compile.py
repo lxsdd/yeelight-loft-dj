@@ -451,6 +451,60 @@ STUBS['android/widget/LinearLayout.java'] = STUBS['android/widget/LinearLayout.j
  ' public void addView(android.view.View view,LayoutParams p){}',
  ' public void addView(android.view.View view,LayoutParams p){} public void removeAllViews(){}')
 
+
+# Synthetic host-only declarations for the source-bound original Classic cursor
+# adapter extension. The real Android SDK CI is the runtime type authority.
+STUBS['android/database/Cursor.java'] = '''package android.database;
+public interface Cursor {
+ boolean isClosed(); int getCount(); int getPosition();
+ int getColumnIndex(String key); boolean isNull(int index); long getLong(int index);
+ boolean moveToPosition(int position); boolean move(int offset);
+ boolean moveToFirst(); boolean moveToLast(); boolean moveToNext(); boolean moveToPrevious();
+ boolean isBeforeFirst(); boolean isAfterLast(); boolean isFirst(); boolean isLast();
+}'''
+STUBS['android/database/CursorWrapper.java'] = '''package android.database;
+public class CursorWrapper implements Cursor {
+ protected final Cursor delegate;
+ public CursorWrapper(Cursor wrapped){delegate=wrapped;}
+ public boolean isClosed(){return delegate.isClosed();}
+ public int getCount(){return delegate.getCount();}
+ public int getPosition(){return delegate.getPosition();}
+ public int getColumnIndex(String key){return delegate.getColumnIndex(key);}
+ public boolean isNull(int index){return delegate.isNull(index);}
+ public long getLong(int index){return delegate.getLong(index);}
+ public boolean moveToPosition(int pos){return delegate.moveToPosition(pos);}
+ public boolean move(int offset){return delegate.move(offset);}
+ public boolean moveToFirst(){return delegate.moveToFirst();}
+ public boolean moveToLast(){return delegate.moveToLast();}
+ public boolean moveToNext(){return delegate.moveToNext();}
+ public boolean moveToPrevious(){return delegate.moveToPrevious();}
+ public boolean isBeforeFirst(){return delegate.isBeforeFirst();}
+ public boolean isAfterLast(){return delegate.isAfterLast();}
+ public boolean isFirst(){return delegate.isFirst();}
+ public boolean isLast(){return delegate.isLast();}
+}'''
+STUBS['android/view/MenuItem.java'] = '''package android.view;
+public interface MenuItem {
+ MenuItem setOnMenuItemClickListener(OnMenuItemClickListener callback);
+ interface OnMenuItemClickListener {boolean onMenuItemClick(MenuItem item);}
+}'''
+STUBS['android/view/Menu.java'] = '''package android.view;
+public interface Menu {MenuItem add(CharSequence title);}
+'''
+STUBS['android/widget/PopupMenu.java'] = '''package android.widget;
+import android.content.Context;
+import android.view.View;
+import android.view.Menu;
+public class PopupMenu {
+ public PopupMenu(Context context,View anchor){}
+ public Menu getMenu(){return null;}
+ public void show(){}
+}'''
+STUBS['android/view/View.java'] = STUBS['android/view/View.java'].replace(
+ ' public void setOnLongClickListener(OnLongClickListener l){}',
+ ' public android.view.View findViewWithTag(Object tag){return null;}' +
+ ' public void setOnLongClickListener(OnLongClickListener l){}')
+
 class BridgeCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('javac'), 'javac not present')
     def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):
