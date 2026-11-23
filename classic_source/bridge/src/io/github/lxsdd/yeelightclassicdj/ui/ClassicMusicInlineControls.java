@@ -61,6 +61,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private long lightSessionToken;
     private volatile long originalObserverEpoch;
     private volatile String lightStatus = "";
+    private volatile boolean lightConfirmed; // Kotlin OWNED group ACK, not a proposed selection
+    private volatile int lastStopReason = ClassicOriginalLightReport.NONE;
     private final ClassicDjPatternPreviewView preview;
     private final TextView[] choices = new TextView[NAMES.length];
     private final ClassicEffectOrder effectOrder;
@@ -347,7 +349,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             lightRuntime = runtime;
             lightLease = consent;
             epoch = ++lightEpoch;
-            lightStatus = "Echte Music-Rückkanäle werden geprüft";
+            lightConfirmed = false;
+            lastStopReason = ClassicOriginalLightReport.NONE;
+            lightStatus = ClassicOriginalLightReport.starting(targets.size());
         }
         redraw();
         new Thread(() -> {
@@ -362,12 +366,19 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                         handler.post(() -> {
                             synchronized (lightGuard) {
                                 if (lightRuntime != runtime || epoch != lightEpoch) return;
-                                lightStatus = state.startsWith("ORIGINAL_AUDIO_") ||
-                                    state.startsWith("SCENE_TIMED_") ?
-                                    (mode == ClassicOriginalLightMode.TIMED
-                                        ? "Zeitgesteuerte Lichtszene aktiv · bestätigte Lampen"
-                                        : "Echte DJ-Lichtausgabe aktiv · bestätigte Lampen") :
-                                    "Lichtausgabe beendet";
+                                // Only an exact, full-cohort OWNED ACK makes a lamp count active.
+                                boolean verified = state.equals(
+                                    (mode == ClassicOriginalLightMode.TIMED ?
+                                        "SCENE_TIMED_" : "ORIGINAL_AUDIO_") +
+                                    targets.size() + "_LAMPS");
+                                if (verified) {
+                                    lightConfirmed = true;
+                                    lightStatus = ClassicOriginalLightReport.active(
+                                        targets.size(), mode == ClassicOriginalLightMode.TIMED);
+                                } else if ("STOP_UNCONFIRMED".equals(state)) {
+                                    lightConfirmed = false;
+                                    lightStatus = ClassicOriginalLightReport.uncertain();
+                                }
                             }
                             if (attached) redraw();
                         });
@@ -377,7 +388,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                         handler.post(() -> {
                             synchronized (lightGuard) {
                                 if (lightRuntime != runtime || epoch != lightEpoch) return;
-                                lightStatus = "Music-Rückkanal unterbrochen · sicher gestoppt";
+                                lightStatus = ClassicOriginalLightReport.stopping(reasonForCurrentOutput());
                             }
                             stopLightOutput(runtime, epoch);
                         });
@@ -403,17 +414,18 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                         lightLease = null;
                         lightMode = ClassicOriginalLightMode.DENY;
                         lightSessionToken = 0L;
+                        lightConfirmed = false;
                         ++lightEpoch;
                         lightStatus = "Lampenverbindung verweigert oder nicht bestätigt";
                     }
                 }
-                finishLightSession(runtime, token);
+                finishLightSession(runtime, token, -1);
                 handler.post(() -> { if (attached) redraw(); });
             }
         },"Classic-DJ-Original-Output").start();
     }
 
-    private void finishLightSession(CheckpointRuntime runtime, long token) {
+    private void finishLightSession(CheckpointRuntime runtime, long token, int stopEpoch) {
         if (token == 0L || !ClassicOriginalLightOutputGate.beginClose(token)) return;
         Runnable cleanup = () -> {
             boolean clean = false;
@@ -423,8 +435,19 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             } catch (RuntimeException | LinkageError ignored) {
                 // An uncertain reverse-session cleanup must block re-acquisition.
             } finally {
-                ClassicOriginalLightOutputGate.finishClose(token, clean);
-                handler.post(() -> { if (attached) redraw(); });
+                final boolean finished =
+                    ClassicOriginalLightOutputGate.finishClose(token, clean);
+                handler.post(() -> {
+                    synchronized (lightGuard) {
+                        if (stopEpoch >= 0 && lightEpoch == stopEpoch &&
+                            lightRuntime == null) {
+                            lightStatus = finished ?
+                                ClassicOriginalLightReport.stopped(lastStopReason) :
+                                ClassicOriginalLightReport.uncertain();
+                        }
+                    }
+                    if (attached) redraw();
+                });
             }
         };
         try {
@@ -435,25 +458,51 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         }
     }
 
-    private void stopLightOutput() { stopLightOutput(null, 0); }
+    private void stopLightOutput() {
+        stopLightOutput(null, 0, ClassicOriginalLightReport.USER_STOP);
+    }
+    private void stopLightOutput(int reason) {
+        stopLightOutput(null, 0, reason);
+    }
+
+    /** Only fixed, non-identifying reasons from the actual Original UI/session. */
+    private int reasonForCurrentOutput() {
+        ClassicOriginalMusicSelection.OutputLease lease = lightLease;
+        if (lease == null || !ClassicOriginalMusicSelection.isOutputLeaseCurrent(lease))
+            return ClassicOriginalMusicSelection.outputLeaseChangeReason(lease);
+        if (!attached) return ClassicOriginalLightReport.HOST_PAUSED;
+        if (!modeStillAllowed(lightMode))
+            return lightMode == ClassicOriginalLightMode.ORIGINAL_AUDIO &&
+                !ClassicOriginalMusicAudioSignal.snapshot().fresh ?
+                ClassicOriginalLightReport.AUDIO_LOST :
+                ClassicOriginalLightReport.SCENE_CHANGED;
+        return ClassicOriginalLightReport.TRANSPORT_LOST;
+    }
 
     /** Stale error callbacks must never stop a subsequently acquired session. */
     private void stopLightOutput(CheckpointRuntime expected, int expectedEpoch) {
+        stopLightOutput(expected, expectedEpoch, reasonForCurrentOutput());
+    }
+    private void stopLightOutput(CheckpointRuntime expected, int expectedEpoch,
+                                 int reason) {
         final CheckpointRuntime old;
         final long token;
+        final int stoppedEpoch;
         synchronized (lightGuard) {
             if (expected != null &&
                 (lightRuntime != expected || lightEpoch != expectedEpoch)) return;
-            ++lightEpoch;
+            stoppedEpoch = ++lightEpoch;
             old = lightRuntime;
             token = lightSessionToken;
             lightRuntime = null;
             lightLease = null;
             lightMode = ClassicOriginalLightMode.DENY;
             lightSessionToken = 0L;
-            lightStatus = "Music-Rückkanal wird gestoppt";
+            lightConfirmed = false;
+            lastStopReason = reason;
+            lightStatus = ClassicOriginalLightReport.stopping(reason);
         }
-        if (old != null) finishLightSession(old, token);
+        if (old != null) finishLightSession(old, token, stoppedEpoch);
         if (attached) redraw();
     }
 
@@ -465,7 +514,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         if (lightRuntime != null && (live == null || !attached ||
             !ClassicOriginalMusicSelection.isOutputLeaseCurrent(live) ||
             !modeStillAllowed(lightMode))) {
-            stopLightOutput();
+            stopLightOutput(reasonForCurrentOutput());
             return;
         }
         if (effectOrder.refresh()) renderEffectChips();
@@ -523,8 +572,11 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             shownDjIntentCount = marked;
             shownLanVerifiedCount = verifiedLan;
             originalMusicSelectionStatus.setText(
-                runningOutput ? "Original-Classic Live-DJ: " + live.size() +
-                    " bestätigte, ausdrücklich ausgewählte Music-Teilnehmer." :
+                runningOutput ? (lightConfirmed ?
+                    "Original-Classic Live-DJ: " + live.size() +
+                        " bestätigte, ausdrücklich ausgewählte Music-Teilnehmer." :
+                    "Original-Classic DJ-Start: " + live.size() +
+                        " ausgewählte Lampen werden erst geprüft.") :
                 !witnessed ? "Original-Classic-Gruppenwahl noch nicht bestätigt." :
                 members < 0 ? "Original-Gerätekontext gelesen · Gruppenzuordnung offen." :
                 "Original-Classic-Gruppenliste: " + members + " Mitglieder · " +
@@ -568,9 +620,17 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         lightControl.setEnabled(running || (!outputBusy && endpoints>0 &&
             availableMode != ClassicOriginalLightMode.DENY));
         if (outputUncertain && !running)
-            lightStatus = "Sicherer Abschluss nicht bestätigt · keine neuen Lampenbefehle";
-        if (running || !lightStatus.isEmpty())
+            lightStatus = ClassicOriginalLightReport.uncertain();
+        if (running || !lightStatus.isEmpty()) {
             stateNotice.setText(lightStatus);
+            stateNotice.setContentDescription(lightStatus);
+        }
+        // Visible with collapsed effects sheet, without covering original OEM player.
+        header.setText(ClassicOriginalLightReport.header(lightStatus,
+            running && live != null ? live.size() : 0,
+            running && lightConfirmed));
+        header.setContentDescription((running || !lightStatus.isEmpty() ?
+            lightStatus : "Licht-Effekte") + " · Details öffnen");
         if (inlineSheet.getVisibility() == View.VISIBLE) preview.invalidate();
     }
 
@@ -599,7 +659,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 handler.post(() -> {
                     if (attached && observerEpoch == originalObserverEpoch &&
                         lightMode == ClassicOriginalLightMode.ORIGINAL_AUDIO)
-                        stopLightOutput();
+                        stopLightOutput(ClassicOriginalLightReport.AUDIO_LOST);
                 });
             }
         });
@@ -613,7 +673,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         attached = false;
         originalDsp.setFrameObserver(null);
         ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);
-        stopLightOutput();
+        stopLightOutput(ClassicOriginalLightReport.HOST_PAUSED);
         handler.removeCallbacks(refresh);
         closeSheet(); // original player controls remain visible on return
     }
