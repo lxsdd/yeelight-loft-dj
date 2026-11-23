@@ -191,6 +191,19 @@ public final class OriginalModelListHarness {
   check(nextFavorite.undo(nextFavorite.revision()),"favorite undo");
   ClassicOriginalListOrder.redraw(favorite);
   check(favorite.get(0)==savedSource.get(0),"favorite undo visible in original adapter");
+  // An actual OEM favorite refresh with changed membership cannot reuse a
+  // previous drag receipt even if its old sorted elements remain visible.
+  ClassicOriginalListOrder.OrderedList beforeMembership=
+      ClassicOriginalListOrder.favoriteListForAdapter(favorite);
+  check(beforeMembership.moveTo("favorite-c","favorite-a",beforeMembership.revision()),
+      "second favorite gesture");
+  ClassicOriginalListOrder.redraw(favorite);
+  savedSource.add(new m("favorite-d"));
+  favorite.e(savedSource);
+  ClassicOriginalListOrder.OrderedList changedMembership=
+      ClassicOriginalListOrder.favoriteListForAdapter(favorite);
+  check(!changedMembership.undo(changedMembership.revision()),
+      "OEM favorite membership refresh revokes previous Undo");
   FavoriteSceneAdapter another=new FavoriteSceneAdapter("favorite-catalog-B",true);
   another.e(savedSource);
   check(another.get(0)==savedSource.get(0),"independent original favorite scope");

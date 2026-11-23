@@ -24,10 +24,12 @@ public final class ClassicLocalOrderStore {
     // to Cloud or hidden in OEM DB; one confirmed user drop is reversible.
     private final Map<String, UndoReceipt> lastDrop = new HashMap<>();
     private static final class UndoReceipt {
-        final List<String> before, after;
-        UndoReceipt(List<String> before, List<String> after) {
+        final List<String> before, after, originalVisible;
+        UndoReceipt(List<String> before, List<String> after,
+                    List<String> originalVisible) {
             this.before = new ArrayList<>(before);
             this.after = new ArrayList<>(after);
+            this.originalVisible = new ArrayList<>(originalVisible);
         }
     }
 
@@ -99,7 +101,7 @@ public final class ClassicLocalOrderStore {
             visibleFromOem, rendered, saved, draggedId, beforeId);
         if (updated.equals(saved)) return true;
         if (!prefs.edit().putString(storageKey, encode(updated)).commit()) return false;
-        lastDrop.put(storageKey, new UndoReceipt(saved, updated));
+        lastDrop.put(storageKey, new UndoReceipt(saved, updated, visibleFromOem));
         return true;
     }
 
@@ -114,6 +116,10 @@ public final class ClassicLocalOrderStore {
         UndoReceipt receipt = lastDrop.get(storageKey);
         if (receipt == null) return false;
         if (!read(surface, scope).equals(receipt.after)) {
+            lastDrop.remove(storageKey);
+            return false;
+        }
+        if (!actualVisible.equals(receipt.originalVisible)) {
             lastDrop.remove(storageKey);
             return false;
         }
@@ -134,7 +140,7 @@ public final class ClassicLocalOrderStore {
             actualVisible, rendered, saved, draggedId, index);
         if (updated.equals(saved)) return true;
         if (!prefs.edit().putString(storageKey, encode(updated)).commit()) return false;
-        lastDrop.put(storageKey, new UndoReceipt(saved, updated));
+        lastDrop.put(storageKey, new UndoReceipt(saved, updated, actualVisible));
         return true;
     }
 }

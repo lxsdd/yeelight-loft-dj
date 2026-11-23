@@ -40,6 +40,10 @@ public final class ClassicOriginalListOrder {
     private static final WeakHashMap<Object, OrderedList> ADAPTERS = new WeakHashMap<>();
     private static final WeakHashMap<Object, String> FAVORITE_SCOPES = new WeakHashMap<>();
     private static Context application;
+    // One clone-local receipt store per Application, shared by scene, room and
+    // favorite adapters. The original e(List) rebuilds the favorite snapshot
+    // after each drop, so a per-wrapper store would silently lose Undo.
+    private static ClassicLocalOrderStore orderStore;
 
     private ClassicOriginalListOrder() {}
 
@@ -47,7 +51,13 @@ public final class ClassicOriginalListOrder {
     public static synchronized void registerCloneContext(Context context) {
         if (context == null || !CLONE.equals(context.getPackageName())) return;
         Context app = context.getApplicationContext();
-        if (app != null && CLONE.equals(app.getPackageName())) application = app;
+        if (app != null && CLONE.equals(app.getPackageName()) && app != application) {
+            for (OrderedList active : ADAPTERS.values()) active.revoke();
+            ADAPTERS.clear();
+            FAVORITE_SCOPES.clear();
+            application = app;
+            orderStore = new ClassicLocalOrderStore(app);
+        }
     }
 
     public static List<?> wrapScene(Object adapter, List<?> rows) {
@@ -108,7 +118,7 @@ public final class ClassicOriginalListOrder {
                                               String adapterName, String modelName,
                                               String getter, ClassicOrderPolicy.Surface surface,
                                               String scope) {
-        if (adapter == null || rows == null || application == null ||
+        if (adapter == null || rows == null || application == null || orderStore == null ||
             !adapterName.equals(adapter.getClass().getName())) return rows;
         OrderedList previous = ADAPTERS.get(adapter);
         // The OEM may reuse its adapter with an entirely new model list, or
@@ -126,7 +136,7 @@ public final class ClassicOriginalListOrder {
         }
         try {
             OrderedList wrapper = new OrderedList(rows,
-                new ClassicLocalOrderStore(application), modelName, getter, surface, scope);
+                orderStore, modelName, getter, surface, scope);
             ADAPTERS.put(adapter, wrapper);
             return wrapper;
         } catch (RuntimeException invalid) {
