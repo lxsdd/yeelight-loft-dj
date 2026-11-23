@@ -180,6 +180,15 @@ public final class ClassicOriginalGroupMemberOrder {
             notifyDataSetChanged();
             return true;
         }
+        /** A stale drag/list revision cannot enroll any OEM member. */
+        synchronized boolean markDjMember(String id, boolean include, long expected) {
+            return refresh() && revision==expected && shownIds.contains(id) &&
+                ClassicOriginalMusicSelection.markDjIntent(id,include);
+        }
+        synchronized boolean markDjGroup(boolean include, long expected) {
+            return refresh() && revision==expected &&
+                ClassicOriginalMusicSelection.markAllDjIntent(include);
+        }
         synchronized boolean undo(long expected) {
             if (!refresh() || revision!=expected ||
                 !store.undoLastUserDrop(ClassicOrderPolicy.Surface.GROUP_MEMBERS,
@@ -304,6 +313,14 @@ public final class ClassicOriginalGroupMemberOrder {
                     adapter.moveRelative(id,1,revision));
                 menu.getMenu().add("Rückgängig").setOnMenuItemClickListener(item ->
                     adapter.undo(revision));
+                menu.getMenu().add("Für DJ vormerken").setOnMenuItemClickListener(item ->
+                    adapter.markDjMember(id,true,revision));
+                menu.getMenu().add("Aus DJ-Vormerkung entfernen").setOnMenuItemClickListener(item ->
+                    adapter.markDjMember(id,false,revision));
+                menu.getMenu().add("Alle Gruppenmitglieder vormerken").setOnMenuItemClickListener(item ->
+                    adapter.markDjGroup(true,revision));
+                menu.getMenu().add("DJ-Vormerkung leeren").setOnMenuItemClickListener(item ->
+                    adapter.markDjGroup(false,revision));
                 menu.show();
             });
         }

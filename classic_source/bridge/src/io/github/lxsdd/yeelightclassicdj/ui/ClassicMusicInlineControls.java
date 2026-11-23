@@ -55,6 +55,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private long shownRevision = -1L;
     private int shownGroupCount = Integer.MIN_VALUE;
     private int shownVerifiedIdentityCount = Integer.MIN_VALUE;
+    private int shownDjIntentCount = Integer.MIN_VALUE;
     private boolean shownDeviceWitness;
     private int activeScene = -1;
     interface DockHeightListener { void onHeightChanged(int pixels); }
@@ -255,18 +256,21 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         boolean witnessed = ClassicOriginalMusicSelection.fresh();
         int members = ClassicOriginalMusicSelection.originalGroupMemberCount();
         int verifiedIds = ClassicOriginalMusicSelection.originalGroupVerifiedIdentityCount();
+        int marked = ClassicOriginalMusicSelection.djIntentCount();
         if (shownDeviceWitness != witnessed || shownGroupCount != members ||
-            shownVerifiedIdentityCount != verifiedIds) {
+            shownVerifiedIdentityCount != verifiedIds || shownDjIntentCount != marked) {
             shownDeviceWitness = witnessed;
             shownGroupCount = members;
             shownVerifiedIdentityCount = verifiedIds;
+            shownDjIntentCount = marked;
             originalMusicSelectionStatus.setText(
                 !witnessed ? "Original-Classic-Gruppenwahl noch nicht bestätigt." :
                 members < 0 ? "Original-Gerätekontext gelesen · Gruppenzuordnung offen." :
                 "Original-Classic-Gruppenliste: " + members + " Mitglieder · " +
                     (verifiedIds < 0 ? "Geräteidentitäten ungeprüft" :
                      verifiedIds + " Geräteidentitäten gelesen") +
-                    " · keine bestätigte Auswahl für Lampensteuerung.");
+                    " · " + marked + " für DJ vorgemerkt" +
+                     " · LAN-/Lampenfreigabe weiterhin gesperrt.");
         }
         ClassicOriginalMusicAudioSignal.Snapshot audio =
             ClassicOriginalMusicAudioSignal.snapshot();

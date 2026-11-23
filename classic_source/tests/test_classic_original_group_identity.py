@@ -18,6 +18,8 @@ class OriginalGroupIdentityTests(unittest.TestCase):
         selector = SELECTOR.read_text()
         witness = WITNESS.read_text()
         self.assertIn("originalGroupVerifiedIdentityCount()", ui)
+        self.assertIn("ClassicOriginalMusicSelection.djIntentCount()", ui)
+        self.assertIn("LAN-/Lampenfreigabe weiterhin gesperrt.", ui)
         self.assertIn("originalMemberKeys = ClassicOriginalGroupMemberWitness.inspect(members)", selector)
         self.assertIn("Original-Classic-Gruppenliste:", ui)
         self.assertIn('com.yeelight.yeelib.device.base.e', witness)
@@ -59,6 +61,12 @@ public final class GroupKeysRuntimeHarness {
     ok(ClassicOriginalMusicSelection.verifiedIdentityCountAt(240)==3,"verified inherited T keys");
     ok(ClassicOriginalMusicSelection.verifiedDisplayKeysAt(240).equals(Arrays.asList(
        "lamp-1","lamp-2","lamp-3")),"actual order");
+    ok(ClassicOriginalMusicSelection.djIntentCountAt(240)==0,"no auto-opt-in");
+    ok(!ClassicOriginalMusicSelection.markDjIntentAt("foreign",true,240),"foreign blocked");
+    ok(ClassicOriginalMusicSelection.markDjIntentAt("lamp-1",true,240),"exact member opt-in");
+    ok(ClassicOriginalMusicSelection.djIntentCountAt(240)==1,"one");
+    ok(ClassicOriginalMusicSelection.markAllDjIntentAt(true,241),"all explicit");
+    ok(ClassicOriginalMusicSelection.djIntentCountAt(241)==3,"all three");
     current.clear();
     ok(ClassicOriginalMusicSelection.verifiedDisplayKeysAt(241).size()==3,
        "source list not retained");
@@ -69,9 +77,12 @@ public final class GroupKeysRuntimeHarness {
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList(m("lamp-2"),m("lamp-1")),250);
     ok(ClassicOriginalMusicSelection.verifiedDisplayKeysAt(250).equals(Arrays.asList(
        "lamp-2","lamp-1")),"refresh is exact");
+    ok(ClassicOriginalMusicSelection.djIntentCountAt(250)==2,"removed member revoked");
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList(m("dup"),m("dup")),260);
     ok(ClassicOriginalMusicSelection.groupMemberCountAt(260)==2,"invalid keys retain count");
     ok(ClassicOriginalMusicSelection.verifiedIdentityCountAt(260)==-1,"duplicate keys fail closed");
+    ok(ClassicOriginalMusicSelection.djIntentCountAt(260)==0,"ambiguous refresh revokes all");
+    ok(!ClassicOriginalMusicSelection.markAllDjIntentAt(true,260),"cannot enroll ambiguity");
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList(m("a"),"foreign"),270);
     ok(ClassicOriginalMusicSelection.verifiedIdentityCountAt(270)==-1,"foreign OEM class");
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList(m("a"),m(" ")),280);
@@ -86,7 +97,10 @@ public final class GroupKeysRuntimeHarness {
     ok(ClassicOriginalMusicSelection.groupMemberCountAt(310)==513,"count not silently truncated");
     ok(ClassicOriginalMusicSelection.verifiedIdentityCountAt(310)==-1,"bounded identities");
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList(m("a"),m("b")),320);
+    ok(ClassicOriginalMusicSelection.markAllDjIntentAt(true,320),"select before Back");
     ClassicOriginalMusicSelection.originalGroupClosed();
+    ok(ClassicOriginalMusicSelection.djIntentCountAt(321)==2,"intent count on Music return");
+    ok(!ClassicOriginalMusicSelection.markDjIntentAt("a",false,321),"closed activity denied");
     ok(ClassicOriginalMusicSelection.groupMemberCountAt(321)==2,"readonly count after back");
     ok(ClassicOriginalMusicSelection.verifiedIdentityCountAt(321)==-1,"keys purged after close");
     ok(ClassicOriginalMusicSelection.verifiedDisplayKeysAt(321).isEmpty(),"no ID leak");
@@ -95,6 +109,7 @@ public final class GroupKeysRuntimeHarness {
     ClassicOriginalMusicSelection.observeGroupEntryAt("group",330);
     ClassicOriginalMusicSelection.observeGroupMembersAt(Arrays.asList(m("new")),340);
     ok(ClassicOriginalMusicSelection.verifiedIdentityCountAt(341)==1,"reopen");
+    ok(ClassicOriginalMusicSelection.djIntentCountAt(341)==0,"no carry into new group entry");
     ok(ClassicOriginalMusicSelection.verifiedIdentityCountAt(341+
        ClassicOriginalMusicSelection.FRESH_MS)==-1,"expiry");
     ClassicOriginalMusicSelection.clear();

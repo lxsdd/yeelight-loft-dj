@@ -18,6 +18,9 @@ public final class ClassicOriginalMusicSelection {
     private static long groupObservedAtMs = Long.MIN_VALUE;
     private static ClassicOriginalGroupMemberWitness.Snapshot originalMemberKeys =
         ClassicOriginalGroupMemberWitness.unknown();
+    // Session-only, explicitly chosen OEM identities. NEVER LAN authorization.
+    private static final java.util.LinkedHashSet<String> djIntentKeys =
+        new java.util.LinkedHashSet<>();
 
     private ClassicOriginalMusicSelection() {}
 
@@ -79,6 +82,9 @@ public final class ClassicOriginalMusicSelection {
         if (!groupEntryFreshAt(nowMs)) return;
         // Only a bounded display witness is retained, never an authorized target.
         originalMemberKeys = ClassicOriginalGroupMemberWitness.inspect(members);
+        if (originalMemberKeys.identitiesVerified)
+            djIntentKeys.retainAll(originalMemberKeys.keysForDisplay());
+        else djIntentKeys.clear();
         observedGroupCount = originalMemberKeys.observedCount;
         if (observedGroupCount >= 0) groupObservedAtMs = nowMs;
     }
@@ -109,6 +115,34 @@ public final class ClassicOriginalMusicSelection {
     static synchronized String originalGroupDisplayScope() {
         return groupEntryFreshAt(monotonicMs()) && selectedId != null
             ? "classic-original-group-members-" + selectedId : null;
+    }
+
+    /** Explicit user intention only, independent of original OEM group membership. */
+    public static synchronized boolean markDjIntent(String id, boolean include) {
+        return markDjIntentAt(id,include,monotonicMs());
+    }
+    static synchronized boolean markDjIntentAt(String id, boolean include, long nowMs) {
+        if (verifiedIdentityCountAt(nowMs) <= 0 || id == null ||
+            !originalMemberKeys.keysForDisplay().contains(id)) return false;
+        if (include) djIntentKeys.add(id);
+        else djIntentKeys.remove(id);
+        return true;
+    }
+    public static synchronized boolean markAllDjIntent(boolean include) {
+        return markAllDjIntentAt(include,monotonicMs());
+    }
+    static synchronized boolean markAllDjIntentAt(boolean include, long nowMs) {
+        if (verifiedIdentityCountAt(nowMs) <= 0) return false;
+        if (include) djIntentKeys.addAll(originalMemberKeys.keysForDisplay());
+        else djIntentKeys.clear();
+        return true;
+    }
+    /** Display count; not a selected/online/authorized transport cohort. */
+    public static synchronized int djIntentCount() {
+        return djIntentCountAt(monotonicMs());
+    }
+    static synchronized int djIntentCountAt(long nowMs) {
+        return groupFreshAt(nowMs) ? djIntentKeys.size() : 0;
     }
 
     /** -1 = unknown, zero = actual observed empty OEM group. Not a DJ grant. */
@@ -149,6 +183,7 @@ public final class ClassicOriginalMusicSelection {
 
     private static void resetGroup() {
         originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
+        djIntentKeys.clear();
         groupEntryObserved = false;
         observedGroupCount = -1;
         groupObservedAtMs = Long.MIN_VALUE;
