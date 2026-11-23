@@ -92,7 +92,7 @@ def patch_text(device, group):
     ):
         owner = "Lcom/yeelight/cherry/ui/fragment/" + original_name + ";"
         if len(re.findall(r"(?m)^\.class[ \t]+[^\r\n]*" +
-                          re.escape(owner) + r"[ \t]*$", source)) != 1:
+                          re.escape(owner) + r"[ \t]*\r?$", source)) != 1:
             raise GateFailure("CLASSIC_OEM_CURSOR_CLASS_DRIFT")
         if BRIDGE in source:
             raise GateFailure("CLASSIC_OEM_CURSOR_ALREADY_PATCHED")
