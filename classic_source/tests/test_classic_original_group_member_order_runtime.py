@@ -147,6 +147,15 @@ public final class GroupMemberOrderHarness {
     sameGroup.items.add(new e("g"));
     check(!persisted.moveTo("a","b",beforeRefresh),"changed OEM list revokes gesture");
     check(persisted.getCount()==7,"new OEM member retained");
+    // The OEM adapter has refreshed, but GroupMusic J1() has not: this is
+    // not a verified change in participating devices. No automatic or
+    // explicit selection may enlist a different set of original rows.
+    check(!persisted.markDjGroup(true,persisted.revision()),
+      "unwitnessed adapter member must block whole-group DJ intent");
+    check(!persisted.markDjMember("g",true,persisted.revision()),
+      "unwitnessed member cannot be added individually");
+    check(ClassicOriginalMusicSelection.djIntentCount()==0,
+      "denied selection has no side effects");
     check(((e)persisted.getItem(6)).key.equals("g"),"new item appended by projection");
     // Invalid duplicated OEM keys fail closed and display original items only.
     sameGroup.items.add(new e("g"));

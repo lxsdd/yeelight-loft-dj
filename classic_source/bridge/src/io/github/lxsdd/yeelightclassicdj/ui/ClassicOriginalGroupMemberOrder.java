@@ -183,11 +183,13 @@ public final class ClassicOriginalGroupMemberOrder {
         /** A stale drag/list revision cannot enroll any OEM member. */
         synchronized boolean markDjMember(String id, boolean include, long expected) {
             return refresh() && revision==expected && shownIds.contains(id) &&
-                ClassicOriginalMusicSelection.markDjIntent(id,include);
+                ClassicOriginalMusicSelection.markDjIntentFromOriginalAdapter(
+                    id,include,sourceIds);
         }
         synchronized boolean markDjGroup(boolean include, long expected) {
             return refresh() && revision==expected &&
-                ClassicOriginalMusicSelection.markAllDjIntent(include);
+                ClassicOriginalMusicSelection.markAllDjIntentFromOriginalAdapter(
+                    include,sourceIds);
         }
         synchronized boolean undo(long expected) {
             if (!refresh() || revision!=expected ||

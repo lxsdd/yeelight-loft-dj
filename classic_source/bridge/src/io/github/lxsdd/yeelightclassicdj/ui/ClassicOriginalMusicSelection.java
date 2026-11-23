@@ -117,6 +117,39 @@ public final class ClassicOriginalMusicSelection {
             ? "classic-original-group-members-" + selectedId : null;
     }
 
+    /** Compare the live OEM ListAdapter identities against the last pinned
+     * J1() membership witness in ONE synchronized session. Reordering may
+     * change presentation, never membership; a new/unreported OEM row or an
+     * absent former member must not be silently included in DJ intent.
+     */
+    static synchronized boolean matchesCurrentOriginalMemberSetAt(
+            java.util.List<String> adapterIds, long nowMs) {
+        if (adapterIds == null || verifiedIdentityCountAt(nowMs) < 0)
+            return false;
+        java.util.List<String> witnessed = originalMemberKeys.keysForDisplay();
+        return adapterIds.size() == witnessed.size() &&
+            new java.util.HashSet<>(adapterIds).size() == adapterIds.size() &&
+            new java.util.HashSet<>(adapterIds).equals(
+                new java.util.HashSet<>(witnessed));
+    }
+
+    /** Real GroupMusic row/menu call. Both source and J1 snapshot must agree
+     * atomically, including group scope and freshness. No address resolution.
+     */
+    static synchronized boolean markDjIntentFromOriginalAdapter(
+            String id, boolean include, java.util.List<String> adapterIds) {
+        long nowMs = monotonicMs();
+        return matchesCurrentOriginalMemberSetAt(adapterIds,nowMs) &&
+            markDjIntentAt(id,include,nowMs);
+    }
+
+    static synchronized boolean markAllDjIntentFromOriginalAdapter(
+            boolean include, java.util.List<String> adapterIds) {
+        long nowMs = monotonicMs();
+        return matchesCurrentOriginalMemberSetAt(adapterIds,nowMs) &&
+            markAllDjIntentAt(include,nowMs);
+    }
+
     /** Explicit user intention only, independent of original OEM group membership. */
     public static synchronized boolean markDjIntent(String id, boolean include) {
         return markDjIntentAt(id,include,monotonicMs());

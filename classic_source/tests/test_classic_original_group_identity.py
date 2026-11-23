@@ -62,6 +62,18 @@ public final class GroupKeysRuntimeHarness {
     ok(ClassicOriginalMusicSelection.verifiedDisplayKeysAt(240).equals(Arrays.asList(
        "lamp-1","lamp-2","lamp-3")),"actual order");
     ok(ClassicOriginalMusicSelection.djIntentCountAt(240)==0,"no auto-opt-in");
+    ok(ClassicOriginalMusicSelection.matchesCurrentOriginalMemberSetAt(
+       Arrays.asList("lamp-3","lamp-1","lamp-2"),240),
+       "reordering the exact same original J1 members remains valid");
+    ok(!ClassicOriginalMusicSelection.matchesCurrentOriginalMemberSetAt(
+       Arrays.asList("lamp-1","lamp-2","foreign"),240),
+       "foreign member rejected even when list size matches");
+    ok(!ClassicOriginalMusicSelection.matchesCurrentOriginalMemberSetAt(
+       Arrays.asList("lamp-1","lamp-1","lamp-2"),240),
+       "duplicate display IDs rejected");
+    ok(!ClassicOriginalMusicSelection.matchesCurrentOriginalMemberSetAt(
+       Arrays.asList("lamp-1","lamp-2"),240),
+       "missing member rejected");
     ok(!ClassicOriginalMusicSelection.markDjIntentAt("foreign",true,240),"foreign blocked");
     ok(ClassicOriginalMusicSelection.markDjIntentAt("lamp-1",true,240),"exact member opt-in");
     ok(ClassicOriginalMusicSelection.djIntentCountAt(240)==1,"one");
