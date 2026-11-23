@@ -104,6 +104,23 @@ fun main() {
             v.rgb == 0x123456 && v.brightness in 4..85
         })
     }
+    // Rainbow must change real per-lamp output, but no extra transport ownership.
+    val rainbowChase = ClassicSpatialChoreography()
+    rainbowChase.configure(ClassicSpatialChoreography.Options(
+        rgb=0x123456, speedPercent=200, reverse=true, trailLength=4, rainbow=true))
+    for (mode in modes) {
+        val first = (0 until count).map {
+            rainbowChase.frame(mode,it,count,1500,.8,true).rgb
+        }
+        val later = (0 until count).map {
+            rainbowChase.frame(mode,it,count,3800,.8,true).rgb
+        }
+        check(first.distinct().size >= 10 && first != later) {
+            "Spatial mode must have moving per-lamp rainbow output: $mode"
+        }
+        check(first.all { it in 0..0xFFFFFF })
+        check(rainbowChase.frame(mode,13,count,1500,.8,true).rgb == first[13])
+    }
     val invalidSettings = listOf(
         { ClassicSpatialChoreography.Options(rgb=-2) },
         { ClassicSpatialChoreography.Options(rgb=0x1000000) },
@@ -172,6 +189,12 @@ fun main() {
     check(transport.sent.drop(beforeTuning).all {
         it.first in ids && it.second == 0x123456 && it.third in 4..85
     })
+    check(transport.calls.count { it.startsWith("start:") } == 4)
+    val beforeRainbow = transport.sent.size
+    check(engine.configureSpatial(0x123456,200,true,2,4,85,true))
+    now += 350L
+    check(engine.clockTick(now).sent == ids.toSet())
+    check(transport.sent.drop(beforeRainbow).map { it.second }.distinct().size >= 3)
     check(transport.calls.count { it.startsWith("start:") } == 4)
     // The *same production engine* renders independent clock ticks while the
     // owned music channel remains unchanged (no capture callback or new socket).

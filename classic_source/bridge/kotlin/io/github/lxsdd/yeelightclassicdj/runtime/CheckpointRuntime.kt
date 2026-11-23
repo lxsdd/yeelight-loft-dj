@@ -157,7 +157,8 @@ class CheckpointRuntime : DjRuntime {
         } catch (invalid: IllegalArgumentException) { return false }
         val nextSpatial = try {
             ClassicSpatialChoreography.Options(settings.spatialRgb, settings.spatialSpeed,
-                settings.reverse, settings.trailLength, settings.spatialMin, settings.spatialMax)
+                settings.reverse, settings.trailLength, settings.spatialMin, settings.spatialMax,
+                settings.spatialRainbow)
         } catch (invalid: IllegalArgumentException) { return false }
         synchronized(lock) {
             if (state == State.STOPPING || state == State.CLOSED ||
@@ -167,7 +168,8 @@ class CheckpointRuntime : DjRuntime {
                 if (!activeEngine.configurePulse(nextPulse)) return false
                 if (!activeEngine.configureSpatial(nextSpatial.rgb, nextSpatial.speedPercent,
                         nextSpatial.reverse, nextSpatial.trailLength,
-                        nextSpatial.minBrightness, nextSpatial.maxBrightness)) return false
+                        nextSpatial.minBrightness, nextSpatial.maxBrightness,
+                        nextSpatial.rainbow)) return false
                 if (!activeEngine.setScene(settings.scene)) return false
             }
             if (inputBridge?.setSensitivity(settings.sensitivity) == false) return false
@@ -363,7 +365,8 @@ class CheckpointRuntime : DjRuntime {
                 check(newEngine.configurePulse(pulse))
                 check(newEngine.configureSpatial(spatialSettings.rgb, spatialSettings.speedPercent,
                     spatialSettings.reverse, spatialSettings.trailLength,
-                    spatialSettings.minBrightness, spatialSettings.maxBrightness))
+                    spatialSettings.minBrightness, spatialSettings.maxBrightness,
+                    spatialSettings.rainbow))
                 check(newEngine.setScene(scene))
                 check(bridge?.setSensitivity(sensitivity) ?: true)
                 capture = newCapture

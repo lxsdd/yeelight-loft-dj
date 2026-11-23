@@ -84,8 +84,17 @@ public class ClassicEffectSettingsHarness {
        0,0,0,false,0,0)), "invalid profile rejects before any write");
     check(ctx.mem.commits==count,"invalid data no write");
     String prefix="dj-effect.";
-    ctx.mem.map.put(prefix+"SCANNER","v3,4,4,1,4,2,1,1,2,2,7");
+    ctx.mem.map.put(prefix+"SCANNER","v4,4,4,1,4,2,1,1,2,2,7,0");
     check(settings.readProfile(4)==null,"wrong version ignored");
+    check(ClassicSceneUiState.updatePalette(1),"rainbow palette from original scene editor");
+    check(settings.saveExplicit(ClassicSceneUiState.snapshot()),"rainbow profile persisted");
+    check(settings.readProfile(4).paletteIndex==1,"rainbow profile round trip");
+    check(!ClassicSceneUiState.updatePalette(-1) &&
+          !ClassicSceneUiState.updatePalette(2),"invalid palettes rejected");
+    ctx.mem.map.put(prefix+"SCANNER","v3,4,4,1,4,2,1,1,2,2,7,4");
+    check(settings.readProfile(4)==null,"invalid rainbow profile rejected");
+    ctx.mem.map.put(prefix+"SCANNER","v3,4,4,1,4,2,1,1,2,2,7,1");
+    check(settings.readProfile(4).paletteIndex==1,"valid rainbow profile restored");
     check(settings.selectScene(4),"corrupt profile reverts to valid local default");
     check(ClassicSceneUiState.snapshot().speedIndex==2 &&
           !ClassicSceneUiState.snapshot().reverse,"safe default after malformed");
@@ -96,8 +105,13 @@ public class ClassicEffectSettingsHarness {
     // Legacy v1 preferences are read-only-compatible. An explicit next edit
     // writes bounded v2 data; no background migration may overwrite a user file.
     ctx.mem.map.put(prefix+"SCANNER","v1,4,4,1,4,2,1,1,2,2");
-    check(settings.readProfile(4)!=null && settings.readProfile(4).colorIndex==0,
-          "previous v1 profile maps to unchanged default pink");
+    check(settings.readProfile(4)!=null && settings.readProfile(4).colorIndex==0 &&
+          settings.readProfile(4).paletteIndex==0,
+          "previous v1 profile maps to unchanged single-colour pink");
+    ctx.mem.map.put(prefix+"SCANNER","v2,4,4,1,4,2,1,1,2,2,7");
+    check(settings.readProfile(4).colorIndex==7 &&
+          settings.readProfile(4).paletteIndex==0,
+          "previous v2 colour remains solid on read");
     ctx.mem.map.put(prefix+"SCANNER","v2,4,4,1,4,2,1,1,2,2,12");
     check(settings.readProfile(4)==null,"out-of-range colour rejected");
     ctx.mem.map.put(prefix+"SCANNER","v2,4,4,1,4,2,1,1,2,2,-1");
@@ -105,11 +119,11 @@ public class ClassicEffectSettingsHarness {
     check(!ClassicSceneUiState.updateColor(-1) &&
           !ClassicSceneUiState.updateColor(ClassicSceneUiState.COLORS.length),
           "invalid colours rejected without mutation");
-    check(ctx.mem.commits==count,"bad reads do not rewrite stored bytes");
+    check(ctx.mem.commits==count+1,"only explicit rainbow edit wrote preferences");
     ctx.mem.accept=false;
     check(!settings.saveExplicit(ClassicSceneUiState.snapshot()),
       "denied preferences not reported as saved");
-    check(ctx.mem.commits==count,"failed editor no effects");
+    check(ctx.mem.commits==count+1,"failed editor no effects");
     boolean blocked=false;
     try {new ClassicEffectSettingsStore(new Ctx("com.yeelight.cherry"));}
     catch(SecurityException expected){blocked=true;}

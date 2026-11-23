@@ -48,11 +48,23 @@ public interface DjRuntime {
         public final double gamma;
         public final int spatialRgb, spatialSpeed, trailLength, spatialMin, spatialMax;
         public final boolean reverse;
+        public final boolean spatialRainbow;
         public SceneSettings(double sensitivity, String scene,
                 int pulseRgb, boolean beatSync, int pulseBpm, int pulseMin,
                 int pulseMax, int attackMs, int decayMs, double gamma,
                 int spatialRgb, int spatialSpeed, boolean reverse,
                 int trailLength, int spatialMin, int spatialMax) {
+            this(sensitivity, scene, pulseRgb, beatSync, pulseBpm, pulseMin,
+                pulseMax, attackMs, decayMs, gamma, spatialRgb, spatialSpeed,
+                reverse, trailLength, spatialMin, spatialMax, false);
+        }
+        public SceneSettings(double sensitivity, String scene,
+                int pulseRgb, boolean beatSync, int pulseBpm, int pulseMin,
+                int pulseMax, int attackMs, int decayMs, double gamma,
+                int spatialRgb, int spatialSpeed, boolean reverse,
+                int trailLength, int spatialMin, int spatialMax,
+                boolean spatialRainbow) {
+            this.spatialRainbow = spatialRainbow;
             this.sensitivity = sensitivity;
             this.scene = scene;
             this.pulseRgb = pulseRgb;

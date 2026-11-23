@@ -40,7 +40,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final LinearLayout[] sceneRows = new LinearLayout[4];
     private Button dragSource;
     private final Button moveUp, moveDown, undoOrder;
-    private final Button speed, direction, trail, brightness, sceneColor;
+    private final Button speed, direction, trail, brightness, sceneColor, paletteStyle;
     private final LinearLayout spatialEditor, pulseEditor;
     private final Button pulseMode, pulseTempo, pulseShape;
     private final TextView note;
@@ -292,6 +292,17 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
                 .setNegativeButton("Abbrechen", null)
                 .show());
         content.addView(sceneColor);
+        // Original SceneFragment owns this explicit effect-profile edit.
+        paletteStyle = new Button(context);
+        paletteStyle.setAllCaps(false);
+        paletteStyle.setContentDescription("Farbstil für Scanner, Meteor und Welle wählen");
+        paletteStyle.setOnClickListener(v -> {
+            ClassicSceneUiState.Selection current = ClassicSceneUiState.snapshot();
+            if (current.scene >= 4 && ClassicSceneUiState.updatePalette(
+                    (current.paletteIndex + 1) % ClassicSceneUiState.PALETTE_NAMES.length))
+                onSceneEdited();
+        });
+        content.addView(paletteStyle);
 
         pulseEditor = new LinearLayout(context);
         pulseEditor.setOrientation(VERTICAL);
@@ -438,6 +449,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             (double) profile.spatialMin);
         config.putExtra(ClassicDjService.EXTRA_SPATIAL_MAX,
             (double) profile.spatialMax);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_RAINBOW,
+            profile.spatialRainbow);
         try {
             getContext().startService(config);
         } catch (RuntimeException ignored) {
@@ -464,6 +477,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         spatialEditor.setVisibility(s.scene >= 4 ? View.VISIBLE : View.GONE);
         pulseEditor.setVisibility(s.scene == 3 ? View.VISIBLE : View.GONE);
         sceneColor.setVisibility(s.scene >= 3 ? View.VISIBLE : View.GONE);
+        paletteStyle.setVisibility(s.scene >= 4 ? View.VISIBLE : View.GONE);
+        paletteStyle.setText("Farbstil: " + ClassicSceneUiState.PALETTE_NAMES[s.paletteIndex]);
         sceneColor.setText("DJ-Lichtfarbe: " + ClassicSceneUiState.COLOR_NAMES[s.colorIndex]);
         pulseMode.setText(s.beatPulse ? "Puls: Beat" : "Puls: Timer");
         int[] pulseTempos = {60, 90, 120, 150, 180};

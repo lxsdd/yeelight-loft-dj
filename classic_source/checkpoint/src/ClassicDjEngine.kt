@@ -150,10 +150,11 @@ class ClassicDjEngine(
      */
     @Synchronized fun configureSpatial(rgb: Int, speedPercent: Int,
                                        reverse: Boolean, trailLength: Int,
-                                       minBrightness: Int, maxBrightness: Int): Boolean {
+                                       minBrightness: Int, maxBrightness: Int,
+                                       rainbow: Boolean = false): Boolean {
         val proposed = try {
             ClassicSpatialChoreography.Options(rgb, speedPercent, reverse, trailLength,
-                                               minBrightness, maxBrightness)
+                                               minBrightness, maxBrightness, rainbow)
         } catch (bad: IllegalArgumentException) { return false }
         spatial.configure(proposed)
         return true

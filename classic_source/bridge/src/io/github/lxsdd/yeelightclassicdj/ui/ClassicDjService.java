@@ -47,6 +47,7 @@ public final class ClassicDjService extends Service {
     public static final String EXTRA_SPATIAL_TRAIL = "io.github.lxsdd.yeelightclassicdj.SPATIAL_TRAIL";
     public static final String EXTRA_SPATIAL_MIN = "io.github.lxsdd.yeelightclassicdj.SPATIAL_MIN";
     public static final String EXTRA_SPATIAL_MAX = "io.github.lxsdd.yeelightclassicdj.SPATIAL_MAX";
+    public static final String EXTRA_SPATIAL_RAINBOW = "io.github.lxsdd.yeelightclassicdj.SPATIAL_RAINBOW";
     private static final String CHANNEL = "classic-loft-dj";
     private static final int NOTIFICATION_ID = 4812;
     private DjRuntime runtime;
@@ -506,7 +507,8 @@ public final class ClassicDjService extends Service {
                 gain, scene, rgb, "BEAT".equals(mode), bpm, minimum,
                 maximum, attack, decay, gamma, spatialRgb, speed,
                 intent.getBooleanExtra(EXTRA_SPATIAL_REVERSE, false),
-                trail, min, max));
+                trail, min, max,
+                intent.getBooleanExtra(EXTRA_SPATIAL_RAINBOW, false)));
     }
 
     private static int spatialColor(Intent intent) {

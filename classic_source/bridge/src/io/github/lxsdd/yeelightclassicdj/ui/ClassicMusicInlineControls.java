@@ -486,12 +486,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             }
             preview.setMode(selected.scene, selected.beatPulse,
                 new int[]{60, 90, 120, 150, 180}[selected.pulseTempoIndex],
-                ClassicSceneUiState.COLORS[selected.colorIndex]);
+                ClassicSceneUiState.COLORS[selected.colorIndex],
+                selected.paletteIndex == 1,
+                ClassicSceneUiState.SPEEDS[selected.speedIndex], selected.reverse);
             String explanation = ClassicDjEffectPreview.explanation(
                 ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse);
             description.setText(explanation +
                 (selected.scene >= 3 ? " · Farbe " +
-                    ClassicSceneUiState.COLOR_NAMES[selected.colorIndex] : "") +
+                    (selected.scene >= 4 && selected.paletteIndex == 1 ?
+                        "Regenbogen" : ClassicSceneUiState.COLOR_NAMES[selected.colorIndex]) : "") +
                 " · Vorschau ohne Lampen");
             header.setText("Licht-Effekte  ·  " + NAMES[selected.scene] + "    ﹀");
             // A SceneFragment edit updates the currently OWNED real effect too.

@@ -25,7 +25,8 @@ internal class ClassicSpatialChoreography {
         val reverse: Boolean = false,
         val trailLength: Int = 4,
         val minBrightness: Int = 1,
-        val maxBrightness: Int = 100
+        val maxBrightness: Int = 100,
+        val rainbow: Boolean = false
     ) {
         init {
             require(rgb == -1 || rgb in 0..0xFFFFFF)
@@ -90,7 +91,24 @@ internal class ClassicSpatialChoreography {
             Mode.METEOR -> 0xFF7C32
             Mode.WAVE -> 0x26BCD8
         }
-        return ClassicLiveLightStyle.Frame(if (options.rgb == -1) color else options.rgb,
-            brightness)
+        val actualRgb = if (options.rainbow) rainbowRgb(position, count, timestampMs)
+            else if (options.rgb == -1) color else options.rgb
+        return ClassicLiveLightStyle.Frame(actualRgb, brightness)
+    }
+
+    /** Pure per-lamp hue; bounded modular arithmetic avoids long-session overflow. */
+    private fun rainbowRgb(position: Int, count: Int, timestampMs: Long): Int {
+        val phase = ((timestampMs / 45L) % 360L) * options.speedPercent / 100L
+        val hue = ((position.toLong() * 360L / count + phase) % 360L) / 60.0
+        val x = (255.0 * (1.0 - abs(hue % 2.0 - 1.0))).toInt().coerceIn(0, 255)
+        val (r, g, b) = when (hue.toInt()) {
+            0 -> Triple(255, x, 0)
+            1 -> Triple(x, 255, 0)
+            2 -> Triple(0, 255, x)
+            3 -> Triple(0, x, 255)
+            4 -> Triple(x, 0, 255)
+            else -> Triple(255, 0, x)
+        }
+        return (r shl 16) or (g shl 8) or b
     }
 }

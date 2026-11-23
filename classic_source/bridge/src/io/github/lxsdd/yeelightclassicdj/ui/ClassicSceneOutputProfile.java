@@ -28,7 +28,8 @@ public final class ClassicSceneOutputProfile {
             s.speedIndex < 0 || s.speedIndex >= ClassicSceneUiState.SPEEDS.length ||
             s.trailIndex < 0 || s.trailIndex >= ClassicSceneUiState.TRAILS.length ||
             s.rangeIndex < 0 || s.rangeIndex >= ClassicSceneUiState.RANGES.length ||
-            s.colorIndex < 0 || s.colorIndex >= ClassicSceneUiState.COLORS.length)
+            s.colorIndex < 0 || s.colorIndex >= ClassicSceneUiState.COLORS.length ||
+            s.paletteIndex < 0 || s.paletteIndex >= ClassicSceneUiState.PALETTE_NAMES.length)
             throw new IllegalArgumentException("Invalid original scene selection");
         int rgb = ClassicSceneUiState.COLORS[s.colorIndex];
         int[] shape = PULSE_SHAPES[s.pulseShapeIndex];
@@ -40,6 +41,6 @@ public final class ClassicSceneOutputProfile {
             PULSE_GAMMA[s.pulseShapeIndex],
             rgb, ClassicSceneUiState.SPEEDS[s.speedIndex],
             s.reverse, ClassicSceneUiState.TRAILS[s.trailIndex],
-            spatialRange[0], spatialRange[1]);
+            spatialRange[0], spatialRange[1], s.paletteIndex == 1);
     }
 }

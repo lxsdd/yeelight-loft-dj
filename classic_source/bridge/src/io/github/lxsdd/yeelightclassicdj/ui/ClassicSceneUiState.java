@@ -27,10 +27,12 @@ final class ClassicSceneUiState {
         "Cyan", "Blau", "Violett", "Magenta", "Apricot", "Weiß"
     };
 
+    static final String[] PALETTE_NAMES = {"Einfarbig", "Regenbogen"};
+
     static final class Selection {
         final int scene, speedIndex, trailIndex, rangeIndex;
         final boolean reverse, beatPulse;
-        final int gainIndex, pulseTempoIndex, pulseShapeIndex, colorIndex;
+        final int gainIndex, pulseTempoIndex, pulseShapeIndex, colorIndex, paletteIndex;
         Selection(int scene, int speedIndex, boolean reverse,
                   int trailIndex, int rangeIndex, int gainIndex,
                   boolean beatPulse, int pulseTempoIndex, int pulseShapeIndex) {
@@ -41,6 +43,14 @@ final class ClassicSceneUiState {
                   int trailIndex, int rangeIndex, int gainIndex,
                   boolean beatPulse, int pulseTempoIndex, int pulseShapeIndex,
                   int colorIndex) {
+            this(scene, speedIndex, reverse, trailIndex, rangeIndex, gainIndex,
+                beatPulse, pulseTempoIndex, pulseShapeIndex, colorIndex, 0);
+        }
+        Selection(int scene, int speedIndex, boolean reverse,
+                  int trailIndex, int rangeIndex, int gainIndex,
+                  boolean beatPulse, int pulseTempoIndex, int pulseShapeIndex,
+                  int colorIndex, int paletteIndex) {
+            this.paletteIndex = paletteIndex;
             this.colorIndex = colorIndex;
             this.scene = scene;
             this.speedIndex = speedIndex;
@@ -74,11 +84,13 @@ final class ClassicSceneUiState {
             chosen.gainIndex < 0 || chosen.gainIndex >= 4 ||
             chosen.pulseTempoIndex < 0 || chosen.pulseTempoIndex >= 5 ||
             chosen.pulseShapeIndex < 0 || chosen.pulseShapeIndex >= 3 ||
-            chosen.colorIndex < 0 || chosen.colorIndex >= COLORS.length)
+            chosen.colorIndex < 0 || chosen.colorIndex >= COLORS.length ||
+            chosen.paletteIndex < 0 || chosen.paletteIndex >= PALETTE_NAMES.length)
             return false;
         current = new Selection(chosen.scene, chosen.speedIndex, chosen.reverse,
             chosen.trailIndex, chosen.rangeIndex, chosen.gainIndex, chosen.beatPulse,
-            chosen.pulseTempoIndex, chosen.pulseShapeIndex, chosen.colorIndex);
+            chosen.pulseTempoIndex, chosen.pulseShapeIndex, chosen.colorIndex,
+            chosen.paletteIndex);
         revision++;
         return true;
     }
@@ -93,7 +105,7 @@ final class ClassicSceneUiState {
         Selection v = current;
         return new Selection(v.scene, v.speedIndex, v.reverse,
             v.trailIndex, v.rangeIndex, v.gainIndex, v.beatPulse,
-            v.pulseTempoIndex, v.pulseShapeIndex, v.colorIndex);
+            v.pulseTempoIndex, v.pulseShapeIndex, v.colorIndex, v.paletteIndex);
     }
 
     static synchronized boolean update(int scene, int speedIndex,
@@ -105,7 +117,7 @@ final class ClassicSceneUiState {
         Selection old = current;
         current = new Selection(scene, speedIndex, reverse, trailIndex, rangeIndex,
             old.gainIndex, old.beatPulse, old.pulseTempoIndex, old.pulseShapeIndex,
-            old.colorIndex);
+            old.colorIndex, old.paletteIndex);
         revision++;
         return true;
     }
@@ -118,7 +130,7 @@ final class ClassicSceneUiState {
         Selection old = current;
         current = new Selection(old.scene, old.speedIndex, old.reverse,
             old.trailIndex, old.rangeIndex, gainIndex, beatPulse,
-            pulseTempoIndex, pulseShapeIndex, old.colorIndex);
+            pulseTempoIndex, pulseShapeIndex, old.colorIndex, old.paletteIndex);
         revision++;
         return true;
     }
@@ -129,7 +141,18 @@ final class ClassicSceneUiState {
         Selection old = current;
         current = new Selection(old.scene, old.speedIndex, old.reverse,
             old.trailIndex, old.rangeIndex, old.gainIndex, old.beatPulse,
-            old.pulseTempoIndex, old.pulseShapeIndex, colorIndex);
+            old.pulseTempoIndex, old.pulseShapeIndex, colorIndex, old.paletteIndex);
+        revision++;
+        return true;
+    }
+
+    /** Clone-local palette choice. Never modifies OEM scenes or target devices. */
+    static synchronized boolean updatePalette(int paletteIndex) {
+        if (paletteIndex < 0 || paletteIndex >= PALETTE_NAMES.length) return false;
+        Selection old = current;
+        current = new Selection(old.scene, old.speedIndex, old.reverse,
+            old.trailIndex, old.rangeIndex, old.gainIndex, old.beatPulse,
+            old.pulseTempoIndex, old.pulseShapeIndex, old.colorIndex, paletteIndex);
         revision++;
         return true;
     }

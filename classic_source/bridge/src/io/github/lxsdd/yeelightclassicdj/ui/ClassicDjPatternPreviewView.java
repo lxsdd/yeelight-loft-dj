@@ -25,6 +25,9 @@ public final class ClassicDjPatternPreviewView extends View {
     private boolean beatPulse = true;
     private int pulseTempo = 120;
     private int previewRgb = PINK;
+    private boolean rainbow;
+    private int spatialSpeed = 100;
+    private boolean reverse;
     private ClassicOriginalMusicAudioSignal.Snapshot originalFrame;
 
     public ClassicDjPatternPreviewView(Context context) { super(context); }
@@ -33,12 +36,19 @@ public final class ClassicDjPatternPreviewView extends View {
         setMode(selected, beat, bpm, PINK);
     }
     public void setMode(int selected, boolean beat, int bpm, int rgb) {
+        setMode(selected, beat, bpm, rgb, false, 100, false);
+    }
+    public void setMode(int selected, boolean beat, int bpm, int rgb,
+                        boolean rainbow, int speed, boolean reverse) {
         if (selected < 0 || selected > 6 || bpm < 40 || bpm > 240 ||
-            rgb < 0 || rgb > 0xFFFFFF) return;
+            rgb < 0 || rgb > 0xFFFFFF || speed < 25 || speed > 400) return;
         mode = selected;
         beatPulse = beat;
         pulseTempo = bpm;
         previewRgb = rgb;
+        this.rainbow = rainbow;
+        spatialSpeed = speed;
+        this.reverse = reverse;
         invalidate();
     }
 
@@ -46,6 +56,24 @@ public final class ClassicDjPatternPreviewView extends View {
     public void setOriginalFrame(ClassicOriginalMusicAudioSignal.Snapshot frame) {
         originalFrame = frame;
         invalidate();
+    }
+
+    /** Same palette geometry as the owned output, on eight imaginary cells. */
+    private int rainbowRgb(int index, long timestampMs) {
+        int position = reverse ? CELLS - 1 - index : index;
+        long phase = (timestampMs / 45L % 360L) * spatialSpeed / 100L;
+        double hue = ((position * 360L / CELLS + phase) % 360L) / 60.0;
+        int x = (int) (255.0 * (1.0 - Math.abs(hue % 2.0 - 1.0)));
+        int red, green, blue;
+        switch ((int) hue) {
+            case 0: red = 255; green = x; blue = 0; break;
+            case 1: red = x; green = 255; blue = 0; break;
+            case 2: red = 0; green = 255; blue = x; break;
+            case 3: red = 0; green = x; blue = 255; break;
+            case 4: red = x; green = 0; blue = 255; break;
+            default: red = 255; green = 0; blue = x;
+        }
+        return (red << 16) | (green << 8) | blue;
     }
 
     @Override protected void onDraw(Canvas canvas) {
@@ -69,8 +97,9 @@ public final class ClassicDjPatternPreviewView extends View {
                 source == null ? 0f : source.level,
                 source == null ? new float[4] : source.bands,
                 source != null && source.beat);
+            int rgb = rainbow && mode >= 4 ? rainbowRgb(i, clock) : previewRgb;
             paint.setColor(Color.argb(40 + Math.round(215f * intensity),
-                Color.red(previewRgb), Color.green(previewRgb), Color.blue(previewRgb)));
+                Color.red(rgb), Color.green(rgb), Color.blue(rgb)));
             canvas.drawRoundRect(bounds, radius, radius, paint);
         }
     }
