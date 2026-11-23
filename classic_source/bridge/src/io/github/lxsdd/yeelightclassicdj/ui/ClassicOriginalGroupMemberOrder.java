@@ -87,7 +87,7 @@ public final class ClassicOriginalGroupMemberOrder {
             verified = false;
             boolean sameMembers = !invalidated && wasVerified &&
                 refresh() && previous.equals(sourceIds);
-            if (!sameMembers) ClassicOriginalMusicSelection.originalGroupRowAction();
+            if (!sameMembers) ClassicOriginalMusicSelection.originalGroupMembershipChanged();
         }
 
         private final DataSetObserver observer = new DataSetObserver() {

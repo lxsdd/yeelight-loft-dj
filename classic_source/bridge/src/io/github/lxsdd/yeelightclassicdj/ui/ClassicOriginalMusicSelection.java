@@ -33,6 +33,19 @@ public final class ClassicOriginalMusicSelection {
     // Source- and user-originated participant changes invalidate all output
     // authorizations; expiry of a one-shot LAN cache does not end an owned socket.
     private static long outputRevision = 1L;
+    // Fixed non-identifying reason codes, never an OEM key or LAN address.
+    static final int CHANGE_NONE=0, CHANGE_GROUP=1, CHANGE_ORDER=2,
+        CHANGE_SELECTION=3, CHANGE_DEVICE_ACTION=4, CHANGE_CONTEXT=5,
+        CHANGE_LAN_RECHECKED=6;
+    private static int outputChangeReason=CHANGE_CONTEXT;
+    static synchronized int lastOutputChangeReason() { return outputChangeReason; }
+    static synchronized int outputLeaseChangeReason(OutputLease lease) {
+        if (lease != null && isOutputLeaseCurrent(lease)) return CHANGE_NONE;
+        if (lease == null || selectedId == null || !selectedId.equals(lease.owner))
+            return CHANGE_CONTEXT;
+        return outputChangeReason;
+    }
+
     private static void revokeLan() {
         lanTargets.clear();
         lanGroupOwner = null;
@@ -135,6 +148,7 @@ public final class ClassicOriginalMusicSelection {
         if (!originalMemberKeys.identitiesVerified ||
             !before.equals(new java.util.HashSet<>(originalMemberKeys.keysForDisplay()))) {
             ++outputRevision;
+            outputChangeReason=CHANGE_GROUP;
             revokeLan();
         }
         if (originalMemberKeys.identitiesVerified)
@@ -248,6 +262,7 @@ public final class ClassicOriginalMusicSelection {
      */
     static synchronized void originalDisplayOrderChanged() {
         ++outputRevision;
+        outputChangeReason=CHANGE_ORDER;
         revokeLan();
     }
 
@@ -258,6 +273,14 @@ public final class ClassicOriginalMusicSelection {
      */
     static synchronized void originalGroupRowAction() {
         ++outputRevision;
+        outputChangeReason=CHANGE_DEVICE_ACTION;
+        revokeLan();
+    }
+
+    /** Called on an actual original adapter member-set change or invalidation. */
+    static synchronized void originalGroupMembershipChanged() {
+        ++outputRevision;
+        outputChangeReason=CHANGE_GROUP;
         revokeLan();
     }
 
@@ -303,6 +326,7 @@ public final class ClassicOriginalMusicSelection {
         for (String ip : exact.values())
             if (!ClassicOriginalLanDiscovery.privateIpv4(ip)) return false;
         ++outputRevision;
+        outputChangeReason=CHANGE_LAN_RECHECKED;
         revokeLan();
         // LinkedHashMap iteration order is the ACTUAL device choreography.
         // Original membership still controls authorization; only the already
@@ -345,6 +369,7 @@ public final class ClassicOriginalMusicSelection {
         if (verifiedIdentityCountAt(nowMs) <= 0 || id == null ||
             !originalMemberKeys.keysForDisplay().contains(id)) return false;
         ++outputRevision;
+        outputChangeReason=CHANGE_SELECTION;
         revokeLan();
         if (include) djIntentKeys.add(id);
         else djIntentKeys.remove(id);
@@ -356,6 +381,7 @@ public final class ClassicOriginalMusicSelection {
     static synchronized boolean markAllDjIntentAt(boolean include, long nowMs) {
         if (verifiedIdentityCountAt(nowMs) <= 0) return false;
         ++outputRevision;
+        outputChangeReason=CHANGE_SELECTION;
         revokeLan();
         if (include) djIntentKeys.addAll(originalMemberKeys.keysForDisplay());
         else djIntentKeys.clear();
@@ -407,6 +433,7 @@ public final class ClassicOriginalMusicSelection {
 
     private static void resetGroup() {
         ++outputRevision;
+        outputChangeReason=CHANGE_CONTEXT;
         revokeLan();
         originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
         djIntentKeys.clear();
