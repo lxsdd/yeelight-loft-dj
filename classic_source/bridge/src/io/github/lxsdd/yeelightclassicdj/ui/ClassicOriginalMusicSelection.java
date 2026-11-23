@@ -198,9 +198,11 @@ public final class ClassicOriginalMusicSelection {
             return false;
         java.util.Map<String,String> exact=proof.copy();
         if (!exact.keySet().equals(djIntentKeys) ||
-            new java.util.HashSet<>(exact.values()).size()!=exact.size() ||
-            !exact.values().stream().allMatch(
-                ClassicOriginalLanDiscovery::privateIpv4)) return false;
+            new java.util.HashSet<>(exact.values()).size()!=exact.size())
+            return false;
+        // No Stream API: original Classic supports Android before API 24.
+        for (String ip : exact.values())
+            if (!ClassicOriginalLanDiscovery.privateIpv4(ip)) return false;
         revokeLan();
         for (String id : originalAdapterIds)
             if (exact.containsKey(id)) lanTargets.put(id,exact.get(id));

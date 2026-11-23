@@ -66,6 +66,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private int shownGroupCount = Integer.MIN_VALUE;
     private int shownVerifiedIdentityCount = Integer.MIN_VALUE;
     private int shownDjIntentCount = Integer.MIN_VALUE;
+    private int shownLanVerifiedCount = Integer.MIN_VALUE;
     private boolean shownDeviceWitness;
     private int activeScene = -1;
     interface DockHeightListener { void onHeightChanged(int pixels); }
@@ -263,7 +264,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             new double[]{0.5,1.0,1.5,2.0}[chosen.gainIndex],
             ClassicSceneUiState.SCENES[chosen.scene],
             0xFF2E79, chosen.beatPulse,
-            new int[]{60,75,90,120,150}[chosen.pulseTempoIndex],
+            new int[]{60,90,120,150,180}[chosen.pulseTempoIndex],
             range[0],range[1],80,350,1.6,
             0xFF2E79, ClassicSceneUiState.SPEEDS[chosen.speedIndex],
             chosen.reverse, ClassicSceneUiState.TRAILS[chosen.trailIndex],
@@ -395,6 +396,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse);
             description.setText(explanation + " · Vorschau ohne Lampen");
             header.setText("Licht-Effekte  ·  " + NAMES[selected.scene] + "    ﹀");
+            // A SceneFragment edit updates the currently OWNED real effect too.
+            // Neither changing scene nor reading state starts a new capture.
+            applyLightSettings();
             // Audio provenance is rendered from an actual callback below;
             // scene changes cannot manufacture amplitude or beat events.
         }
@@ -403,12 +407,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         int members = ClassicOriginalMusicSelection.originalGroupMemberCount();
         int verifiedIds = ClassicOriginalMusicSelection.originalGroupVerifiedIdentityCount();
         int marked = ClassicOriginalMusicSelection.djIntentCount();
+        int verifiedLan = ClassicOriginalMusicSelection.resolvedOriginalLanCount();
         if (shownDeviceWitness != witnessed || shownGroupCount != members ||
-            shownVerifiedIdentityCount != verifiedIds || shownDjIntentCount != marked) {
+            shownVerifiedIdentityCount != verifiedIds || shownDjIntentCount != marked ||
+            shownLanVerifiedCount != verifiedLan) {
             shownDeviceWitness = witnessed;
             shownGroupCount = members;
             shownVerifiedIdentityCount = verifiedIds;
             shownDjIntentCount = marked;
+            shownLanVerifiedCount = verifiedLan;
             originalMusicSelectionStatus.setText(
                 !witnessed ? "Original-Classic-Gruppenwahl noch nicht bestätigt." :
                 members < 0 ? "Original-Gerätekontext gelesen · Gruppenzuordnung offen." :
@@ -416,8 +423,10 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     (verifiedIds < 0 ? "Geräteidentitäten ungeprüft" :
                      verifiedIds + " Geräteidentitäten gelesen") +
                     " · " + marked + " für DJ vorgemerkt" +
-                     " · keine bestätigte Auswahl für Lampensteuerung; " +
-                     "LAN-/Lampenfreigabe weiterhin gesperrt.");
+                    (verifiedLan > 0 ? " · " + verifiedLan +
+                      " Color4-LAN-Ziele geprüft, Lichtausgabe braucht Bestätigung." :
+                      " · keine bestätigte Auswahl für Lampensteuerung; " +
+                      "LAN-/Lampenfreigabe weiterhin gesperrt."));
         }
         ClassicOriginalMusicAudioSignal.Snapshot audio =
             ClassicOriginalMusicAudioSignal.snapshot();
@@ -433,7 +442,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             stateNotice.setText("Nur Simulation ohne Original-Audio; " +
                 "keine Lampe wird angesteuert.");
         }
-        final int endpoints=ClassicOriginalMusicSelection.resolvedOriginalLanCount();
+        final int endpoints=verifiedLan;
         final boolean running=lightRuntime!=null;
         lightControl.setText(running ? "DJ-Lichtausgabe beenden" :
             (endpoints>0 ? "DJ-Lichtausgabe für geprüfte Lampen starten" :
