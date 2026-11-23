@@ -52,6 +52,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final TextView lightControl;
     private final Object lightGuard = new Object();
     private volatile CheckpointRuntime lightRuntime;
+    private volatile ClassicOriginalMusicSelection.OutputLease lightLease;
     private int lightEpoch;
     private volatile String lightStatus = "";
     private final ClassicDjPatternPreviewView preview;
@@ -61,7 +62,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final LinearLayout chips;
     private final int compactHeightPx;
     private final int detailsHeightPx;
-    private boolean attached;
+    private volatile boolean attached;
     private long shownRevision = -1L;
     private int shownGroupCount = Integer.MIN_VALUE;
     private int shownVerifiedIdentityCount = Integer.MIN_VALUE;
@@ -276,7 +277,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
      */
     private void confirmLightStart() {
         if (!attached || host.isFinishing() || host.isDestroyed()) return;
-        final List<String> proposed = ClassicOriginalMusicSelection.resolvedOriginalLanIps();
+        final ClassicOriginalMusicSelection.OutputLease consent =
+            ClassicOriginalMusicSelection.leaseForOriginalOutput();
+        final List<String> proposed = consent == null ? new ArrayList<>() : consent.targets();
         if (proposed.isEmpty() || !ClassicOriginalMusicAudioSignal.snapshot().fresh) {
             lightStatus = "Original-Audio und eindeutiger LAN-Abgleich erforderlich";
             redraw();
@@ -291,21 +294,26 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             .setNegativeButton("Abbrechen",null)
             .setPositiveButton("Ausgewählte Lampen steuern",(dialog,which) -> {
                 if (!attached || !ClassicOriginalMusicAudioSignal.snapshot().fresh ||
+                    !ClassicOriginalMusicSelection.isOutputLeaseCurrent(consent) ||
                     !proposed.equals(ClassicOriginalMusicSelection.resolvedOriginalLanIps())) {
                     lightStatus = "Auswahl oder Original-Audio nicht mehr gültig";
                     redraw();
                     return;
                 }
-                beginLightOutput(new ArrayList<>(proposed));
+                beginLightOutput(consent);
             }).show();
     }
 
-    private void beginLightOutput(List<String> targets) {
+    private void beginLightOutput(ClassicOriginalMusicSelection.OutputLease consent) {
+        final List<String> targets = consent.targets();
         final CheckpointRuntime runtime = new CheckpointRuntime();
         final int epoch;
         synchronized (lightGuard) {
-            if (lightRuntime != null || !attached || targets.isEmpty()) return;
+            if (lightRuntime != null || !attached || targets.isEmpty() ||
+                !ClassicOriginalMusicSelection.isOutputLeaseCurrent(consent) ||
+                !ClassicOriginalMusicAudioSignal.snapshot().fresh) return;
             lightRuntime = runtime;
+            lightLease = consent;
             epoch = ++lightEpoch;
             lightStatus = "Echte Music-Rückkanäle werden geprüft";
         }
@@ -339,7 +347,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                             stopLightOutput();
                         });
                     }
-                });
+                }, () -> attached &&
+                    ClassicOriginalMusicSelection.isOutputLeaseCurrent(consent) &&
+                    ClassicOriginalMusicAudioSignal.snapshot().fresh);
                 synchronized (lightGuard) {
                     if (lightRuntime != runtime || epoch != lightEpoch) runtime.stop();
                 }
@@ -350,6 +360,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     synchronized (lightGuard) {
                         if (lightRuntime != runtime || epoch != lightEpoch) return;
                         lightRuntime = null;
+                        lightLease = null;
                         ++lightEpoch;
                         lightStatus = "Lampenverbindung verweigert oder nicht bestätigt";
                     }
@@ -365,6 +376,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             ++lightEpoch;
             old=lightRuntime;
             lightRuntime=null;
+            lightLease=null;
             lightStatus = "Music-Rückkanal wird gestoppt";
         }
         if (old != null) new Thread(() -> {
@@ -374,6 +386,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     private void redraw() {
+        // An already-owned reverse Music socket may outlive the one-time
+        // 90-second UDP discovery proof, but never a changed original cohort,
+        // vanished original audio source or paused original Music host.
+        final ClassicOriginalMusicSelection.OutputLease live = lightLease;
+        if (lightRuntime != null && (live == null || !attached ||
+            !ClassicOriginalMusicSelection.isOutputLeaseCurrent(live) ||
+            !ClassicOriginalMusicAudioSignal.snapshot().fresh)) {
+            stopLightOutput();
+            return;
+        }
         if (effectOrder.refresh()) renderEffectChips();
         ClassicSceneUiState.Selection selected = ClassicSceneUiState.snapshot();
         boolean changed = shownRevision != ClassicSceneUiState.revision() ||
@@ -403,11 +425,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             // scene changes cannot manufacture amplitude or beat events.
         }
 
-        boolean witnessed = ClassicOriginalMusicSelection.fresh();
-        int members = ClassicOriginalMusicSelection.originalGroupMemberCount();
-        int verifiedIds = ClassicOriginalMusicSelection.originalGroupVerifiedIdentityCount();
-        int marked = ClassicOriginalMusicSelection.djIntentCount();
-        int verifiedLan = ClassicOriginalMusicSelection.resolvedOriginalLanCount();
+        final boolean runningOutput = lightRuntime != null;
+        boolean witnessed = runningOutput || ClassicOriginalMusicSelection.fresh();
+        int members = runningOutput ? live.size() :
+            ClassicOriginalMusicSelection.originalGroupMemberCount();
+        int verifiedIds = runningOutput ? live.size() :
+            ClassicOriginalMusicSelection.originalGroupVerifiedIdentityCount();
+        int marked = runningOutput ? live.size() :
+            ClassicOriginalMusicSelection.djIntentCount();
+        int verifiedLan = runningOutput ? live.size() :
+            ClassicOriginalMusicSelection.resolvedOriginalLanCount();
         if (shownDeviceWitness != witnessed || shownGroupCount != members ||
             shownVerifiedIdentityCount != verifiedIds || shownDjIntentCount != marked ||
             shownLanVerifiedCount != verifiedLan) {
@@ -417,6 +444,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             shownDjIntentCount = marked;
             shownLanVerifiedCount = verifiedLan;
             originalMusicSelectionStatus.setText(
+                runningOutput ? "Original-Classic Live-DJ: " + live.size() +
+                    " bestätigte, ausdrücklich ausgewählte Music-Teilnehmer." :
                 !witnessed ? "Original-Classic-Gruppenwahl noch nicht bestätigt." :
                 members < 0 ? "Original-Gerätekontext gelesen · Gruppenzuordnung offen." :
                 "Original-Classic-Gruppenliste: " + members + " Mitglieder · " +
@@ -443,7 +472,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 "keine Lampe wird angesteuert.");
         }
         final int endpoints=verifiedLan;
-        final boolean running=lightRuntime!=null;
+        final boolean running=runningOutput;
         lightControl.setText(running ? "DJ-Lichtausgabe beenden" :
             (endpoints>0 ? "DJ-Lichtausgabe für geprüfte Lampen starten" :
              "DJ-Lichtausgabe · zuerst Gruppenmitglieder im LAN prüfen"));
