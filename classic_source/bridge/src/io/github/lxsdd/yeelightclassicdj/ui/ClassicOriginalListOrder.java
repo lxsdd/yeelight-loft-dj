@@ -31,10 +31,14 @@ public final class ClassicOriginalListOrder {
         "com.yeelight.cherry.ui.fragment.SceneRecyclerViewAdapter";
     private static final String ROOM_ADAPTER =
         "com.yeelight.cherry.ui.adapter.RoomRecyclerViewAdapter";
+    private static final String FAVORITE_ADAPTER =
+        "com.yeelight.yeelib.ui.adapter.FavoriteSceneAdapter";
+    private static final String FAVORITE_MODEL = "com.yeelight.yeelib.models.m";
     private static final String SCENE_MODEL = "com.yeelight.yeelib.models.t";
     private static final String ROOM_MODEL = "y3.a";
     private static final String HANDLE_TAG = "loftdj.original.model.drag.handle";
     private static final WeakHashMap<Object, OrderedList> ADAPTERS = new WeakHashMap<>();
+    private static final WeakHashMap<Object, String> FAVORITE_SCOPES = new WeakHashMap<>();
     private static Context application;
 
     private ClassicOriginalListOrder() {}
@@ -53,6 +57,51 @@ public final class ClassicOriginalListOrder {
     public static List<?> wrapRoom(Object adapter, List<?> rows) {
         return wrap(adapter, rows, ROOM_ADAPTER, ROOM_MODEL, "n",
             ClassicOrderPolicy.Surface.ROOM_LIST, "classic-original-rooms");
+    }
+
+    /**
+     * The pinned original FavoriteSceneAdapter receives a category String and
+     * mode boolean in its constructor. Keep these two OEM scope dimensions
+     * separate; neither is an account/scene identity or write permission.
+     */
+    public static synchronized void registerFavoriteAdapter(Object adapter,
+                                                               String category,
+                                                               boolean mode) {
+        if (application == null || adapter == null ||
+            !FAVORITE_ADAPTER.equals(adapter.getClass().getName())) return;
+        if (!ClassicOrderPolicy.validStableId(category) || category.length() > 160) {
+            FAVORITE_SCOPES.remove(adapter);
+            return;
+        }
+        FAVORITE_SCOPES.put(adapter,
+            "classic-original-favorites-" + (mode ? "1-" : "0-") + category);
+    }
+
+    /** Original e(List) copies this ordered snapshot with clear/addAll.
+     * Return a detached ArrayList: OEM code never receives our mutable source,
+     * and its own row click/selection callbacks remain untouched.
+     */
+    public static List<?> wrapFavorite(Object adapter, List<?> rows) {
+        if (adapter == null || rows == null ||
+            !FAVORITE_ADAPTER.equals(adapter.getClass().getName())) return rows;
+        String scope;
+        synchronized (ClassicOriginalListOrder.class) {
+            scope = FAVORITE_SCOPES.get(adapter);
+        }
+        if (scope == null) return rows;
+        List<?> ordered = wrap(adapter, rows, FAVORITE_ADAPTER, FAVORITE_MODEL, "W",
+            ClassicOrderPolicy.Surface.FAVORITES, scope);
+        return ordered instanceof OrderedList ? new ArrayList<>(ordered) : rows;
+    }
+
+    public static void bindFavoriteRow(Object adapter, Object holder, int index) {
+        bind(adapter, holder, index, FAVORITE_ADAPTER);
+    }
+
+    private static synchronized OrderedList favoriteListForAdapter(Object adapter) {
+        OrderedList list = ADAPTERS.get(adapter);
+        return list != null && list.surface == ClassicOrderPolicy.Surface.FAVORITES &&
+            FAVORITE_ADAPTER.equals(adapter.getClass().getName()) ? list : null;
     }
 
     private static synchronized List<?> wrap(Object adapter, List<?> rows,
@@ -126,7 +175,22 @@ public final class ClassicOriginalListOrder {
         }
     }
 
-    private static void redraw(Object adapter) {
+    static void redraw(Object adapter) {
+        OrderedList favorites = favoriteListForAdapter(adapter);
+        if (favorites != null) {
+            // The pinned Favorite adapter owns an independent internal ArrayList.
+            // notifyDataSetChanged alone cannot re-project it after a drop.
+            // Re-enter only its exact original e(List) refresh method, which
+            // copies the current source list and performs its normal notify.
+            if (!favorites.valid()) return;
+            try {
+                adapter.getClass().getMethod("e", List.class).invoke(
+                    adapter, new ArrayList<>(favorites.source));
+            } catch (ReflectiveOperationException | RuntimeException denied) {
+                // Never fall back to mutating OEM lists or private fields.
+            }
+            return;
+        }
         try { adapter.getClass().getMethod("notifyDataSetChanged").invoke(adapter); }
         catch (ReflectiveOperationException | RuntimeException denied) {
             // A saved order never authorizes arbitrary original UI callbacks.

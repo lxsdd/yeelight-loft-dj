@@ -340,6 +340,10 @@ def build(original: Path, output: Path, sdk: Path, *, identity_control=False):
             # OEM bytecode shape remains an owner-private FAIL-CLOSED gate.
             from clone_original_list_order_hook import patch_staged_clone as patch_original_list_order
             smali_report['original_list_sort'] = patch_original_list_order(staged)
+            # The pinned original FavoriteSceneAdapter.e(List) copies a
+            # clone-only local order; never modify OEM favorites or cloud.
+            from clone_original_favorite_order_hook import patch_staged_clone as patch_original_favorites
+            smali_report['original_favorites_sort'] = patch_original_favorites(staged)
             # Exact original DiscoFragment device -> GroupMusic navigation.
             # A read-only selection witness, NEVER a lamp authorization or LAN target.
             from clone_original_music_selection_hook import patch_staged_clone as patch_original_music_selection

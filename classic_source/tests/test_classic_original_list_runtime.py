@@ -30,6 +30,30 @@ ROOM_ADAPTER='''package com.yeelight.cherry.ui.adapter;
 public final class RoomRecyclerViewAdapter {
  public void notifyDataSetChanged(){}
 }'''
+FAVORITE_MODEL='''package com.yeelight.yeelib.models;
+public final class m {
+ public final String id;
+ public m(String id){this.id=id;}
+ public String W(){return id;}
+}'''
+FAVORITE_ADAPTER='''package com.yeelight.yeelib.ui.adapter;
+import java.util.*;
+import com.yeelight.yeelib.models.m;
+import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalListOrder;
+public final class FavoriteSceneAdapter {
+ private final ArrayList<m> current=new ArrayList<>();
+ public FavoriteSceneAdapter(String category,boolean mode){
+  ClassicOriginalListOrder.registerFavoriteAdapter(this,category,mode);
+ }
+ public void e(List<?> source){
+  List<?> prepared=ClassicOriginalListOrder.wrapFavorite(this,source);
+  current.clear();
+  for(Object item:prepared)current.add((m)item);
+  notifyDataSetChanged();
+ }
+ public m get(int index){return current.get(index);}
+ public void notifyDataSetChanged(){}
+}'''
 
 HARNESS=r'''
 package io.github.lxsdd.yeelightclassicdj.ui;
@@ -39,6 +63,8 @@ import android.content.SharedPreferences;
 import com.yeelight.yeelib.models.t;
 import com.yeelight.cherry.ui.fragment.SceneRecyclerViewAdapter;
 import com.yeelight.cherry.ui.adapter.RoomRecyclerViewAdapter;
+import com.yeelight.yeelib.models.m;
+import com.yeelight.yeelib.ui.adapter.FavoriteSceneAdapter;
 public final class OriginalModelListHarness {
  static void check(boolean pass,String message){if(!pass)throw new AssertionError(message);}
  static final class Prefs implements SharedPreferences {
@@ -140,7 +166,43 @@ public final class OriginalModelListHarness {
   List<?> foreign=ClassicOriginalListOrder.wrapRoom(roomAdapter, next);
   check(foreign==nextSource,"room adapter cannot inherit a scene model wrapper");
   check("next-1".equals(nextSource.get(0).id),"original model objects remain untouched");
-  System.out.println("CLASSIC_ORIGINAL_SCENE_ROOM_LIST_RUNTIME_PASS");
+  // The real FavoriteSceneAdapter.e(List) copies a sorted DETACHED snapshot.
+  FavoriteSceneAdapter favorite=new FavoriteSceneAdapter("favorite-catalog-A",true);
+  List<m> savedSource=new ArrayList<>(Arrays.asList(
+      new m("favorite-a"),new m("favorite-b"),new m("favorite-c")));
+  favorite.e(savedSource);
+  check(favorite.get(0)==savedSource.get(0),"original favorite order starts unchanged");
+  ClassicOriginalListOrder.OrderedList active=
+      ClassicOriginalListOrder.favoriteListForAdapter(favorite);
+  check(active!=null,"original favorite adapter bound");
+  long favoriteRevision=active.revision();
+  check(active.moveTo("favorite-c","favorite-a",favoriteRevision),
+      "favorite gesture persists local stable ID preference");
+  ClassicOriginalListOrder.redraw(favorite);
+  check(favorite.get(0)==savedSource.get(2),
+      "original e(List) re-entered to reflect saved favorite order");
+  check(savedSource.get(0).id.equals("favorite-a"),
+      "original favorite model source never mutated");
+  check(!active.moveTo("favorite-a","favorite-c",favoriteRevision),
+      "previous Favorite adapter generation revoked after refresh");
+  ClassicOriginalListOrder.OrderedList nextFavorite=
+      ClassicOriginalListOrder.favoriteListForAdapter(favorite);
+  check(nextFavorite!=null && nextFavorite != active,"new favorite adapter owner");
+  check(nextFavorite.undo(nextFavorite.revision()),"favorite undo");
+  ClassicOriginalListOrder.redraw(favorite);
+  check(favorite.get(0)==savedSource.get(0),"favorite undo visible in original adapter");
+  FavoriteSceneAdapter another=new FavoriteSceneAdapter("favorite-catalog-B",true);
+  another.e(savedSource);
+  check(another.get(0)==savedSource.get(0),"independent original favorite scope");
+  FavoriteSceneAdapter invalid=new FavoriteSceneAdapter(null,true);
+  invalid.e(savedSource);
+  check(ClassicOriginalListOrder.favoriteListForAdapter(invalid)==null,
+      "unverified favorite category never wraps");
+  List<m> duplicate=new ArrayList<>(Arrays.asList(new m("same"),new m("same")));
+  another.e(duplicate);
+  check(ClassicOriginalListOrder.favoriteListForAdapter(another)==null,
+      "ambiguous stable favorite IDs rejected");
+  System.out.println("CLASSIC_ORIGINAL_SCENE_ROOM_FAVORITE_LIST_RUNTIME_PASS");
  }
 }
 '''
@@ -157,6 +219,8 @@ class OriginalSceneRoomListRuntimeTests(unittest.TestCase):
                 "y3/a.java":ROOM_MODEL,
                 "com/yeelight/cherry/ui/fragment/SceneRecyclerViewAdapter.java":SCENE_ADAPTER,
                 "com/yeelight/cherry/ui/adapter/RoomRecyclerViewAdapter.java":ROOM_ADAPTER,
+                "com/yeelight/yeelib/models/m.java":FAVORITE_MODEL,
+                "com/yeelight/yeelib/ui/adapter/FavoriteSceneAdapter.java":FAVORITE_ADAPTER,
                 "io/github/lxsdd/yeelightclassicdj/ui/OriginalModelListHarness.java":HARNESS
             }
             for name,body in sources.items():
@@ -172,4 +236,4 @@ class OriginalSceneRoomListRuntimeTests(unittest.TestCase):
                 "io.github.lxsdd.yeelightclassicdj.ui.OriginalModelListHarness"],
                 capture_output=True,text=True,timeout=20)
             self.assertEqual(result.returncode,0,result.stderr[-12000:])
-            self.assertIn("CLASSIC_ORIGINAL_SCENE_ROOM_LIST_RUNTIME_PASS",result.stdout)
+            self.assertIn("CLASSIC_ORIGINAL_SCENE_ROOM_FAVORITE_LIST_RUNTIME_PASS",result.stdout)
