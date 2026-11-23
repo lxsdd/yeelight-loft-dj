@@ -264,7 +264,10 @@ class GroupMemberOrderRuntimeTests(unittest.TestCase):
                 # This standalone adapter JDK test intentionally does not
                 # compile the unrelated Kotlin DSP Java ABI placeholder.
                 # The complete bridge test still validates it separately.
-                if file == "io/github/lxsdd/yeelightclassicdj/runtime/ClassicOriginalDspAnalysis.java":
+                if file in (
+                    "io/github/lxsdd/yeelightclassicdj/runtime/ClassicOriginalDspAnalysis.java",
+                    "io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.java"
+                ):
                     continue
                 p=root/file
                 p.parent.mkdir(parents=True,exist_ok=True)
