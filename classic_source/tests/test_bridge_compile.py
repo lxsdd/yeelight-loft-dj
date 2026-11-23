@@ -439,7 +439,19 @@ import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal;
 public final class ClassicOriginalDspAnalysis implements ClassicOriginalMusicAudioSignal.Analyzer {
  public ClassicOriginalMusicAudioSignal.Frame onPcm(short[] data,int size,int rate,long at) { return null; }
  public ClassicOriginalMusicAudioSignal.Frame onFft(byte[] data,int rate,long at) { return null; }
+ public void setFrameObserver(ClassicOriginalMusicAudioSignal.FrameObserver observer){}
 }''',
+'io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.java':
+'''package io.github.lxsdd.yeelightclassicdj.runtime;
+import java.util.List;
+import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal;
+/** Java-only ABI fixture: actual production type is compiled from Kotlin by Android CI. */
+public class CheckpointRuntime {
+ public boolean applySceneSettings(DjRuntime.SceneSettings next){return true;}
+ public void startOriginalAudio(List<String> targets,DjRuntime.Listener listener){}
+ public boolean submitOriginalFrame(ClassicOriginalMusicAudioSignal.Frame frame){return true;}
+ public void stop(){}
+}'''
 })
 
 # Java synthetic framework API only; actual Android SDK compiles production.
