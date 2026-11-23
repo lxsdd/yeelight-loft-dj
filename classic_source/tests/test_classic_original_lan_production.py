@@ -147,6 +147,17 @@ public final class OriginalLanProofHarness {
     ok(beforeRefresh.targets().equals(Arrays.asList(
       "192.168.10.22","192.168.10.21")),
       "immutable output lease preserves exact visual choreography");
+    ClassicOriginalMusicSelection.originalDisplayOrderChanged();
+    ok(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(beforeRefresh),
+       "user drag or Undo revokes an already granted Music cohort");
+    ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1012).isEmpty(),
+       "stale LAN IP order cannot survive a later DnD gesture");
+    ok(ClassicOriginalMusicSelection.acceptLanProofAt(
+      originalIds,displayOrder,proof,1012),
+       "fresh explicit proof is needed for the reordered group");
+    beforeRefresh = ClassicOriginalMusicSelection.leaseForOriginalOutputAt(1012);
+    ok(beforeRefresh != null && ClassicOriginalMusicSelection.isOutputLeaseCurrent(beforeRefresh),
+       "renewed exact ordered Music lease is current");
     ClassicOriginalMusicSelection.observeGroupMembersAt(
       Arrays.asList(member(a),member(c)),1013);
     ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1014).isEmpty(),

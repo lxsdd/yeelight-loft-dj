@@ -241,6 +241,16 @@ public final class ClassicOriginalMusicSelection {
         return ordered;
     }
 
+    /** Any successful user DnD or Undo changes the physical choreography.
+     * A previously approved IP order must never be silently reused.
+     * Revoking this grant also fences a still-owned running light session via
+     * the original host's existing OutputLease / ConsentGuard checks.
+     */
+    static synchronized void originalDisplayOrderChanged() {
+        ++outputRevision;
+        revokeLan();
+    }
+
     /** Install only a positive, single-scan proof produced by the LAN parser
      * while the original GroupMusic adapter and selected identity set still
      * match. No direct caller-supplied IP map is accepted here.

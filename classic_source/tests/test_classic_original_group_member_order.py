@@ -25,6 +25,10 @@ class GroupAdapterOrderingSourceTests(unittest.TestCase):
         self.assertIn("ClassicOrderPolicy.Surface.GROUP_MEMBERS",java)
         self.assertIn("applyUserDropAtIndex(",java)
         self.assertIn("undoLastUserDrop(",java)
+        # Both successful real production transitions revoke any prior LAN
+        # address/order grant; a pending reverse session must fail closed.
+        self.assertEqual(java.count(
+            "ClassicOriginalMusicSelection.originalDisplayOrderChanged();"),2)
         self.assertIn("scope.equals(ClassicOriginalMusicSelection.originalGroupDisplayScope())",java)
         self.assertIn("list.setAdapter(original)",java)
         self.assertIn("DataSetObserver",java)

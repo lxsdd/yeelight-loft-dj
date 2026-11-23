@@ -181,6 +181,9 @@ public final class ClassicOriginalGroupMemberOrder {
                 scope,sourceIds,shownIds,from,index)) return false;
             shownIds=ClassicOrderPolicy.project(sourceIds,
                 store.read(ClassicOrderPolicy.Surface.GROUP_MEMBERS,scope));
+            // A formerly verified LAN endpoint order is no longer the
+            // original group's explicitly chosen spatial order.
+            ClassicOriginalMusicSelection.originalDisplayOrderChanged();
             revision++;
             notifyDataSetChanged();
             return true;
@@ -274,6 +277,7 @@ public final class ClassicOriginalGroupMemberOrder {
                     scope,sourceIds,shownIds)) return false;
             shownIds=ClassicOrderPolicy.project(sourceIds,
                 store.read(ClassicOrderPolicy.Surface.GROUP_MEMBERS,scope));
+            ClassicOriginalMusicSelection.originalDisplayOrderChanged();
             revision++;
             notifyDataSetChanged();
             return true;
