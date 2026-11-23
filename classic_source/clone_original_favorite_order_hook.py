@@ -21,7 +21,7 @@ WRAP = BRIDGE + "->wrapFavorite(Ljava/lang/Object;Ljava/util/List;)Ljava/util/Li
 BIND = BRIDGE + "->bindFavoriteRow(Ljava/lang/Object;Ljava/lang/Object;I)V"
 
 def _method(text, signature):
-    pattern = r"(?ms)^\.method[ \t]+[^\\r\n]*[ \t]" + re.escape(signature) + r"[ \t]*\\r?$.*?^\.end method[ \t]*\\r?$"
+    pattern = r"(?ms)^\.method[ \t]+[^\r\n]*[ \t]" + re.escape(signature) + r"[ \t]*\r?$.*?^\.end method[ \t]*\r?$"
     found = list(re.finditer(pattern, text))
     if len(found) != 1:
         raise GateFailure("CLASSIC_FAVORITE_ORIGINAL_METHOD_DRIFT")
@@ -37,7 +37,7 @@ def _insert_after(body, needle, text, error):
 def patch_text(source):
     if type(source) is not str or not 0 < len(source) < 1_000_000:
         raise GateFailure("CLASSIC_FAVORITE_SOURCE_INVALID")
-    if len(re.findall(r"(?m)^\.class[ \t]+[^\\r\n]*" + re.escape(OWNER) + r"[ \t]*$", source)) != 1:
+    if len(re.findall(r"(?m)^\.class[ \t]+[^\r\n]*" + re.escape(OWNER) + r"[ \t]*$", source)) != 1:
         raise GateFailure("CLASSIC_FAVORITE_OWNER_DRIFT")
     if BRIDGE in source:
         raise GateFailure("CLASSIC_FAVORITE_ALREADY_PATCHED")
@@ -46,14 +46,14 @@ def patch_text(source):
     if body.count(SUPER) != 1:
         raise GateFailure("CLASSIC_FAVORITE_SUPER_DRIFT")
     body = _insert_after(body,
-        r"^(?P<indent>[ \t]*)invoke-direct \{p0\\}, " + re.escape(SUPER) + r"[ \t]*$",
+        r"^(?P<indent>[ \t]*)invoke-direct \{p0\}, " + re.escape(SUPER) + r"[ \t]*$",
         "invoke-static/range {p0 .. p2}, " + REGISTER,
         "CLASSIC_FAVORITE_CONSTRUCTOR_DRIFT")
     source = source[:ctor.start()] + body + source[ctor.end():]
     setter = _method(source, SETTER)
     body = setter.group()
-    if body.count("Ljava/util/List;->clear()V") != 1 or \\
-       body.count("Ljava/util/List;->addAll(Ljava/util/Collection;)Z") != 1 or \\
+    if body.count("Ljava/util/List;->clear()V") != 1 or \
+       body.count("Ljava/util/List;->addAll(Ljava/util/Collection;)Z") != 1 or \
        body.count("->notifyDataSetChanged()V") != 1:
         raise GateFailure("CLASSIC_FAVORITE_REFRESH_DRIFT")
     body = _insert_after(body,
@@ -70,7 +70,7 @@ def patch_text(source):
     if not 1 <= len(returns) <= 3:
         raise GateFailure("CLASSIC_FAVORITE_BIND_EXIT_DRIFT")
     for ret in reversed(returns):
-        body = body[:ret.start()] + ret.group("indent") + \\
+        body = body[:ret.start()] + ret.group("indent") + \
                "invoke-static/range {p0 .. p2}, " + BIND + "\n" + body[ret.start():]
     source = source[:binder.start()] + body + source[binder.end():]
     if source.count(REGISTER) != 1 or source.count(WRAP) != 1 or source.count(BIND) != len(returns):
