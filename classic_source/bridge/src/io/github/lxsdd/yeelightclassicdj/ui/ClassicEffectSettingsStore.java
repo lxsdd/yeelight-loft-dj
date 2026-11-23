@@ -25,7 +25,14 @@ final class ClassicEffectSettingsStore {
 
     /** Called once from an actual original UI host; never initiates any work. */
     void restoreOnFirstHost() {
-        ClassicSceneUiState.initializeFromStore(readEncoded(prefs.getString(LAST, null), -1));
+        ClassicSceneUiState.Selection previous = null;
+        try {
+            previous = readEncoded(prefs.getString(LAST, null), -1);
+        } catch (RuntimeException denied) {
+            // A corrupt/unreadable private preference must not break original
+            // MusicActivity or SceneFragment initialization.
+        }
+        ClassicSceneUiState.initializeFromStore(previous);
     }
 
     /** A scene is selected in the one original host; stored parameters for

@@ -129,7 +129,7 @@ class OriginalGalleryProductionSourceTest(unittest.TestCase):
             self.assertIn("ClassicSceneUiState", txt)
         self.assertIn("ClassicSceneUiState.snapshot()", gallery)
         self.assertIn("ClassicSceneUiState.revision()", music)
-        self.assertIn("ClassicSceneUiState.update(", music)
+        self.assertIn("effectSettings.selectScene(index)", music)
         self.assertIn("previous.panel.redraw();", gallery)
         self.assertIn("EXPLANATIONS[s.scene]", gallery)
         self.assertIn("pulseEditor.setVisibility(s.scene == 3 ? View.VISIBLE : View.GONE)", gallery)

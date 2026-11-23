@@ -116,10 +116,10 @@ class IdentityLifecycleEntryTests(unittest.TestCase):
         self.assertIn("new ClassicMusicInlineControls(activity)", provider_source)
         self.assertIn("onHostPaused()", inline)
         # Original MusicActivity now owns the only Play/Pause and source UI.
-        # The embedded panel may only choose a shared in-memory scene; it
+        # The embedded panel may only select an owned clone-private DJ effect; it
         # cannot start/stop a second service or authorize device endpoints.
         self.assertIn("Audioquelle und Start/Stopp: oben in Classic", inline)
-        self.assertIn("ClassicSceneUiState.update(", inline)
+        self.assertIn("effectSettings.selectScene(index)", inline)
         for forbidden in ("new String[0]", "ClassicDjService.ACTION_CONFIG",
                           "ClassicDjService.ACTION_STOP", "ClassicDjService.ACTION_MIC",
                           "stopOwnedFromUi(", "host.startService(", "host.startActivity("):

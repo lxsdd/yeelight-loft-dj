@@ -40,7 +40,7 @@ class VerifiedOemSelectionGateTest(unittest.TestCase):
 
     def test_original_music_inline_has_no_second_audio_or_lamp_start(self):
         self.assertIn("Audioquelle und Start/Stopp: oben in Classic", INLINE)
-        self.assertIn("ClassicSceneUiState.update(", INLINE)
+        self.assertIn("effectSettings.selectScene(index)", INLINE)
         self.assertIn("ClassicOriginalMusicSelection.originalGroupMemberCount()", INLINE)
         for forbidden in ("new String[0]", "ClassicDjService.ACTION_MIC",
                           "ClassicDjService.ACTION_STOP", "host.startActivity(",
