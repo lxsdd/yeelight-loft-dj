@@ -413,6 +413,95 @@ fun main() {
         Thread.sleep(40L)
         check(renderedIds.size == priorFrames)
     }
+    // The genuine original Classic callback now has a production output path
+    // through the SAME owned reverse transport, but NO SECOND AudioRecord.
+    val original = CheckpointRuntime()
+    original.inputFactory = { error("Original player already owns AudioRecord") }
+    original.visualizerFactory = { error("Original player already owns Visualizer") }
+    original.clock = { System.nanoTime() / 1_000_000L }
+    original.idle = { Thread.sleep(4L) }
+    original.wifiAddress = { "192.168.1.10" }
+    val originalPeers = mutableMapOf("192.168.1.21" to false, "192.168.1.22" to false)
+    val originalFrames = mutableListOf<String>()
+    var originalStarts = 0
+    var originalStops = 0
+    original.transportFactory = { local, ids ->
+        check(local == "192.168.1.10" && ids == originalPeers.keys)
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = originalPeers[id]
+            override fun requestStart(id: String): Boolean {
+                originalStarts++
+                originalPeers[id] = true
+                return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                originalStops++
+                originalPeers[id] = false
+                return true
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String, generation: Long,
+                                          rgb: Int, brightness: Int): Boolean {
+                synchronized(originalFrames) { originalFrames.add(id) }
+                return true
+            }
+        }
+    }
+    check(!original.submitOriginalFrame(null))
+    check(!original.submitOriginalFrame(
+        io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal.Frame(
+            .5f, floatArrayOf(.7f,.3f,.2f,.1f), true,120f,.8f)))
+    check(runCatching {
+        original.startOriginalAudio(emptyList(), Listener())
+    }.isFailure)
+    val originalListener = Listener()
+    check(original.configure(1.0, "SCANNER"))
+    original.startOriginalAudio(originalPeers.keys.toList(), originalListener)
+    check(originalStarts == 2)
+    check(originalListener.states.contains("ORIGINAL_AUDIO_2_LAMPS"))
+    val originalFrame = io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal.Frame(
+        .6f, floatArrayOf(.8f,.4f,.2f,.1f), true,120f,.75f)
+    check(original.submitOriginalFrame(originalFrame))
+    check(originalListener.spectrum.await(4, TimeUnit.SECONDS))
+    check(originalListener.lastBands[0] == .8f && originalListener.lastConfidence == .75f)
+    val deadline = System.nanoTime() + 2_000_000_000L
+    while (System.nanoTime() < deadline &&
+           synchronized(originalFrames) { originalFrames.toSet().size } < 2)
+        Thread.sleep(10L)
+    check(synchronized(originalFrames) { originalFrames.toSet() } == originalPeers.keys)
+    check(!original.submitOriginalFrame(
+        io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal.Frame(
+            .5f, floatArrayOf(Float.NaN,0f,0f,0f),false,0f,0f)))
+    original.stop()
+    check(originalStops == 2 && originalPeers.values.none { it })
+    val frozen = synchronized(originalFrames) { originalFrames.size }
+    check(!original.submitOriginalFrame(originalFrame))
+    Thread.sleep(350L)
+    check(synchronized(originalFrames) { originalFrames.size } == frozen)
+    // Any foreign active Music owner is never taken over.
+    val foreign = CheckpointRuntime()
+    foreign.wifiAddress = { "192.168.1.10" }
+    var foreignStarts = 0
+    foreign.transportFactory = { _, _ ->
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = true
+            override fun requestStart(id: String): Boolean {
+                foreignStarts++
+                return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String) = true
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String,generation: Long,rgb: Int,brightness: Int)=true
+        }
+    }
+    check(runCatching {
+        foreign.startOriginalAudio(listOf("192.168.1.21"), Listener())
+    }.isFailure)
+    check(foreignStarts == 0)
+    foreign.stop()
+    println("PASS original Classic PCM/FFT -> production owned-only reverse frames; no second recorder, foreign-session takeover, or post-stop output")
     println("PASS dynamic 5/15/33/72 selected LAN peers through real timed runtime")
     println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")
 }

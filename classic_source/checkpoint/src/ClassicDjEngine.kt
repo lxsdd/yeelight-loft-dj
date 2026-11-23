@@ -64,6 +64,34 @@ class ClassicDjEngine(
                       result.bass, result.mid, result.presence, result.treble)
     }
 
+    /**
+     * The ORIGINAL Classic AudioRecord/Visualizer has already produced a real
+     * FFT/beat decision. Send that measured frame through the SAME owned-only
+     * spatial/pulse scene transport, without re-analyzing or opening audio.
+     * This is called only from the bounded worker of an explicitly enrolled
+     * original source session. Never treats an OEM ID as a network address.
+     */
+    @Synchronized fun originalFrame(timestampMs: Long, bands: DoubleArray,
+                                    beat: Boolean, bpm: Double,
+                                    confidence: Double): Output {
+        require(timestampMs >= 0L && bands.size == 4 &&
+                bands.all { it.isFinite() && it in 0.0..1.0 } &&
+                bpm.isFinite() && bpm in 0.0..240.0 &&
+                confidence.isFinite() && confidence in 0.0..1.0)
+        if (timestampMs <= lastSceneInputMs || active.isEmpty())
+            return Output(false, null, 0.0, emptySet(), emptySet())
+        lastSceneInputMs = timestampMs
+        lastAudioMs = timestampMs
+        val loudness = (0.5 * bands[0] + 0.25 * bands[1] +
+                        0.15 * bands[2] + 0.10 * bands[3]).coerceIn(0.0, 1.0)
+        val frame = lighting.accept(timestampMs, beat, bands[0],
+                                    bands[1], bands[2], bands[3])
+        val (sent, failed) = dispatchOwned(frame, timestampMs, loudness, beat)
+        return Output(beat, if (bpm > 0.0) bpm else null, confidence,
+                      sent, failed, loudness, bands[0], bands[1],
+                      bands[2], bands[3])
+    }
+
     /** Clock-only scene evolution during an already started, explicitly owned
      * music session. The microphone/PCM acquisition and player remain unchanged.
      * This method can NEVER acquire an owner or create a reverse socket.

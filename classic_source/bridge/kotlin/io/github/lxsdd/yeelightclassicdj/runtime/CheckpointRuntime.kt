@@ -12,6 +12,7 @@ import loftdj.classic.ClassicSpatialChoreography
 import loftdj.classic.ClassicPcmCaptureSession
 import loftdj.classic.ClassicPcmDjBridge
 import loftdj.classic.ClassicYeelightMusicTransport
+import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal
 
 /**
  * Concrete private Classic/Loft-DJ adapter, binding the *existing* tested DSP checkpoint.
@@ -30,6 +31,14 @@ class CheckpointRuntime : DjRuntime {
     private var engine: ClassicDjEngine? = null
     private var inputBridge: ClassicPcmDjBridge? = null
     private var clockOnly = false
+    private var originalCallbackOwner = false
+    private data class OriginalFrame(
+        val timestampMs: Long, val bands: DoubleArray, val beat: Boolean,
+        val bpm: Double, val confidence: Double
+    )
+    // One last-value mailbox. The ORIGINAL audio callback never waits for
+    // network I/O, spawns a recorder or accumulates unbounded PCM/FFT frames.
+    private var pendingOriginal: OriginalFrame? = null
     private var sensitivity = 1.0
     private var scene = "SPECTRUM"
     private var pulse = ClassicPulseScene.Options()
@@ -177,6 +186,37 @@ class CheckpointRuntime : DjRuntime {
         startCapture(selectedLampIps, listener) { visualizerFactory(audioSessionId) }
     }
 
+    /**
+     * Original Classic player owns capture and Play/Pause. Start ONLY the
+     * already-tested owned reverse Music output; do not create AudioRecord,
+     * Visualizer, MediaProjection or an independent audio service.
+     * Caller must supply a separately verified, consented OEM-ID -> LAN-IP
+     * snapshot, never naked OEM keys.
+     */
+    fun startOriginalAudio(selectedLampIps: List<String>, listener: DjRuntime.Listener) {
+        require(selectedLampIps.isNotEmpty()) { "Original source requires confirmed endpoints" }
+        startCapture(selectedLampIps, listener, sourceInput = null, originalCallbacks = true)
+    }
+
+    /** Nonblocking bounded frame handoff from the genuine OEM DSP monitor.
+     * A no-owner/stale/closed session cannot enqueue work or touch any peer.
+     */
+    fun submitOriginalFrame(frame: ClassicOriginalMusicAudioSignal.Frame?): Boolean {
+        if (frame == null || frame.bands == null || frame.bands.size != 4 ||
+            !frame.bands.all { it.isFinite() && it in 0f..1f } ||
+            !frame.bpm.isFinite() || frame.bpm !in 0f..240f ||
+            !frame.confidence.isFinite() || frame.confidence !in 0f..1f ||
+            !frame.level.isFinite() || frame.level !in 0f..1f) return false
+        synchronized(lock) {
+            if (state != State.RUNNING || !originalCallbackOwner || engine == null)
+                return false
+            pendingOriginal = OriginalFrame(clock(),
+                DoubleArray(4) { frame.bands[it].toDouble() },
+                frame.beat, frame.bpm.toDouble(), frame.confidence.toDouble())
+            return true
+        }
+    }
+
     /** Scene-gallery backend: shares the owned-only, paced lighting engine.
      * Not exposed by the OEM UI until its participant identity is verified.
      * No PCM or foreground-audio service is needed for this call.
@@ -188,12 +228,13 @@ class CheckpointRuntime : DjRuntime {
     }
 
     private fun startCapture(selectedLampIps: List<String>, listener: DjRuntime.Listener,
-                             sourceInput: (() -> ClassicPcmCaptureSession.Input)?) {
+                             sourceInput: (() -> ClassicPcmCaptureSession.Input)?,
+                             originalCallbacks: Boolean = false) {
         // Every current and subsequently added explicitly selected lamp is eligible.
         // Validation is per target; no arbitrary 4/14/other fleet-size ceiling.
         require(selectedLampIps.distinct().size == selectedLampIps.size)
         require(selectedLampIps.all(ClassicYeelightMusicTransport::validLanIp))
-        val independentScene = sourceInput == null
+        val independentScene = sourceInput == null && !originalCallbacks
         synchronized(lock) {
             check(state == State.NEW) { "Session cannot be restarted" }
             if (independentScene) check(clockSceneAllowed(scene, pulse)) {
@@ -243,7 +284,7 @@ class CheckpointRuntime : DjRuntime {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
             synchronized(lock) { check(state == State.STARTING) { "Session stopped during setup" } }
-            val bridge = if (independentScene) null else
+            val bridge = if (sourceInput == null) null else
                 ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = if (bridge == null) null else
                 ClassicPcmCaptureSession(bridge, checkNotNull(createdInput), clock) { output ->
@@ -269,6 +310,8 @@ class CheckpointRuntime : DjRuntime {
                 capture = newCapture
                 inputBridge = bridge
                 clockOnly = independentScene
+                originalCallbackOwner = originalCallbacks
+                pendingOriginal = null
                 engine = newEngine
                 state = State.RUNNING
                 val mine = ++generation
@@ -278,6 +321,7 @@ class CheckpointRuntime : DjRuntime {
                 }
             }
             listener.onState(if (independentScene) "SCENE_TIMED_" + owned.size + "_LAMPS"
+                             else if (originalCallbacks) "ORIGINAL_AUDIO_${owned.size}_LAMPS"
                              else if (owned.isEmpty()) "MIC_ANALYSIS_ONLY_NO_LAMPS"
                              else "DJ_ACTIVE_${owned.size}_LAMPS")
         } catch (error: Throwable) {
@@ -295,7 +339,30 @@ class CheckpointRuntime : DjRuntime {
                 if (!synchronized(lock) { state == State.RUNNING && mine == generation }) break
                 val session = synchronized(lock) { capture }
                 val received = session?.poll(bufferSize = WINDOW_SIZE) ?: false
-                if (!received) {
+                val original = synchronized(lock) {
+                    if (state == State.RUNNING && mine == generation && originalCallbackOwner) {
+                        val next = pendingOriginal
+                        pendingOriginal = null
+                        next
+                    } else null
+                }
+                if (original != null) {
+                    val current = synchronized(lock) {
+                        if (state == State.RUNNING && mine == generation) engine else null
+                    }
+                    val output = current?.originalFrame(original.timestampMs,
+                        original.bands, original.beat, original.bpm, original.confidence)
+                    if (output != null) {
+                        val cb = synchronized(lock) {
+                            if (state == State.RUNNING && mine == generation) listener else null
+                        }
+                        cb?.onBeat(output.bpm ?: 0.0, output.level.toFloat())
+                        cb?.onSpectrum(output.bass.toFloat(), output.mid.toFloat(),
+                            output.presence.toFloat(), output.treble.toFloat(),
+                            output.beat, output.confidence.toFloat())
+                    }
+                }
+                if (!received && original == null) {
                     // Scanner, meteor, wave and timer-pulse keep moving when a
                     // valid capture temporarily yields no PCM. The same owned
                     // engine/rate limiter is used; NO new source or Music socket.
@@ -328,6 +395,8 @@ class CheckpointRuntime : DjRuntime {
             localEngine = engine; engine = null
             inputBridge = null
             clockOnly = false
+            originalCallbackOwner = false
+            pendingOriginal = null
             localWorker = worker; worker = null
             callback = listener; listener = null
         }
