@@ -265,17 +265,11 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private boolean applyLightSettings() {
         CheckpointRuntime runtime = lightRuntime;
         if (runtime == null) return false;
-        ClassicSceneUiState.Selection chosen = ClassicSceneUiState.snapshot();
-        int[] range = ClassicSceneUiState.RANGES[chosen.rangeIndex];
-        return runtime.applySceneSettings(new DjRuntime.SceneSettings(
-            new double[]{0.5,1.0,1.5,2.0}[chosen.gainIndex],
-            ClassicSceneUiState.SCENES[chosen.scene],
-            0xFF2E79, chosen.beatPulse,
-            new int[]{60,90,120,150,180}[chosen.pulseTempoIndex],
-            range[0],range[1],80,350,1.6,
-            0xFF2E79, ClassicSceneUiState.SPEEDS[chosen.speedIndex],
-            chosen.reverse, ClassicSceneUiState.TRAILS[chosen.trailIndex],
-            range[0],range[1]));
+        // Apply the exact saved Original-SceneFragment pulse shape, gain,
+        // timer mode and geometry to the OWNED Music output in one update.
+        // Never silently substitute an unrelated beat envelope.
+        return runtime.applySceneSettings(
+            ClassicSceneOutputProfile.fromSelection(ClassicSceneUiState.snapshot()));
     }
 
     /** No source fabrication: timed spatial/timer-pulse scenes can use the

@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.content.Context;
+import io.github.lxsdd.yeelightclassicdj.runtime.DjRuntime;
 import android.content.ClipData;
 import android.os.Build;
 import android.view.DragEvent;
@@ -398,29 +399,27 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         config.putExtra(ClassicDjService.EXTRA_UI_OWNER, owner);
         config.putExtra(ClassicDjService.EXTRA_SCENE,
             ClassicSceneUiState.SCENES[s.scene]);
-        double[] gains = {0.5, 1.0, 2.0, 4.0};
-        int[] tempos = {60, 90, 120, 150, 180};
-        double[] gammas = {2.2, 1.2, 2.0};
-        double[][] shapes = {{12, 65, 160, 900}, {8, 100, 70, 330},
-                             {12, 90, 90, 600}};
-        config.putExtra(ClassicDjService.EXTRA_GAIN, gains[s.gainIndex]);
+        // The original gallery's optional owned internal-session update
+        // must use the SAME production scene profile as MusicActivity.
+        DjRuntime.SceneSettings profile = ClassicSceneOutputProfile.fromSelection(s);
+        config.putExtra(ClassicDjService.EXTRA_GAIN, profile.sensitivity);
         config.putExtra(ClassicDjService.EXTRA_PULSE_MODE,
-            s.beatPulse ? "BEAT" : "TIMER");
-        config.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) tempos[s.pulseTempoIndex]);
-        config.putExtra(ClassicDjService.EXTRA_PULSE_MIN, shapes[s.pulseShapeIndex][0]);
-        config.putExtra(ClassicDjService.EXTRA_PULSE_MAX, shapes[s.pulseShapeIndex][1]);
-        config.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, shapes[s.pulseShapeIndex][2]);
-        config.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, shapes[s.pulseShapeIndex][3]);
-        config.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, gammas[s.pulseShapeIndex]);
+            profile.beatSync ? "BEAT" : "TIMER");
+        config.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) profile.pulseBpm);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_MIN, (double) profile.pulseMin);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_MAX, (double) profile.pulseMax);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, (double) profile.attackMs);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, (double) profile.decayMs);
+        config.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, profile.gamma);
         config.putExtra(ClassicDjService.EXTRA_SPATIAL_SPEED,
-            (double) ClassicSceneUiState.SPEEDS[s.speedIndex]);
-        config.putExtra(ClassicDjService.EXTRA_SPATIAL_REVERSE, s.reverse);
+            (double) profile.spatialSpeed);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_REVERSE, profile.reverse);
         config.putExtra(ClassicDjService.EXTRA_SPATIAL_TRAIL,
-            (double) ClassicSceneUiState.TRAILS[s.trailIndex]);
+            (double) profile.trailLength);
         config.putExtra(ClassicDjService.EXTRA_SPATIAL_MIN,
-            (double) ClassicSceneUiState.RANGES[s.rangeIndex][0]);
+            (double) profile.spatialMin);
         config.putExtra(ClassicDjService.EXTRA_SPATIAL_MAX,
-            (double) ClassicSceneUiState.RANGES[s.rangeIndex][1]);
+            (double) profile.spatialMax);
         try {
             getContext().startService(config);
         } catch (RuntimeException ignored) {
