@@ -1,6 +1,11 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import java.util.List;
+import java.util.ArrayList;
+import io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntime;
+import io.github.lxsdd.yeelightclassicdj.runtime.DjRuntime;
 import io.github.lxsdd.yeelightclassicdj.runtime.ClassicOriginalDspAnalysis;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -44,6 +49,11 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final TextView originalMusicSelectionStatus;
     private final TextView description;
     private final TextView stateNotice;
+    private final TextView lightControl;
+    private final Object lightGuard = new Object();
+    private volatile CheckpointRuntime lightRuntime;
+    private int lightEpoch;
+    private volatile String lightStatus = "";
     private final ClassicDjPatternPreviewView preview;
     private final TextView[] choices = new TextView[NAMES.length];
     private final ClassicEffectOrder effectOrder;
@@ -166,6 +176,19 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             "Lesende Original-Classic-Gruppenliste; keine autorisierte DJ-Auswahl");
         content.addView(originalMusicSelectionStatus);
 
+        lightControl = caption("DJ-Lichtausgabe: LAN-Abgleich erforderlich", 14, Color.WHITE);
+        lightControl.setGravity(Gravity.CENTER);
+        lightControl.setPadding(dp(10),dp(10),dp(10),dp(10));
+        lightControl.setBackground(rounded(PINK,dp(14),0));
+        lightControl.setContentDescription(
+            "Nur explizit ausgewählte und per Yeelight-LAN verifizierte Classic-Lampen steuern; " +
+            "Original-Classic ist alleiniger Audio-Player");
+        lightControl.setOnClickListener(v -> {
+            if (lightRuntime != null) stopLightOutput();
+            else confirmLightStart();
+        });
+        content.addView(lightControl);
+
         stateNotice = caption(
             "Nur Simulation ohne Original-Audio; keine Lampe wird angesteuert.", 12, MUTED);
         stateNotice.setPadding(0, dp(7), 0, 0);
@@ -221,9 +244,132 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         // fabricated OEM scene record, remote effect or secondary database.
         if (!effectSettings.selectScene(index)) return;
         boolean saved = effectSettings.saveExplicit(ClassicSceneUiState.snapshot());
+        applyLightSettings();
         redraw();
         if (!saved) stateNotice.setText(
             "DJ-Effekt gewählt, aber lokale Speicherung fehlgeschlagen.");
+    }
+
+    /** The original Classic SceneFragment and MusicActivity share this exact
+     * state. In-place scene updates do not change participant ownership or
+     * negotiate another Music socket. Rejected settings keep the prior frame.
+     */
+    private boolean applyLightSettings() {
+        CheckpointRuntime runtime = lightRuntime;
+        if (runtime == null) return false;
+        ClassicSceneUiState.Selection chosen = ClassicSceneUiState.snapshot();
+        int[] range = ClassicSceneUiState.RANGES[chosen.rangeIndex];
+        return runtime.applySceneSettings(new DjRuntime.SceneSettings(
+            new double[]{0.5,1.0,1.5,2.0}[chosen.gainIndex],
+            ClassicSceneUiState.SCENES[chosen.scene],
+            0xFF2E79, chosen.beatPulse,
+            new int[]{60,75,90,120,150}[chosen.pulseTempoIndex],
+            range[0],range[1],80,350,1.6,
+            0xFF2E79, ClassicSceneUiState.SPEEDS[chosen.speedIndex],
+            chosen.reverse, ClassicSceneUiState.TRAILS[chosen.trailIndex],
+            range[0],range[1]));
+    }
+
+    /** Only an explicit in-app confirmation may start reverse Music output.
+     * LAN identity proof itself never implies permission to light a bulb.
+     */
+    private void confirmLightStart() {
+        if (!attached || host.isFinishing() || host.isDestroyed()) return;
+        final List<String> proposed = ClassicOriginalMusicSelection.resolvedOriginalLanIps();
+        if (proposed.isEmpty() || !ClassicOriginalMusicAudioSignal.snapshot().fresh) {
+            lightStatus = "Original-Audio und eindeutiger LAN-Abgleich erforderlich";
+            redraw();
+            return;
+        }
+        new AlertDialog.Builder(host)
+            .setTitle("DJ-Lichtausgabe einschalten")
+            .setMessage("Die Original-Classic-Aufnahme läuft weiter. Für " +
+                proposed.size() + " ausdrücklich ausgewählte, eindeutig bestätigte " +
+                "Yeelight-Lampen wird jetzt der echte Music-Rückkanal geöffnet. " +
+                "Andere Lampen bleiben unverändert. Beim Verlassen der Musikansicht wird gestoppt.")
+            .setNegativeButton("Abbrechen",null)
+            .setPositiveButton("Ausgewählte Lampen steuern",(dialog,which) -> {
+                if (!attached || !ClassicOriginalMusicAudioSignal.snapshot().fresh ||
+                    !proposed.equals(ClassicOriginalMusicSelection.resolvedOriginalLanIps())) {
+                    lightStatus = "Auswahl oder Original-Audio nicht mehr gültig";
+                    redraw();
+                    return;
+                }
+                beginLightOutput(new ArrayList<>(proposed));
+            }).show();
+    }
+
+    private void beginLightOutput(List<String> targets) {
+        final CheckpointRuntime runtime = new CheckpointRuntime();
+        final int epoch;
+        synchronized (lightGuard) {
+            if (lightRuntime != null || !attached || targets.isEmpty()) return;
+            lightRuntime = runtime;
+            epoch = ++lightEpoch;
+            lightStatus = "Echte Music-Rückkanäle werden geprüft";
+        }
+        redraw();
+        new Thread(() -> {
+            try {
+                if (!applyLightSettings()) throw new IllegalStateException("Scene rejected");
+                synchronized (lightGuard) {
+                    if (lightRuntime != runtime || epoch != lightEpoch)
+                        throw new IllegalStateException("Original host revoked");
+                }
+                runtime.startOriginalAudio(targets, new DjRuntime.Listener() {
+                    @Override public void onState(String state) {
+                        handler.post(() -> {
+                            synchronized (lightGuard) {
+                                if (lightRuntime != runtime || epoch != lightEpoch) return;
+                                lightStatus = state.startsWith("ORIGINAL_AUDIO_") ?
+                                    "Echte DJ-Lichtausgabe aktiv · bestätigte Lampen" :
+                                    "Lichtausgabe beendet";
+                            }
+                            if (attached) redraw();
+                        });
+                    }
+                    @Override public void onBeat(double bpm,float level) {}
+                    @Override public void onError(String error) {
+                        handler.post(() -> {
+                            synchronized (lightGuard) {
+                                if (lightRuntime != runtime || epoch != lightEpoch) return;
+                                lightStatus = "Music-Rückkanal unterbrochen · sicher gestoppt";
+                            }
+                            stopLightOutput();
+                        });
+                    }
+                });
+                synchronized (lightGuard) {
+                    if (lightRuntime != runtime || epoch != lightEpoch) runtime.stop();
+                }
+            } catch (Exception | LinkageError failed) {
+                // No endpoint/IP/OEM error text is exposed or logged.
+                try { runtime.stop(); } catch (RuntimeException ignored) {}
+                handler.post(() -> {
+                    synchronized (lightGuard) {
+                        if (lightRuntime != runtime || epoch != lightEpoch) return;
+                        lightRuntime = null;
+                        ++lightEpoch;
+                        lightStatus = "Lampenverbindung verweigert oder nicht bestätigt";
+                    }
+                    if (attached) redraw();
+                });
+            }
+        },"Classic-DJ-Original-Output").start();
+    }
+
+    private void stopLightOutput() {
+        final CheckpointRuntime old;
+        synchronized (lightGuard) {
+            ++lightEpoch;
+            old=lightRuntime;
+            lightRuntime=null;
+            lightStatus = "Music-Rückkanal wird gestoppt";
+        }
+        if (old != null) new Thread(() -> {
+            try { old.stop(); } catch (RuntimeException ignored) { }
+        },"Classic-DJ-Original-Stop").start();
+        if (attached) redraw();
     }
 
     private void redraw() {
@@ -287,6 +433,14 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             stateNotice.setText("Nur Simulation ohne Original-Audio; " +
                 "keine Lampe wird angesteuert.");
         }
+        final int endpoints=ClassicOriginalMusicSelection.resolvedOriginalLanCount();
+        final boolean running=lightRuntime!=null;
+        lightControl.setText(running ? "DJ-Lichtausgabe beenden" :
+            (endpoints>0 ? "DJ-Lichtausgabe für geprüfte Lampen starten" :
+             "DJ-Lichtausgabe · zuerst Gruppenmitglieder im LAN prüfen"));
+        lightControl.setEnabled(running || endpoints>0);
+        if (running || !lightStatus.isEmpty())
+            stateNotice.setText(lightStatus);
         if (inlineSheet.getVisibility() == View.VISIBLE) preview.invalidate();
     }
 
@@ -301,6 +455,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
 
     public void onHostResumed() {
         // Never start a second audio source; install only the read-only original callback DSP.
+        originalDsp.setFrameObserver(new ClassicOriginalMusicAudioSignal.FrameObserver() {
+            @Override public void onFrame(ClassicOriginalMusicAudioSignal.Frame frame,long atMs) {
+                CheckpointRuntime runtime=lightRuntime;
+                if (runtime != null) runtime.submitOriginalFrame(frame);
+            }
+            @Override public void onCaptureClosed() {
+                handler.post(() -> stopLightOutput());
+            }
+        });
         ClassicOriginalMusicAudioSignal.installAnalyzer(originalDsp);
         attached = true;
         handler.removeCallbacks(refresh);
@@ -308,8 +471,10 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     public void onHostPaused() {
-        ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);
         attached = false;
+        originalDsp.setFrameObserver(null);
+        ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);
+        stopLightOutput();
         handler.removeCallbacks(refresh);
         closeSheet(); // original player controls remain visible on return
     }
