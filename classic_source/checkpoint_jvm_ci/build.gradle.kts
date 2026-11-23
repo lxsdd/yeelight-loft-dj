@@ -11,7 +11,8 @@ sourceSets.named("main") {
     java.srcDirs("../bridge/src", "src/main/java")
     java.include(
         "android/content/Context.java",
-        "io/github/lxsdd/yeelightclassicdj/runtime/DjRuntime.java"
+        "io/github/lxsdd/yeelightclassicdj/runtime/DjRuntime.java",
+        "io/github/lxsdd/yeelightclassicdj/ui/ClassicOriginalMusicAudioSignal.java"
     )
 }
 kotlin {
@@ -38,7 +39,8 @@ val testMains = linkedMapOf(
     "YeelightReverseMusicTransport" to "loftdj.classic.YeelightReverseMusicTransportTestKt",
     "CheckpointRuntime" to "io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt",
     "PlaybackCaptureInput" to "io.github.lxsdd.yeelightclassicdj.runtime.ClassicPlaybackCaptureInputTestKt",
-    "SpatialChoreography" to "loftdj.classic.ClassicSpatialChoreographyTestKt"
+    "SpatialChoreography" to "loftdj.classic.ClassicSpatialChoreographyTestKt",
+    "OriginalDspAnalysis" to "io.github.lxsdd.yeelightclassicdj.runtime.ClassicOriginalDspAnalysisTestKt"
 )
 val runTasks = testMains.map { (label, className) ->
     tasks.register<JavaExec>("run" + label) {
@@ -52,6 +54,6 @@ val runTasks = testMains.map { (label, className) ->
 }
 tasks.register("verifyClassicJvm") {
     group = "verification"
-    description = "Compile ALL Classic JVM/DJ source and execute all thirteen real integration test programs."
+    description = "Compile ALL Classic JVM/DJ source and execute all fourteen real integration test programs."
     dependsOn(runTasks)
 }

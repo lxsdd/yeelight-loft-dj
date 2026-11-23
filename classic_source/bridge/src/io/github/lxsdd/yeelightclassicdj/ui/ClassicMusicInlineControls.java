@@ -1,6 +1,7 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.app.Activity;
+import io.github.lxsdd.yeelightclassicdj.runtime.ClassicOriginalDspAnalysis;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
@@ -34,6 +35,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private static final String[] NAMES = ClassicSceneUiState.LABELS;
 
     private final Activity host;
+    // Observe the genuine OEM recorder/Visualizer with Loft DJ's shared FFT/beat core.
+    private final ClassicOriginalDspAnalysis originalDsp = new ClassicOriginalDspAnalysis();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final TextView header;
     private final ScrollView inlineSheet;
@@ -244,7 +247,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             stateNotice.setText("Echtes Original-Classic-" +
                 ("MIC".equals(audio.source) ? "Mikrofonsignal" : "Visualizer-FFT") +
                 " erkannt · Pegel " + Math.round(audio.level * 100f) +
-                "% · noch keine bestätigten DJ-Lampenziele.");
+                "% · " + (audio.bpm > 0f ? Math.round(audio.bpm) + " BPM · Konfidenz " +
+                    Math.round(audio.confidence * 100f) + "%" : "BPM noch nicht stabil") +
+                " · noch keine bestätigten DJ-Lampenziele.");
         } else {
             stateNotice.setText("Nur Simulation ohne Original-Audio; " +
                 "keine Lampe wird angesteuert.");
@@ -262,12 +267,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     };
 
     public void onHostResumed() {
+        // Never start a second audio source; install only the read-only original callback DSP.
+        ClassicOriginalMusicAudioSignal.installAnalyzer(originalDsp);
         attached = true;
         handler.removeCallbacks(refresh);
         handler.post(refresh);
     }
 
     public void onHostPaused() {
+        ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);
         attached = false;
         handler.removeCallbacks(refresh);
         closeSheet(); // original player controls remain visible on return

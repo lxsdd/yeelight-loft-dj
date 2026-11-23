@@ -46,6 +46,7 @@ class AudioRecord(private val source:Int, rate:Int, channel:Int, encoding:Int, s
         recordingState=RECORDSTATE_RECORDING
     }
     fun read(buffer:ShortArray, offset:Int, size:Int, mode:Int):Int { check(mode==READ_NON_BLOCKING); reads++; return 0 }
+    fun getSampleRate():Int = lastRate
     fun stop(){ stops++; recordingState=0 }
     fun release(){ releases++ }
 }

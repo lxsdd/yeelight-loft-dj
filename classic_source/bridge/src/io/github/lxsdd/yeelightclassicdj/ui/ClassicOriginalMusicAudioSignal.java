@@ -1,169 +1,189 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
+import android.media.AudioRecord;
+
 /**
- * Read-only tap on the EXISTING original Classic audio worker/callback.
- * Does not create AudioRecord, Visualizer, MediaProjection, a music session,
- * a second source selector, an OEM device identity or a lamp command.
- * No raw PCM/FFT buffers or OEM user/device data are retained or logged.
+ * Read-only, generation-fenced observer of ORIGINAL Classic AudioRecord/Visualizer.
+ * Does not create a source, modify the OEM player, retain PCM/FFT, or address lamps.
+ * The resumed original MusicActivity installs the already-tested Kotlin DSP owner.
  */
 public final class ClassicOriginalMusicAudioSignal {
     static final long FRESH_MS = 1250L;
-    private static final long BEAT_COOLDOWN_MS = 195L;
-    private static final ThreadLocal<int[]> MIC_VALID_COUNT =
-        new ThreadLocal<int[]>() {
-            @Override protected int[] initialValue() { return new int[1]; }
-        };
+    private static final int MAX_PCM = 131072;
+    private static final ThreadLocal<int[]> MIC_COUNT =
+        ThreadLocal.withInitial(() -> new int[1]);
+    private static final ThreadLocal<int[]> MIC_RATE =
+        ThreadLocal.withInitial(() -> new int[1]);
+
+    public interface Analyzer {
+        Frame onPcm(short[] pcm, int valid, int rateHz, long timestampMs);
+        Frame onFft(byte[] fft, int rateMilliHz, long timestampMs);
+    }
+
+    public static final class Frame {
+        public final float level, bpm, confidence;
+        public final boolean beat;
+        public final float[] bands;
+        public Frame(float level, float[] bands, boolean beat, float bpm, float confidence) {
+            this.level = level;
+            this.bands = bands == null ? null : bands.clone();
+            this.beat = beat;
+            this.bpm = bpm;
+            this.confidence = confidence;
+        }
+    }
 
     public static final class Snapshot {
         public final boolean fresh, beat;
         public final String source;
-        public final float level;
+        public final float level, bpm, confidence;
         public final float[] bands;
-        Snapshot(boolean fresh, boolean beat, String source, float level, float[] bands) {
+        Snapshot(boolean fresh, boolean beat, String source, float level,
+                 float bpm, float confidence, float[] bands) {
             this.fresh = fresh;
             this.beat = beat;
             this.source = source;
             this.level = level;
+            this.bpm = bpm;
+            this.confidence = confidence;
             this.bands = bands.clone();
         }
     }
 
+    private static Analyzer owner;
     private static String source = "";
-    private static float energy, movingAverage = .07f;
+    private static float energy, bpm, confidence;
     private static final float[] bands = new float[4];
     private static long observedAtMs = Long.MIN_VALUE;
     private static long lastBeatAtMs = Long.MIN_VALUE;
 
     private ClassicOriginalMusicAudioSignal() {}
 
-    /** First half of a same-thread, original AudioRecord.read([SII) result. */
+    public static synchronized void installAnalyzer(Analyzer next) {
+        if (next == null) throw new IllegalArgumentException("Missing original DSP owner");
+        owner = next;
+        clearSignal();
+    }
+
+    /** A stale Activity cannot detach the newer resumed Activity. */
+    public static synchronized void clearAnalyzer(Analyzer expected) {
+        if (expected != null && owner == expected) {
+            owner = null;
+            clearSignal();
+        }
+    }
+
+    private static void clearSignal() {
+        source = "";
+        energy = bpm = confidence = 0f;
+        observedAtMs = lastBeatAtMs = Long.MIN_VALUE;
+        java.util.Arrays.fill(bands, 0f);
+    }
+
     public static void observedOriginalMicResult(int readCount) {
-        MIC_VALID_COUNT.get()[0] = readCount > 0 && readCount <= 131072 ? readCount : 0;
+        MIC_COUNT.get()[0] = readCount > 0 && readCount <= MAX_PCM ? readCount : 0;
+        MIC_RATE.get()[0] = 0;
     }
 
-    /** Second half: the original short[] is processed synchronously, not stored. */
+    /** Read the SAME original AudioRecord's format. No new recorder. */
+    public static void observedOriginalMicRate(AudioRecord original) {
+        int rate = 0;
+        try {
+            if (original != null) rate = original.getSampleRate();
+        } catch (RuntimeException | LinkageError ignored) { }
+        MIC_RATE.get()[0] = rate >= 8000 && rate <= 192000 ? rate : 0;
+    }
+
     public static void observedOriginalMicSamples(short[] originalBuffer) {
-        int[] count = MIC_VALID_COUNT.get();
-        int valid = count[0];
-        count[0] = 0;
-        if (originalBuffer == null || valid < 1 || valid > originalBuffer.length)
-            return;
+        int valid = MIC_COUNT.get()[0], rate = MIC_RATE.get()[0];
+        MIC_COUNT.get()[0] = 0;
+        MIC_RATE.get()[0] = 0;
+        observedPcmAt(originalBuffer, valid, rate, clockMs());
+    }
+
+    static void observedPcmAt(short[] pcm, int valid, int rate, long nowMs) {
+        if (pcm == null || valid < 1 || valid > MAX_PCM || valid > pcm.length ||
+            rate < 8000 || rate > 192000 || nowMs < 0) return;
+        Analyzer current;
+        synchronized (ClassicOriginalMusicAudioSignal.class) { current = owner; }
+        if (current == null) return;
         try {
-            observedPcmAt(originalBuffer, valid, clockMs());
-        } catch (RuntimeException ignored) {
-            // A read-only observer must never interrupt the OEM audio worker.
+            acceptFrame(current, "MIC", current.onPcm(pcm, valid, rate, nowMs), nowMs);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Observer failures must not interrupt the original OEM recorder.
         }
     }
 
-    static synchronized void observedPcmAt(short[] pcm, int valid, long nowMs) {
-        if (pcm == null || valid < 1 || valid > pcm.length || valid > 131072 || nowMs < 0)
-            return;
-        int stride = Math.max(1, valid / 2048);
-        double squares = 0d;
-        int used = 0;
-        for (int i = 0; i < valid; i += stride) {
-            double sample = pcm[i] / 32768d;
-            squares += sample * sample;
-            used++;
-        }
-        float level = clamp((float)Math.sqrt(Math.sqrt(squares / Math.max(used, 1))));
-        // Mic AudioRecord supplies actual amplitude, NOT a verified FFT rate.
-        accept("MIC", level, new float[]{level, 0f, 0f, 0f}, nowMs);
+    public static void observedOriginalVisualizerFft(byte[] originalFft, int rateMilliHz) {
+        observedFftAt(originalFft, rateMilliHz, clockMs());
     }
 
-    /** Actual original Visualizer callback; samplingRate is in millihertz. */
-    public static void observedOriginalVisualizerFft(byte[] actualFft, int samplingMilliHz) {
-        try {
-            observedFftAt(actualFft, samplingMilliHz, clockMs());
-        } catch (RuntimeException ignored) {
-            // No original callbacks, controls or audio transport are replaced.
-        }
-    }
-
-    static synchronized void observedFftAt(byte[] fft, int milliHz, long nowMs) {
+    static void observedFftAt(byte[] fft, int rateMilliHz, long nowMs) {
         if (fft == null || fft.length < 16 || fft.length > 32768 ||
-            (fft.length & 1) != 0 || milliHz < 8000000 || milliHz > 192000000 ||
-            nowMs < 0) return;
-        float[] measured = new float[4];
-        int[] counts = new int[4];
-        float sampleHz = milliHz / 1000f;
-        for (int bin = 1; bin < fft.length / 2; bin++) {
-            float freq = bin * sampleHz / fft.length;
-            if (freq < 20f || freq > 20000f) continue;
-            int band = freq < 180f ? 0 : freq < 1200f ? 1 :
-                freq < 6000f ? 2 : 3;
-            float real = fft[bin * 2], imaginary = fft[bin * 2 + 1];
-            measured[band] += Math.min(1f, (float)Math.hypot(real, imaginary) / 181f);
-            counts[band]++;
+            (fft.length & 1) != 0 || rateMilliHz < 8000000 ||
+            rateMilliHz > 192000000 || nowMs < 0) return;
+        Analyzer current;
+        synchronized (ClassicOriginalMusicAudioSignal.class) { current = owner; }
+        if (current == null) return;
+        try {
+            acceptFrame(current, "FFT", current.onFft(fft, rateMilliHz, nowMs), nowMs);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Observer failures must not interrupt the original OEM callback.
         }
-        float strongest = 0f;
-        for (int i = 0; i < 4; i++) {
-            measured[i] = counts[i] == 0 ? 0f :
-                clamp((float)Math.sqrt(measured[i] / counts[i]));
-            strongest = Math.max(strongest, measured[i]);
-        }
-        accept("FFT", strongest, measured, nowMs);
     }
 
-    private static synchronized void accept(String nextSource, float measured,
-                                            float[] measuredBands, long nowMs) {
-        if (!Float.isFinite(measured) || nowMs < 0) return;
-        if (!source.equals(nextSource) || observedAtMs == Long.MIN_VALUE ||
-            nowMs < observedAtMs || nowMs - observedAtMs > FRESH_MS) {
-            movingAverage = .07f;
-            lastBeatAtMs = Long.MIN_VALUE;
-        }
-        boolean onset = measured >= .22f && measured > movingAverage * 1.62f &&
-            (lastBeatAtMs == Long.MIN_VALUE ||
-             nowMs - lastBeatAtMs >= BEAT_COOLDOWN_MS);
-        if (onset) lastBeatAtMs = nowMs;
-        movingAverage = .88f * movingAverage + .12f * measured;
-        source = nextSource;
+    private static synchronized void acceptFrame(Analyzer expected, String kind,
+                                                  Frame frame, long nowMs) {
+        if (owner != expected || frame == null || !validFrame(frame) ||
+            (observedAtMs != Long.MIN_VALUE && nowMs < observedAtMs &&
+             source.equals(kind))) return;
+        if (!source.equals(kind)) clearSignal();
+        source = kind;
         observedAtMs = nowMs;
-        energy = clamp(measured);
-        for (int i = 0; i < 4; i++) bands[i] = clamp(measuredBands[i]);
+        energy = frame.level;
+        bpm = frame.bpm;
+        confidence = frame.confidence;
+        System.arraycopy(frame.bands, 0, bands, 0, 4);
+        if (frame.beat) lastBeatAtMs = nowMs;
     }
 
-    public static synchronized Snapshot snapshot() {
-        return snapshotAt(clockMs());
+    private static boolean validFrame(Frame f) {
+        if (!Float.isFinite(f.level) || f.level < 0f || f.level > 1f ||
+            !Float.isFinite(f.bpm) || f.bpm < 0f || f.bpm > 240f ||
+            !Float.isFinite(f.confidence) || f.confidence < 0f ||
+            f.confidence > 1f || f.bands == null || f.bands.length != 4) return false;
+        for (float b : f.bands)
+            if (!Float.isFinite(b) || b < 0f || b > 1f) return false;
+        return true;
     }
+
+    public static synchronized Snapshot snapshot() { return snapshotAt(clockMs()); }
 
     static synchronized Snapshot snapshotAt(long nowMs) {
-        if (observedAtMs == Long.MIN_VALUE || nowMs < observedAtMs ||
+        if (owner == null || observedAtMs == Long.MIN_VALUE || nowMs < observedAtMs ||
             nowMs - observedAtMs > FRESH_MS)
-            return new Snapshot(false, false, "", 0f, new float[4]);
-        boolean beat = lastBeatAtMs != Long.MIN_VALUE &&
-            nowMs >= lastBeatAtMs && nowMs - lastBeatAtMs <= 150L;
-        return new Snapshot(true, beat, source, energy, bands);
+            return new Snapshot(false, false, "", 0f, 0f, 0f, new float[4]);
+        boolean beat = lastBeatAtMs != Long.MIN_VALUE && nowMs >= lastBeatAtMs &&
+            nowMs - lastBeatAtMs <= 150L;
+        return new Snapshot(true, beat, source, energy, bpm, confidence, bands);
     }
 
-    /** A stopped OLD source cannot clear a newer OEM audio source. */
     public static synchronized void observedOriginalMicStopped() {
-        MIC_VALID_COUNT.remove();
-        stopIfSource("MIC");
+        MIC_COUNT.remove();
+        MIC_RATE.remove();
+        if ("MIC".equals(source)) clearSignal();
     }
+
     public static synchronized void observedOriginalVisualizerStopped() {
-        stopIfSource("FFT");
-    }
-    private static void stopIfSource(String expected) {
-        if (source.equals(expected)) {
-            source = "";
-            energy = 0f;
-            observedAtMs = Long.MIN_VALUE;
-            lastBeatAtMs = Long.MIN_VALUE;
-            for (int i = 0; i < bands.length; i++) bands[i] = 0f;
-        }
+        if ("FFT".equals(source)) clearSignal();
     }
 
     static synchronized void resetForTest() {
-        MIC_VALID_COUNT.remove();
-        source = "";
-        movingAverage = .07f;
-        stopIfSource("");
+        MIC_COUNT.remove();
+        MIC_RATE.remove();
+        owner = null;
+        clearSignal();
     }
 
-    private static float clamp(float v) {
-        return Float.isFinite(v) ? Math.max(0f, Math.min(1f, v)) : 0f;
-    }
     private static long clockMs() { return System.nanoTime() / 1_000_000L; }
 }

@@ -55,55 +55,68 @@ WORKER = """
 JAVA_HARNESS = r"""
 package io.github.lxsdd.yeelightclassicdj.ui;
 public final class OriginalMusicAudioHarness {
-  static void check(boolean b, String label) { if(!b) throw new AssertionError(label); }
-  static short[] pcm(int n, short value) {
-    short[] x = new short[n]; java.util.Arrays.fill(x,value); return x;
+  static void check(boolean b, String name) { if (!b) throw new AssertionError(name); }
+  static short[] pcm(int n) { short[] d = new short[n]; java.util.Arrays.fill(d,(short)8000); return d; }
+  static final class Fake implements ClassicOriginalMusicAudioSignal.Analyzer {
+    int pcmCalls, fftCalls;
+    public ClassicOriginalMusicAudioSignal.Frame onPcm(short[] x, int n, int hz, long ms) {
+      pcmCalls++;
+      check(hz == 16000,"original recorder format");
+      return new ClassicOriginalMusicAudioSignal.Frame(.4f,new float[]{.7f,.2f,.1f,.05f},true,120f,.8f);
+    }
+    public ClassicOriginalMusicAudioSignal.Frame onFft(byte[] x, int hz, long ms) {
+      fftCalls++;
+      return new ClassicOriginalMusicAudioSignal.Frame(.3f,new float[]{.5f,.2f,.1f,.05f},false,120f,.8f);
+    }
   }
   public static void main(String[] args) {
     ClassicOriginalMusicAudioSignal.resetForTest();
     check(!ClassicOriginalMusicAudioSignal.snapshotAt(100).fresh,"starts empty");
-    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024, (short)12000),1024,1000);
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,100);
+    check(!ClassicOriginalMusicAudioSignal.snapshotAt(100).fresh,
+          "without owner, no simulated music");
+    Fake first = new Fake();
+    ClassicOriginalMusicAudioSignal.installAnalyzer(first);
+    ClassicOriginalMusicAudioSignal.observedOriginalMicResult(1024);
+    ClassicOriginalMusicAudioSignal.observedOriginalMicRate(new android.media.AudioRecord());
+    ClassicOriginalMusicAudioSignal.observedOriginalMicSamples(pcm(1024));
+    check(first.pcmCalls == 1,"one real original mic callback");
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1000);
     ClassicOriginalMusicAudioSignal.Snapshot s =
         ClassicOriginalMusicAudioSignal.snapshotAt(1010);
-    check(s.fresh && s.source.equals("MIC"),"actual original mic provenance");
-    check(s.level > 0f && s.level <= 1f,"actual RMS bounded");
-    check(s.bands[0] > 0f && s.bands[1] == 0f,"No false mic FFT frequency estimate");
+    check(s.fresh && s.beat && s.source.equals("MIC"),"mic source and beat");
+    check(s.bands[0] == .7f && s.bpm == 120f && s.confidence == .8f,
+          "shared DSP reaches original host");
     s.bands[0] = 0f;
-    check(ClassicOriginalMusicAudioSignal.snapshotAt(1011).bands[0] > 0f,
-          "no external mutable state");
-    check(!ClassicOriginalMusicAudioSignal.snapshotAt(2260).fresh,"expired mic");
-    check(!ClassicOriginalMusicAudioSignal.snapshotAt(999).fresh,"monotonic rollback");
-    ClassicOriginalMusicAudioSignal.resetForTest();
-    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024,(short)13000),1025,4000);
-    check(!ClassicOriginalMusicAudioSignal.snapshotAt(4000).fresh,"reject read beyond array");
-    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024,(short)13000),0,4000);
-    check(!ClassicOriginalMusicAudioSignal.snapshotAt(4000).fresh,"reject zero sample count");
-    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024,(short)0),1024,4001);
-    s = ClassicOriginalMusicAudioSignal.snapshotAt(4001);
-    check(s.fresh && s.level == 0f && !s.beat,"silence is not a beat");
+    check(ClassicOriginalMusicAudioSignal.snapshotAt(1011).bands[0] == .7f,
+          "cannot overwrite current bands from a UI snapshot");
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1025,16000,1012);
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),0,16000,1013);
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,0,1014);
+    check(first.pcmCalls == 2,"bad read or sample rate rejected");
     byte[] fft = new byte[256];
-    fft[2] = 90; fft[3] = 90;
-    fft[60] = 90; fft[61] = 90;
-    ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,5000);
-    s = ClassicOriginalMusicAudioSignal.snapshotAt(5000);
-    check(s.fresh && s.source.equals("FFT"),"actual OEM FFT callback");
-    check(s.level > 0f && s.bands[0] > 0f,"FFT bin energy");
+    ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,1100);
+    s = ClassicOriginalMusicAudioSignal.snapshotAt(1101);
+    check(first.fftCalls == 1 && s.fresh && s.source.equals("FFT"),"real original FFT");
     ClassicOriginalMusicAudioSignal.observedOriginalMicStopped();
-    check(ClassicOriginalMusicAudioSignal.snapshotAt(5001).fresh,
-          "late stopped mic cannot invalidate newer original FFT");
-    ClassicOriginalMusicAudioSignal.observedFftAt(fft,0,5002);
-    check(ClassicOriginalMusicAudioSignal.snapshotAt(5002).source.equals("FFT"),
-          "invalid FFT sample rate cannot overwrite");
-    ClassicOriginalMusicAudioSignal.observedOriginalVisualizerStopped();
-    check(!ClassicOriginalMusicAudioSignal.snapshotAt(5003).fresh,"source stop revokes FFT");
-    ClassicOriginalMusicAudioSignal.resetForTest();
-    ClassicOriginalMusicAudioSignal.observedOriginalMicResult(2048);
-    ClassicOriginalMusicAudioSignal.observedOriginalMicSamples(new short[0]);
-    check(!ClassicOriginalMusicAudioSignal.snapshot().fresh,
-          "cannot use out-of-bounds pending original read");
-    ClassicOriginalMusicAudioSignal.observedOriginalMicResult(-3);
-    ClassicOriginalMusicAudioSignal.observedOriginalMicSamples(pcm(100,(short)3000));
-    check(!ClassicOriginalMusicAudioSignal.snapshot().fresh,"negative read ignored");
+    check(ClassicOriginalMusicAudioSignal.snapshotAt(1101).fresh,
+          "old mic stop cannot revoke FFT");
+    ClassicOriginalMusicAudioSignal.observedFftAt(fft,0,1102);
+    check(first.fftCalls == 1,"invalid original FFT format ignored");
+    Fake next = new Fake();
+    ClassicOriginalMusicAudioSignal.installAnalyzer(next);
+    check(!ClassicOriginalMusicAudioSignal.snapshotAt(1103).fresh,
+          "new host invalidates old source");
+    ClassicOriginalMusicAudioSignal.clearAnalyzer(first);
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1200);
+    check(next.pcmCalls == 1,"old host cannot cancel new host");
+    ClassicOriginalMusicAudioSignal.clearAnalyzer(next);
+    check(!ClassicOriginalMusicAudioSignal.snapshotAt(1201).fresh,
+          "real host pause revokes source");
+    ClassicOriginalMusicAudioSignal.installAnalyzer(next);
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1300);
+    check(!ClassicOriginalMusicAudioSignal.snapshotAt(2600).fresh,"stale music cannot remain live");
+    ClassicOriginalMusicAudioSignal.clearAnalyzer(next);
     System.out.println("REAL_ORIGINAL_AUDIO_SIGNAL_JAVA_PRODUCTION_PASS");
   }
 }
@@ -114,7 +127,9 @@ class OriginalAudioSourceContract(unittest.TestCase):
         changed = hook.patch_mic(MIC)
         self.assertIn("invoke-static/range {v16 .. v16}, " + hook.COUNT, changed)
         self.assertIn("invoke-static/range {v6 .. v6}, " + hook.SAMPLES, changed)
-        self.assertLess(changed.index(hook.COUNT), changed.index(hook.SAMPLES))
+        self.assertLess(changed.index(hook.COUNT), changed.index(hook.RATE))
+        self.assertLess(changed.index(hook.RATE), changed.index(hook.SAMPLES))
+        self.assertIn("invoke-static/range {v5 .. v5}, " + hook.RATE, changed)
         self.assertIn("invoke-static {}, " + hook.MIC_STOP, changed)
         self.assertEqual(changed.count(hook.PCM_READ), 1)
         self.assertEqual(changed.count(hook.PCM_STOP), 1)
@@ -125,6 +140,7 @@ class OriginalAudioSourceContract(unittest.TestCase):
     def test_range_original_registers_supported(self):
         s = MIC.replace("{v5, v6, v0, v1}", "{v17 .. v20}")
         changed = hook.patch_mic(s)
+        self.assertIn("invoke-static/range {v17 .. v17}, " + hook.RATE, changed)
         self.assertIn("invoke-static/range {v18 .. v18}, " + hook.SAMPLES, changed)
 
     def test_mic_fail_closed_against_unknown_oem(self):
@@ -214,7 +230,10 @@ class OriginalAudioSourceContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             target=Path(d)/"OriginalMusicAudioHarness.java"
             target.write_text(JAVA_HARNESS,encoding="utf-8")
-            c=subprocess.run(["javac","--release","8","-d",d,str(src),str(target)],
+            stub=Path(d)/"AudioRecord.java"
+            stub.write_text("package android.media; public class AudioRecord { "
+                            "public int getSampleRate() { return 16000; } }", encoding="utf-8")
+            c=subprocess.run(["javac","--release","8","-d",d,str(src),str(target),str(stub)],
                 capture_output=True,text=True,timeout=30)
             self.assertEqual(c.returncode,0,c.stderr)
             r=subprocess.run(["java","-cp",d,

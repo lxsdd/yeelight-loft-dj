@@ -23,6 +23,7 @@ FFT_FORWARD = "Ld4/z;->b([BI)V"
 FFT_RELEASE = "Landroid/media/audiofx/Visualizer;->release()V"
 TARGET = "Lio/github/lxsdd/yeelightclassicdj/ui/ClassicOriginalMusicAudioSignal;"
 COUNT = TARGET + "->observedOriginalMicResult(I)V"
+RATE = TARGET + "->observedOriginalMicRate(Landroid/media/AudioRecord;)V"
 SAMPLES = TARGET + "->observedOriginalMicSamples([S)V"
 MIC_STOP = TARGET + "->observedOriginalMicStopped()V"
 FFT = TARGET + "->observedOriginalVisualizerFft([BI)V"
@@ -50,6 +51,17 @@ def _call_sites(body, descriptor):
         re.escape(descriptor) + r"[ \t]*\r?$", body
     ))
 
+def _recorder_reg(regs):
+    tokens = [x.strip() for x in regs.split(",")]
+    if len(tokens) == 4 and all(re.fullmatch(r"[vp]\d+", x) for x in tokens):
+        return tokens[0]
+    match = re.fullmatch(r"([vp])(\d+)\s+\.\.\s+([vp])(\d+)", regs.strip())
+    if match and match.group(1) == match.group(3) and \
+       int(match.group(4)) - int(match.group(2)) == 3:
+        return match.group(1) + match.group(2)
+    raise GateFailure("CLASSIC_ORIGINAL_AUDIO_READ_REGISTER_DRIFT")
+
+
 def _sample_reg(regs):
     tokens = [x.strip() for x in regs.split(",")]
     if len(tokens) == 4 and all(re.fullmatch(r"[vp]\d+", x) for x in tokens):
@@ -64,7 +76,7 @@ def patch_mic(text):
     if type(text) is not str or not 0 < len(text) < 1_000_000:
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_INPUT_INVALID")
     _exact_class(text, MIC_OWNER)
-    if any(bridge in text for bridge in (COUNT, SAMPLES, MIC_STOP)):
+    if any(bridge in text for bridge in (COUNT, RATE, SAMPLES, MIC_STOP)):
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_ALREADY_PATCHED")
     method = _method(text, "run()V")
     body = method.group()
@@ -82,11 +94,14 @@ def patch_mic(text):
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_RESULT_DRIFT")
     read = reads[0]
     register = _sample_reg(read.group("regs"))
+    recorder = _recorder_reg(read.group("regs"))
     result = read.group("count")
     indent = read.group("indent")
     insert = (
         "\n" + indent + "invoke-static/range {" + result +
         " .. " + result + "}, " + COUNT +
+        "\n" + indent + "invoke-static/range {" + recorder +
+        " .. " + recorder + "}, " + RATE +
         "\n" + indent + "invoke-static/range {" + register +
         " .. " + register + "}, " + SAMPLES
     )
@@ -98,7 +113,7 @@ def patch_mic(text):
     changed = (changed[:stop.end()] + "\n" + stop.group("indent") +
                "invoke-static {}, " + MIC_STOP + changed[stop.end():])
     output = text[:method.start()] + changed + text[method.end():]
-    if any(output.count(bridge) != 1 for bridge in (COUNT, SAMPLES, MIC_STOP)) or \
+    if any(output.count(bridge) != 1 for bridge in (COUNT, RATE, SAMPLES, MIC_STOP)) or \
        output.count(PCM_READ) != 1 or output.count(PCM_STOP) != 1:
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_RECHECK_FAILED")
     return output
