@@ -449,6 +449,7 @@ import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal;
 public class CheckpointRuntime {
  public boolean applySceneSettings(DjRuntime.SceneSettings next){return true;}
  public void startOriginalAudio(List<String> targets,DjRuntime.Listener listener,\n     DjRuntime.ConsentGuard consent){}
+ public void startOriginalTimedScene(List<String> targets,DjRuntime.Listener listener,\n     DjRuntime.ConsentGuard consent){}
  public boolean submitOriginalFrame(ClassicOriginalMusicAudioSignal.Frame frame){return true;}
  public void stop(){}
 }'''
