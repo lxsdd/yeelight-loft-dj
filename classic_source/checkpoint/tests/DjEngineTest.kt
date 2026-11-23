@@ -44,14 +44,19 @@ fun main() {
         val bands = if (onset) doubleArrayOf(.95,.65,.25,.1) else doubleArrayOf(.015,.015,.015,.015)
         if ("b" in engine.audio(t,bands).failed) failed = true
     }
-    check(failed && "b" !in engine.selected() && engine.selected().size == 3)
+    // A single uncertain reverse write now cancels the ENTIRE show.
+    // Confirmed survivors are stopped once; the failed/foreign devices
+    // are not sent speculative STOP commands.
+    check(failed && engine.selected().isEmpty())
+    check(listOf("a","c","d").all { fake.active[it] == false })
+    check(fake.active["b"] == true && fake.active["foreign"] == true)
     val before = fake.frames.size
     check(!engine.audio(100L,doubleArrayOf(1.0,1.0,1.0,1.0)).beat)
     check(fake.frames.size == before)
-    val stopped = engine.stop()
-    check(stopped.size == 3 && stopped.values.all { it == ClassicMusicCoordinator.State.IDLE })
+    check(engine.stop().isEmpty()) // Survivors already stopped on failure.
+    check(listOf("a","c","d").all { fake.active[it] == false })
     check(fake.active["foreign"] == true && fake.active["b"] == true)
     check(engine.selected().isEmpty())
-    check(!engine.audio(1000L,doubleArrayOf(1.0,1.0,1.0,1.0)).sent.any())
-    println("PASS DJ bridge: 4-lamp, quiet flow, rate-bound HSV/brightness, foreign owner, failure isolation, stop, stale audio")
+    check(engine.audio(1000L,doubleArrayOf(1.0,1.0,1.0,1.0)).sent.isEmpty())
+    println("PASS DJ bridge: 4-lamp, quiet flow, rate-bound HSV/brightness, foreign owner, all-peer fault stop, stale audio")
 }
