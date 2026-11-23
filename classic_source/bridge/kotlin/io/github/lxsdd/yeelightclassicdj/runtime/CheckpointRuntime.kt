@@ -215,6 +215,20 @@ class CheckpointRuntime : DjRuntime {
                      originalCallbacks = true, originalAuthorization = consent)
     }
 
+    /** Original Classic time-based scenes share the SAME explicit participant
+     * grant, cancellation guard, owned Music transport and stop sequence as
+     * original audio. No AudioRecord, Visualizer or MediaProjection is opened.
+     * The original SceneFragment's selected settings determine clock eligibility.
+     */
+    fun startOriginalTimedScene(selectedLampIps: List<String>,
+                                listener: DjRuntime.Listener,
+                                consent: DjRuntime.ConsentGuard) {
+        require(selectedLampIps.isNotEmpty()) { "No verified original timed participants" }
+        check(consent.isStillAuthorized()) { "Original timed scene selection revoked" }
+        startCapture(selectedLampIps, listener, sourceInput = null,
+                     originalAuthorization = consent)
+    }
+
     /** Nonblocking bounded frame handoff from the genuine OEM DSP monitor.
      * A no-owner/stale/closed session cannot enqueue work or touch any peer.
      */
@@ -260,9 +274,10 @@ class CheckpointRuntime : DjRuntime {
             if (independentScene) check(clockSceneAllowed(scene, pulse)) {
                 "Audio-dependent effects require live audio"
             }
-            if (originalCallbacks) check(originalAuthorization?.isStillAuthorized() == true) {
-                "Original output consent missing or revoked"
-            }
+            if (originalAuthorization != null)
+                check(originalAuthorization.isStillAuthorized()) {
+                    "Original output consent missing or revoked"
+                }
             state = State.STARTING
             startFinished = thisStart
             startThread = Thread.currentThread()
@@ -317,9 +332,10 @@ class CheckpointRuntime : DjRuntime {
                 error("Original cohort only partially owned")
             synchronized(lock) {
                 check(state == State.STARTING) { "Session stopped during setup" }
-                if (originalCallbacks) check(originalAuthorization?.isStillAuthorized() == true) {
-                    "Original output consent revoked during handshake"
-                }
+                if (originalAuthorization != null)
+                    check(originalAuthorization.isStillAuthorized()) {
+                        "Original output consent revoked during handshake"
+                    }
             }
             val bridge = if (sourceInput == null) null else
                 ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)

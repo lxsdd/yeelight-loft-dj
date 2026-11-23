@@ -857,6 +857,113 @@ fun main() {
         "Original Music host must receive truthful STOP uncertainty"
     }
 
+
+    // The real original MusicActivity can opt into a time-based scene with
+    // original identity/LAN output consent but NO source or audio callbacks.
+    // Test the actual runtime+owned engine, never a second recorder or LAN.
+    val ownedTimer = CheckpointRuntime()
+    val ownedTimerConsent = java.util.concurrent.atomic.AtomicBoolean(false)
+    val ownedTimerGuard = object : DjRuntime.ConsentGuard {
+        override fun isStillAuthorized() = ownedTimerConsent.get()
+    }
+    var timedNetworkTouched = false
+    ownedTimer.wifiAddress = { timedNetworkTouched = true; "192.168.38.10" }
+    ownedTimer.inputFactory = { error("Clock-only Classic attempted AudioRecord") }
+    ownedTimer.visualizerFactory = { error("Clock-only Classic attempted Visualizer") }
+    ownedTimer.clock = { System.nanoTime() / 1_000_000L }
+    ownedTimer.idle = { Thread.sleep(4L) }
+    check(ownedTimer.configure(1.0, "SCANNER"))
+    check(runCatching {
+        ownedTimer.startOriginalTimedScene(listOf("192.168.38.21"),
+            Listener(), ownedTimerGuard)
+    }.isFailure)
+    check(!timedNetworkTouched) {
+        "Denied timed Classic grant touched Wi-Fi or lamp transport"
+    }
+    val timerRemote = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    val timerPeers = listOf("192.168.38.21", "192.168.38.22")
+    timerPeers.forEach { timerRemote[it] = false }
+    val timerStarts = java.util.concurrent.atomic.AtomicInteger()
+    val timerStops = java.util.concurrent.atomic.AtomicInteger()
+    val timerFrames = java.util.concurrent.atomic.AtomicInteger()
+    ownedTimer.transportFactory = { _, ids ->
+        check(ids == timerPeers.toSet())
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = timerRemote[id]
+            override fun requestStart(id: String): Boolean {
+                timerStarts.incrementAndGet()
+                timerRemote[id] = true
+                return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                timerStops.incrementAndGet()
+                timerRemote[id] = false
+                return true
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String, generation: Long,
+                                          rgb: Int, brightness: Int): Boolean {
+                check(id in timerPeers && generation > 0 && brightness in 1..100)
+                timerFrames.incrementAndGet()
+                return true
+            }
+        }
+    }
+    ownedTimerConsent.set(true)
+    val timerOwnerListener = Listener()
+    ownedTimer.startOriginalTimedScene(timerPeers, timerOwnerListener, ownedTimerGuard)
+    check(timerOwnerListener.states.contains("SCENE_TIMED_2_LAMPS"))
+    check(timerStarts.get() == 2 && timedNetworkTouched)
+    check(!ownedTimer.submitOriginalFrame(originalFrame)) {
+        "Source-free timed Classic must reject OEM audio injection"
+    }
+    var timedPolls = 0
+    while (timerFrames.get() < 2 && timedPolls++ < 120) Thread.sleep(20L)
+    check(timerFrames.get() >= 2) { "Owned original timed scanner never emitted frames" }
+    check(ownedTimer.configure(1.0, "METEOR"))
+    check(!ownedTimer.configure(1.0, "BEAT")) {
+        "Clock-owned original scene must reject beat-only mode without audio"
+    }
+    check(timerStarts.get() == 2) { "Scene change reopened a Music session" }
+    // Original group/host consent loss must be caught by the runtime worker
+    // even if the Activity refresh loop is delayed or the OEM player is silent.
+    ownedTimerConsent.set(false)
+    check(timerOwnerListener.error.await(4L, TimeUnit.SECONDS)) {
+        "Timed original owner revocation did not stop light output"
+    }
+    timedPolls = 0
+    while (timerStops.get() < 2 && timedPolls++ < 120) Thread.sleep(10L)
+    check(timerStops.get() == 2 && timerRemote.values.none { it }) {
+        "Revoked timed group did not close both independently OWNED channels"
+    }
+    ownedTimer.stop()
+    val timerFramesAfterStop = timerFrames.get()
+    Thread.sleep(350L)
+    check(timerFrames.get() == timerFramesAfterStop)
+    check(runCatching {
+        ownedTimer.startOriginalTimedScene(timerPeers, Listener(), ownedTimerGuard)
+    }.isFailure)
+
+    // Even WITH valid original consent, no clock-only start is allowed for
+    // spectrum, beat or beat-synced pulse, and no network preflight may occur.
+    for (unclockable in listOf("BEAT", "SPECTRUM", "PULSE")) {
+        val deniedClock = CheckpointRuntime()
+        var reachedWifi = false
+        deniedClock.wifiAddress = {
+            reachedWifi = true
+            error("Unclockable scene must not touch LAN")
+        }
+        check(deniedClock.configure(1.0, unclockable))
+        check(runCatching {
+            deniedClock.startOriginalTimedScene(listOf("192.168.38.21"),
+                Listener(), object : DjRuntime.ConsentGuard {
+                    override fun isStillAuthorized() = true
+                })
+        }.isFailure)
+        check(!reachedWifi) { "$unclockable attempted timer-driven output" }
+    }
+
     println("PASS original Classic PCM/FFT -> production owned-only reverse frames; no second recorder, foreign-session takeover, or post-stop output")
     println("PASS dynamic 5/15/33/72 selected LAN peers through real timed runtime")
     println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")

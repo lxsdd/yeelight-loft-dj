@@ -52,6 +52,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final TextView lightControl;
     private final Object lightGuard = new Object();
     private volatile CheckpointRuntime lightRuntime;
+    // The confirmed owner cannot silently switch between original audio and
+    // clock-only playback when the OEM player/source or scene changes.
+    private volatile int lightMode = ClassicOriginalLightMode.DENY;
     private volatile ClassicOriginalMusicSelection.OutputLease lightLease;
     private int lightEpoch;
     // One process-wide output lease survives Activity recreation and async STOP.
@@ -275,6 +278,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             range[0],range[1]));
     }
 
+    /** No source fabrication: timed spatial/timer-pulse scenes can use the
+     * existing owned Music output WITHOUT starting the original audio player.
+     */
+    private boolean modeStillAllowed(int mode) {
+        ClassicSceneUiState.Selection selected = ClassicSceneUiState.snapshot();
+        return ClassicOriginalLightMode.stillPermitted(mode,
+            ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse,
+            ClassicOriginalMusicAudioSignal.snapshot().fresh);
+    }
+
     /** Only an explicit in-app confirmation may start reverse Music output.
      * LAN identity proof itself never implies permission to light a bulb.
      */
@@ -283,31 +296,44 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         final ClassicOriginalMusicSelection.OutputLease consent =
             ClassicOriginalMusicSelection.leaseForOriginalOutput();
         final List<String> proposed = consent == null ? new ArrayList<>() : consent.targets();
-        if (proposed.isEmpty() || !ClassicOriginalMusicAudioSignal.snapshot().fresh) {
-            lightStatus = "Original-Audio und eindeutiger LAN-Abgleich erforderlich";
+        ClassicSceneUiState.Selection selected = ClassicSceneUiState.snapshot();
+        final long sceneRevision = ClassicSceneUiState.revision();
+        final int mode = ClassicOriginalLightMode.choose(
+            ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse,
+            ClassicOriginalMusicAudioSignal.snapshot().fresh);
+        if (proposed.isEmpty() || mode == ClassicOriginalLightMode.DENY) {
+            lightStatus = proposed.isEmpty()
+                ? "Eindeutiger LAN-Abgleich der ausgewählten Lampen erforderlich"
+                : "Original-Audio erforderlich oder zeitgesteuerten Effekt wählen";
             redraw();
             return;
         }
+        final boolean timed = mode == ClassicOriginalLightMode.TIMED;
         new AlertDialog.Builder(host)
-            .setTitle("DJ-Lichtausgabe einschalten")
-            .setMessage("Die Original-Classic-Aufnahme läuft weiter. Für " +
-                proposed.size() + " ausdrücklich ausgewählte, eindeutig bestätigte " +
-                "Yeelight-Lampen wird jetzt der echte Music-Rückkanal geöffnet. " +
+            .setTitle(timed ? "Zeitgesteuerte Lichtszene starten" :
+                              "DJ-Musiklicht starten")
+            .setMessage((timed
+                ? "Diese Lichtszene läuft nach Zeitsteuerung ohne Mikrofon oder Visualizer. "
+                : "Die Original-Classic-Aufnahme bleibt alleiniger Audio-Player. ") +
+                "Für " + proposed.size() + " ausdrücklich ausgewählte, eindeutig " +
+                "bestätigte Yeelight-Lampen wird der echte Music-Rückkanal geöffnet. " +
                 "Andere Lampen bleiben unverändert. Beim Verlassen der Musikansicht wird gestoppt.")
             .setNegativeButton("Abbrechen",null)
             .setPositiveButton("Ausgewählte Lampen steuern",(dialog,which) -> {
-                if (!attached || !ClassicOriginalMusicAudioSignal.snapshot().fresh ||
+                if (!attached || ClassicSceneUiState.revision() != sceneRevision ||
+                    !modeStillAllowed(mode) ||
                     !ClassicOriginalMusicSelection.isOutputLeaseCurrent(consent) ||
                     !proposed.equals(ClassicOriginalMusicSelection.resolvedOriginalLanIps())) {
-                    lightStatus = "Auswahl oder Original-Audio nicht mehr gültig";
+                    lightStatus = "Auswahl, Lichtszene oder Audioquelle nicht mehr gültig";
                     redraw();
                     return;
                 }
-                beginLightOutput(consent);
+                beginLightOutput(consent, mode);
             }).show();
     }
 
-    private void beginLightOutput(ClassicOriginalMusicSelection.OutputLease consent) {
+    private void beginLightOutput(ClassicOriginalMusicSelection.OutputLease consent,
+                                  int mode) {
         final List<String> targets = consent.targets();
         final CheckpointRuntime runtime = new CheckpointRuntime();
         final int epoch;
@@ -315,7 +341,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         synchronized (lightGuard) {
             if (lightRuntime != null || !attached || targets.isEmpty() ||
                 !ClassicOriginalMusicSelection.isOutputLeaseCurrent(consent) ||
-                !ClassicOriginalMusicAudioSignal.snapshot().fresh) return;
+                !modeStillAllowed(mode)) return;
             // Do not race a previous Activity's still-closing owned sockets.
             token = ClassicOriginalLightOutputGate.tryAcquire();
             if (token == 0L) {
@@ -323,6 +349,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 return;
             }
             lightSessionToken = token;
+            lightMode = mode;
             lightRuntime = runtime;
             lightLease = consent;
             epoch = ++lightEpoch;
@@ -336,13 +363,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     if (lightRuntime != runtime || epoch != lightEpoch)
                         throw new IllegalStateException("Original host revoked");
                 }
-                runtime.startOriginalAudio(targets, new DjRuntime.Listener() {
+                DjRuntime.Listener outputListener = new DjRuntime.Listener() {
                     @Override public void onState(String state) {
                         handler.post(() -> {
                             synchronized (lightGuard) {
                                 if (lightRuntime != runtime || epoch != lightEpoch) return;
-                                lightStatus = state.startsWith("ORIGINAL_AUDIO_") ?
-                                    "Echte DJ-Lichtausgabe aktiv · bestätigte Lampen" :
+                                lightStatus = state.startsWith("ORIGINAL_AUDIO_") ||
+                                    state.startsWith("SCENE_TIMED_") ?
+                                    (mode == ClassicOriginalLightMode.TIMED
+                                        ? "Zeitgesteuerte Lichtszene aktiv · bestätigte Lampen"
+                                        : "Echte DJ-Lichtausgabe aktiv · bestätigte Lampen") :
                                     "Lichtausgabe beendet";
                             }
                             if (attached) redraw();
@@ -358,9 +388,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                             stopLightOutput(runtime, epoch);
                         });
                     }
-                }, () -> attached &&
+                };
+                final DjRuntime.ConsentGuard outputGuard = () ->
+                    attached && lightRuntime == runtime && lightMode == mode &&
                     ClassicOriginalMusicSelection.isOutputLeaseCurrent(consent) &&
-                    ClassicOriginalMusicAudioSignal.snapshot().fresh);
+                    modeStillAllowed(mode);
+                if (mode == ClassicOriginalLightMode.TIMED)
+                    runtime.startOriginalTimedScene(targets, outputListener, outputGuard);
+                else
+                    runtime.startOriginalAudio(targets, outputListener, outputGuard);
                 synchronized (lightGuard) {
                     if (lightRuntime != runtime || epoch != lightEpoch) runtime.stop();
                 }
@@ -371,6 +407,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     if (lightRuntime == runtime && epoch == lightEpoch) {
                         lightRuntime = null;
                         lightLease = null;
+                        lightMode = ClassicOriginalLightMode.DENY;
                         lightSessionToken = 0L;
                         ++lightEpoch;
                         lightStatus = "Lampenverbindung verweigert oder nicht bestätigt";
@@ -418,6 +455,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             token = lightSessionToken;
             lightRuntime = null;
             lightLease = null;
+            lightMode = ClassicOriginalLightMode.DENY;
             lightSessionToken = 0L;
             lightStatus = "Music-Rückkanal wird gestoppt";
         }
@@ -432,7 +470,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         final ClassicOriginalMusicSelection.OutputLease live = lightLease;
         if (lightRuntime != null && (live == null || !attached ||
             !ClassicOriginalMusicSelection.isOutputLeaseCurrent(live) ||
-            !ClassicOriginalMusicAudioSignal.snapshot().fresh)) {
+            !modeStillAllowed(lightMode))) {
             stopLightOutput();
             return;
         }
@@ -515,12 +553,19 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         final boolean running=runningOutput;
         final boolean outputBusy = ClassicOriginalLightOutputGate.isBusy();
         final boolean outputUncertain = ClassicOriginalLightOutputGate.isQuarantined();
+        final int availableMode = ClassicOriginalLightMode.choose(
+            ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse, audio.fresh);
         lightControl.setText(running ? "DJ-Lichtausgabe beenden" :
             outputUncertain ? "DJ-Lichtausgabe gesperrt · Sitzungszustand unklar" :
             outputBusy ? "Vorherige DJ-Lichtsession wird beendet" :
-            (endpoints>0 ? "DJ-Lichtausgabe für geprüfte Lampen starten" :
+            (endpoints>0 && availableMode == ClassicOriginalLightMode.TIMED
+                ? "Zeitgesteuerte Lichtszene für geprüfte Lampen starten" :
+             endpoints>0 && availableMode == ClassicOriginalLightMode.ORIGINAL_AUDIO
+                ? "Musiklicht für geprüfte Lampen starten" :
+             endpoints>0 ? "Original-Audio starten oder Zeit-Effekt wählen" :
              "DJ-Lichtausgabe · zuerst Gruppenmitglieder im LAN prüfen"));
-        lightControl.setEnabled(running || (!outputBusy && endpoints>0));
+        lightControl.setEnabled(running || (!outputBusy && endpoints>0 &&
+            availableMode != ClassicOriginalLightMode.DENY));
         if (outputUncertain && !running)
             lightStatus = "Sicherer Abschluss nicht bestätigt · keine neuen Lampenbefehle";
         if (running || !lightStatus.isEmpty())
@@ -546,11 +591,13 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             @Override public void onFrame(ClassicOriginalMusicAudioSignal.Frame frame,long atMs) {
                 if (!attached || observerEpoch != originalObserverEpoch) return;
                 CheckpointRuntime runtime = lightRuntime;
-                if (runtime != null) runtime.submitOriginalFrame(frame);
+                if (runtime != null && lightMode == ClassicOriginalLightMode.ORIGINAL_AUDIO)
+                    runtime.submitOriginalFrame(frame);
             }
             @Override public void onCaptureClosed() {
                 handler.post(() -> {
-                    if (attached && observerEpoch == originalObserverEpoch)
+                    if (attached && observerEpoch == originalObserverEpoch &&
+                        lightMode == ClassicOriginalLightMode.ORIGINAL_AUDIO)
                         stopLightOutput();
                 });
             }
