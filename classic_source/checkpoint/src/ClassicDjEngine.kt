@@ -122,7 +122,20 @@ class ClassicDjEngine(
             val look = if (mode == null) frame else
                 spatial.frame(mode, index, snapshot.size, timestampMs, loudness, beat)
             if (coordinator.frame(id, generation, look.rgb, look.brightness)) sent.add(id)
-            else { failed.add(id); active.remove(id) }
+            else {
+                failed.add(id)
+                active.remove(id)
+                // A reverse write may have failed with an uncertain remote
+                // outcome. Never STOP that quarantined peer speculatively.
+                // Do not continue a partial light show on the others.
+                break
+            }
+        }
+        if (failed.isNotEmpty()) {
+            val survivors = active.keys.toList()
+            active.clear() // Fence all later PCM, original and clock frames.
+            // Only independently confirmed OWNED peers get their own STOP.
+            coordinator.stopGroup(survivors)
         }
         return sent to failed
     }

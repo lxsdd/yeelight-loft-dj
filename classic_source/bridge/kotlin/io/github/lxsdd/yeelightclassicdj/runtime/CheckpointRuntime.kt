@@ -307,6 +307,9 @@ class CheckpointRuntime : DjRuntime {
                 ClassicPcmDjBridge(newEngine, sampleRate = SAMPLE_RATE, automaticAnalysisGain = true)
             val newCapture = if (bridge == null) null else
                 ClassicPcmCaptureSession(bridge, checkNotNull(createdInput), clock) { output ->
+                // The engine has already stopped confirmed surviving peers.
+                // Closing this worker also closes PCM and reports the failure.
+                if (output.failed.isNotEmpty()) error("Owned music output lost")
                 val current = synchronized(lock) {
                     if (state == State.RUNNING) this.listener else null
                 }
@@ -378,6 +381,7 @@ class CheckpointRuntime : DjRuntime {
                     val output = current?.originalFrame(original.timestampMs,
                         original.bands, original.beat, original.bpm, original.confidence)
                     if (output != null) {
+                        if (output.failed.isNotEmpty()) error("Owned original music output lost")
                         val cb = synchronized(lock) {
                             if (state == State.RUNNING && mine == generation) listener else null
                         }
@@ -394,7 +398,9 @@ class CheckpointRuntime : DjRuntime {
                     val current = synchronized(lock) {
                         if (state == State.RUNNING && mine == generation) engine else null
                     }
-                    current?.clockTick(clock())
+                    val tick = current?.clockTick(clock())
+                    if (tick?.failed?.isNotEmpty() == true)
+                        error("Owned timed music output lost")
                     idle()
                 }
             }

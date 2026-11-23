@@ -572,6 +572,101 @@ fun main() {
         "Partial original cohort failure changed a foreign session or leaked owned A"
     }
     partial.stop()
+
+    // Real production runtime, in-memory ONLY: a failed reverse frame must
+    // revoke the whole chosen show for original, timer and microphone paths.
+    // No LAN, APK or device is touched by this regression.
+    fun failingFleetRuntime(): Pair<CheckpointRuntime, Triple<
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>,
+        java.util.concurrent.CopyOnWriteArrayList<String>,
+        java.util.concurrent.CopyOnWriteArrayList<String>>> {
+        val ids = listOf("192.168.71.21", "192.168.71.22", "192.168.71.23")
+        val remote = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+        ids.forEach { remote[it] = false }
+        val stops = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val writes = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val runtime = CheckpointRuntime()
+        runtime.clock = { System.nanoTime() / 1_000_000L }
+        runtime.idle = { Thread.sleep(4L) }
+        runtime.wifiAddress = { "192.168.71.10" }
+        runtime.transportFactory = { _, selected ->
+            check(selected == ids.toSet())
+            object : loftdj.classic.ClassicMusicCoordinator.Transport {
+                override fun readMusic(id: String): Boolean? = remote[id]
+                override fun requestStart(id: String): Boolean {
+                    remote[id] = true
+                    return true
+                }
+                override fun reverseConnected(id: String) = true
+                override fun requestStop(id: String): Boolean {
+                    check(!stops.contains(id)) { "Double stop of confirmed peer" }
+                    stops.add(id)
+                    remote[id] = false
+                    return true
+                }
+                override fun closeReverse(id: String) {}
+                override fun sendReverseFrame(id: String, generation: Long,
+                                              rgb: Int, brightness: Int): Boolean {
+                    check(generation > 0 && rgb in 0..0xFFFFFF && brightness in 1..100)
+                    writes.add(id)
+                    return id != ids[1]
+                }
+            }
+        }
+        return runtime to Triple(remote, stops, writes)
+    }
+    fun awaitFaultCleanup(listener: Listener, stops: List<String>, writes: List<String>) {
+        check(listener.error.await(4, TimeUnit.SECONDS)) {
+            "One failed output must report whole-session error to Classic host"
+        }
+        var polls = 0
+        while (stops.size < 2 && polls++ < 120) Thread.sleep(10L)
+        check(stops.toSet() == setOf("192.168.71.21", "192.168.71.23")) {
+            "Only surviving OWNED peers may receive stop: $stops"
+        }
+        val frozen = writes.size
+        Thread.sleep(360L)
+        check(writes.size == frozen) { "Frames escaped after whole-cohort failure" }
+    }
+    val (failedOriginal, originalFault) = failingFleetRuntime()
+    val originalFaultListener = Listener()
+    failedOriginal.startOriginalAudio(
+        listOf("192.168.71.21", "192.168.71.22", "192.168.71.23"),
+        originalFaultListener, object : DjRuntime.ConsentGuard {
+            override fun isStillAuthorized() = true
+        })
+    check(failedOriginal.submitOriginalFrame(originalFrame))
+    awaitFaultCleanup(originalFaultListener, originalFault.second, originalFault.third)
+    check(!failedOriginal.submitOriginalFrame(originalFrame))
+    check(originalFault.first["192.168.71.22"] == true) {
+        "Uncertain remote state must not receive speculative STOP"
+    }
+    failedOriginal.stop()
+
+    val (failedTimed, timedFault) = failingFleetRuntime()
+    val timedFaultListener = Listener()
+    check(failedTimed.configure(1.0, "SCANNER"))
+    failedTimed.startTimedScene(Context(),
+        listOf("192.168.71.21", "192.168.71.22", "192.168.71.23"),
+        timedFaultListener)
+    awaitFaultCleanup(timedFaultListener, timedFault.second, timedFault.third)
+    failedTimed.stop()
+
+    val (failedMic, micFault) = failingFleetRuntime()
+    val micFaultInput = MockMic()
+    failedMic.inputFactory = { micFaultInput }
+    val micFaultListener = Listener()
+    failedMic.start(Context(), "microphone",
+        listOf("192.168.71.21", "192.168.71.22", "192.168.71.23"),
+        micFaultListener)
+    awaitFaultCleanup(micFaultListener, micFault.second, micFault.third)
+    check(micFaultInput.closed) { "Mic remained open after reverse-output failure" }
+    failedMic.stop()
+
+    check(originalFault.third.count { it == "192.168.71.22" } == 1)
+    check(timedFault.third.count { it == "192.168.71.22" } == 1)
+    check(micFault.third.count { it == "192.168.71.22" } == 1)
+
     println("PASS original Classic PCM/FFT -> production owned-only reverse frames; no second recorder, foreign-session takeover, or post-stop output")
     println("PASS dynamic 5/15/33/72 selected LAN peers through real timed runtime")
     println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")
