@@ -31,7 +31,7 @@ def method(source, signature):
 def constructor(source, signature, wrapper):
     m = method(source, signature)
     body = m.group()
-    decl = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)\.(?:locals|registers) \d+[ \t]*$", body))
+    decl = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)\.locals [2-9][0-9]*[ \t]*$", body))
     if len(decl) != 1:
         raise GateFailure("CLASSIC_OEM_CURSOR_REGISTERS_DRIFT")
     target = BASE + "->" + INIT
