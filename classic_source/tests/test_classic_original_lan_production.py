@@ -212,7 +212,11 @@ class OriginalLanProductionTests(unittest.TestCase):
         self.assertIn("originalDsp.setFrameObserver(",inline)
         self.assertIn("stopLightOutput();",inline)
         self.assertIn("if (lightRuntime != runtime || epoch != lightEpoch)",inline)
-        self.assertIn("Music-Rückkanäle werden geprüft",inline)
+        # A proposed group must not be reported as an OWNED/working group.
+        self.assertIn("ClassicOriginalLightReport.starting(targets.size())",inline)
+        self.assertIn("ClassicOriginalLightReport.active(",inline)
+        self.assertIn('targets.size() + "_LAMPS"',inline)
+        self.assertIn("lightConfirmed = true",inline)
         self.assertIn("startOriginalAudio(selectedLampIps: List<String>",runtime)
         self.assertIn("pendingOriginal = OriginalFrame(",runtime)
         self.assertIn("privateIpv4(candidate.getHostAddress())",discovery)
