@@ -20,6 +20,7 @@ ENTRY = """
     move-result-object v7
     invoke-virtual {v2, v7}, Lcom/yeelight/yeelib/managers/YeelightDeviceManager;->j0(Ljava/lang/String;)Lcom/yeelight/yeelib/device/base/c;
     move-result-object v3
+    invoke-virtual {v5, v6}, Landroid/widget/ListView;->setAdapter(Landroid/widget/ListAdapter;)V
     invoke-direct {p0}, Lcom/yeelight/yeelib/ui/activity/GroupMusicModeManagerActivity;->a0()V
     return-void
 .end method
@@ -57,6 +58,9 @@ class OriginalGroupObserverTests(unittest.TestCase):
         changed = group.patch_text(ENTRY)
         self.assertEqual(changed.count(group.ENTRY_BRIDGE), 1)
         self.assertEqual(changed.count(group.MEMBERS_BRIDGE), 1)
+        self.assertEqual(changed.count(group.ORDER_BRIDGE), 1)
+        self.assertNotIn(group.ORIGINAL_SET_ADAPTER,changed)
+        self.assertIn("invoke-static {v5, v6}, " + group.ORDER_BRIDGE,changed)
         self.assertIn("move-result-object v7\n    invoke-static/range {v7 .. v7}, ",
                       changed)
         self.assertIn("move-result-object v23\n    invoke-static/range {v23 .. v23}, ",
@@ -73,6 +77,7 @@ class OriginalGroupObserverTests(unittest.TestCase):
         )
         self.assertEqual(changed.count("->j0(Ljava/lang/String;)"), 1)
         self.assertEqual(changed.count(".locals 24"), 1)
+        self.assertIn("Class", "ClassicOriginalGroupMemberOrder")
         with self.assertRaises(GateFailure):
             group.patch_text(changed)
 
@@ -83,6 +88,9 @@ class OriginalGroupObserverTests(unittest.TestCase):
             ENTRY.replace("->getStringExtra(", "->getIntExtra("),
             ENTRY.replace("->j0(Ljava/lang/String;)", "->other(Ljava/lang/String;)"),
             ENTRY.replace("->a0()V", "->b0()V"),
+            ENTRY.replace("ListView;->setAdapter(", "ListView;->otherAdapter("),
+            ENTRY.replace("invoke-virtual {v5, v6}, Landroid/widget/ListView;",
+                          "invoke-virtual {v5}, Landroid/widget/ListView;"),
             ENTRY.replace("->J1()Ljava/util/List;", "->notMembers()Ljava/util/List;", 1),
             ENTRY.replace("move-result-object v7", "move-result v7"),
             ENTRY.replace("move-result-object v23", "move-result v23"),

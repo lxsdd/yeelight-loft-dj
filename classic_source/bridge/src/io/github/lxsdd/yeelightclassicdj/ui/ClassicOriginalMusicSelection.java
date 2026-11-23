@@ -104,6 +104,13 @@ public final class ClassicOriginalMusicSelection {
         return new java.util.ArrayList<>(originalMemberKeys.keysForDisplay());
     }
 
+    /** In-clone visual ordering namespace, derived only from the original
+     * device-click + matching GroupMusic Activity entry. NOT a lamp target. */
+    static synchronized String originalGroupDisplayScope() {
+        return groupEntryFreshAt(monotonicMs()) && selectedId != null
+            ? "classic-original-group-members-" + selectedId : null;
+    }
+
     /** -1 = unknown, zero = actual observed empty OEM group. Not a DJ grant. */
     public static synchronized int originalGroupMemberCount() {
         return groupMemberCountAt(monotonicMs());

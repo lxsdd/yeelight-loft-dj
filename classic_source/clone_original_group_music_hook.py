@@ -31,6 +31,42 @@ MEMBERS_BRIDGE = (
 INTENT_GET = (
     "Landroid/content/Intent;->getStringExtra(Ljava/lang/String;)Ljava/lang/String;"
 )
+ORIGINAL_SET_ADAPTER = (
+    "Landroid/widget/ListView;->setAdapter(Landroid/widget/ListAdapter;)V"
+)
+ORDER_BRIDGE = (
+    "Lio/github/lxsdd/yeelightclassicdj/ui/"
+    "ClassicOriginalGroupMemberOrder;->installGroupAdapter"
+    "(Landroid/widget/ListView;Landroid/widget/ListAdapter;)V"
+)
+
+
+def _replace_original_adapter_install(body: str) -> str:
+    # The static bridge takes exactly the original ListView and ListAdapter
+    # registers. No move, spare register or OEM member access is introduced.
+    pattern = re.compile(
+        r"(?m)^(?P<indent>[ \t]*)(?P<op>invoke-virtual(?:/range)?)[ \t]+"
+        r"(?P<regs>\{[^}\r\n]+\}),[ \t]*" +
+        re.escape(ORIGINAL_SET_ADAPTER) + r"[ \t]*\r?$"
+    )
+    found = list(pattern.finditer(body))
+    if len(found) != 1:
+        raise GateFailure("CLASSIC_GROUP_ORIGINAL_LIST_ADAPTER_ABI_UNVERIFIED")
+    item = found[0]
+    regs = item.group("regs")
+    if item.group("op").endswith("/range"):
+        match = re.fullmatch(r"\{([vp])(\d+)[ \t]*\.\.[ \t]*([vp])(\d+)\}", regs)
+        if not match or match.group(1) != match.group(3) or \
+                int(match.group(4)) != int(match.group(2)) + 1:
+            raise GateFailure("CLASSIC_GROUP_ORIGINAL_LIST_REGISTERS_UNVERIFIED")
+        opcode = "invoke-static/range"
+    else:
+        if not re.fullmatch(r"\{[vp]\d+,[ \t]*[vp]\d+\}", regs):
+            raise GateFailure("CLASSIC_GROUP_ORIGINAL_LIST_REGISTERS_UNVERIFIED")
+        opcode = "invoke-static"
+    replacement = item.group("indent") + opcode + " " + regs + ", " + ORDER_BRIDGE
+    return body[:item.start()] + replacement + body[item.end():]
+
 
 
 def _method(source: str, name: str):
@@ -107,8 +143,13 @@ def patch_text(source: str) -> str:
                refreshed_body[:refreshed_key.end()] + key_call +
                refreshed_body[refreshed_key.end():] +
                changed[refreshed.end():])
+    entry_now = _method(changed, "onCreate(Landroid/os/Bundle;)V")
+    entry_body = _replace_original_adapter_install(entry_now.group())
+    changed = changed[:entry_now.start()] + entry_body + changed[entry_now.end():]
     if (changed.count(ENTRY_BRIDGE) != 1 or
         changed.count(MEMBERS_BRIDGE) != 1 or
+        changed.count(ORDER_BRIDGE) != 1 or
+        ORIGINAL_SET_ADAPTER in changed or
         changed.count(ORIGINAL_MEMBERS) != 6 or
         _method(changed, "a0()V").group().count(ORIGINAL_MEMBERS) != 4 or
         _method(changed, "onPause()V").group() != pause_body or
@@ -144,6 +185,7 @@ def patch_staged_clone(staged: Path) -> dict:
         "status": "PRIVATE_CLASSIC_ORIGINAL_GROUP_COUNT_READONLY_HOOK_STAGED",
         "original_oem_methods_modified": 2,
         "original_group_entry_and_list_preserved": True,
+        "original_member_display_order_adapter": True,
         "observed_selected_members": False,
         "participant_authorized": False,
         "device_id_or_address_exported": False,
