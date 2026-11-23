@@ -416,6 +416,10 @@ fun main() {
     // The genuine original Classic callback now has a production output path
     // through the SAME owned reverse transport, but NO SECOND AudioRecord.
     val original = CheckpointRuntime()
+    val originalConsent = java.util.concurrent.atomic.AtomicBoolean(true)
+    val originalGuard = object : DjRuntime.ConsentGuard {
+        override fun isStillAuthorized() = originalConsent.get()
+    }
     original.inputFactory = { error("Original player already owns AudioRecord") }
     original.visualizerFactory = { error("Original player already owns Visualizer") }
     original.clock = { System.nanoTime() / 1_000_000L }
@@ -453,11 +457,11 @@ fun main() {
         io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal.Frame(
             .5f, floatArrayOf(.7f,.3f,.2f,.1f), true,120f,.8f)))
     check(runCatching {
-        original.startOriginalAudio(emptyList(), Listener())
+        original.startOriginalAudio(emptyList(), Listener(), originalGuard)
     }.isFailure)
     val originalListener = Listener()
     check(original.configure(1.0, "SCANNER"))
-    original.startOriginalAudio(originalPeers.keys.toList(), originalListener)
+    original.startOriginalAudio(originalPeers.keys.toList(), originalListener, originalGuard)
     check(originalStarts == 2)
     check(originalListener.states.contains("ORIGINAL_AUDIO_2_LAMPS"))
     val originalFrame = io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal.Frame(
@@ -473,6 +477,14 @@ fun main() {
     check(!original.submitOriginalFrame(
         io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal.Frame(
             .5f, floatArrayOf(Float.NaN,0f,0f,0f),false,0f,0f)))
+    // A changed original selection must stop both OWNED channels on the
+    // existing real runtime worker, without waiting for an Activity restart.
+    originalConsent.set(false)
+    check(originalListener.error.await(4, TimeUnit.SECONDS)) {
+        "Revoked original owner did not stop live output"
+    }
+    var stopPolls = 0
+    while (originalStops < 2 && stopPolls++ < 100) Thread.sleep(20L)
     original.stop()
     check(originalStops == 2 && originalPeers.values.none { it })
     val frozen = synchronized(originalFrames) { originalFrames.size }
@@ -497,10 +509,69 @@ fun main() {
         }
     }
     check(runCatching {
-        foreign.startOriginalAudio(listOf("192.168.1.21"), Listener())
+        foreign.startOriginalAudio(listOf("192.168.1.21"), Listener(),
+            object : DjRuntime.ConsentGuard {
+                override fun isStillAuthorized() = true
+            })
     }.isFailure)
     check(foreignStarts == 0)
     foreign.stop()
+    // Absent/revoked OEM consent must fail before even looking up the Wi-Fi
+    // interface, creating a transport or negotiating any bulb.
+    val consentDenied = CheckpointRuntime()
+    var deniedTouchedNetwork = false
+    consentDenied.wifiAddress = { deniedTouchedNetwork = true; "192.168.1.10" }
+    consentDenied.transportFactory = { _, _ ->
+        deniedTouchedNetwork = true
+        error("No network before original consent")
+    }
+    check(runCatching {
+        consentDenied.startOriginalAudio(listOf("192.168.1.21"), Listener(),
+            object : DjRuntime.ConsentGuard {
+                override fun isStillAuthorized() = false
+            })
+    }.isFailure)
+    check(!deniedTouchedNetwork)
+    consentDenied.stop()
+
+    // The positive consent is for the complete chosen cohort, not a hidden
+    // subset. If B is already foreign-owned, A must be stopped again.
+    val partial = CheckpointRuntime()
+    val partialActive = mutableMapOf("192.168.1.21" to false, "192.168.1.22" to true)
+    var partialStarts = 0
+    var partialStops = 0
+    partial.wifiAddress = { "192.168.1.10" }
+    partial.transportFactory = { _, _ ->
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = partialActive[id]
+            override fun requestStart(id: String): Boolean {
+                partialStarts++
+                partialActive[id] = true
+                return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                partialStops++
+                partialActive[id] = false
+                return true
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String, generation: Long,
+                                          rgb: Int, brightness: Int) = true
+        }
+    }
+    check(runCatching {
+        partial.startOriginalAudio(partialActive.keys.toList(), Listener(),
+            object : DjRuntime.ConsentGuard {
+                override fun isStillAuthorized() = true
+            })
+    }.isFailure)
+    check(partialStarts == 1 && partialStops == 1 &&
+          partialActive["192.168.1.21"] == false &&
+          partialActive["192.168.1.22"] == true) {
+        "Partial original cohort failure changed a foreign session or leaked owned A"
+    }
+    partial.stop()
     println("PASS original Classic PCM/FFT -> production owned-only reverse frames; no second recorder, foreign-session takeover, or post-stop output")
     println("PASS dynamic 5/15/33/72 selected LAN peers through real timed runtime")
     println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")
