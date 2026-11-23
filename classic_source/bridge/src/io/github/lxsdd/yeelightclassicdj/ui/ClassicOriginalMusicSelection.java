@@ -187,7 +187,12 @@ public final class ClassicOriginalMusicSelection {
     static synchronized boolean acceptLanProof(
             java.util.List<String> originalAdapterIds,
             ClassicOriginalLanDiscovery.VerifiedTargets proof) {
-        long now=monotonicMs();
+        return acceptLanProofAt(originalAdapterIds,proof,monotonicMs());
+    }
+
+    static synchronized boolean acceptLanProofAt(
+            java.util.List<String> originalAdapterIds,
+            ClassicOriginalLanDiscovery.VerifiedTargets proof,long now) {
         if (!matchesCurrentOriginalMemberSetAt(originalAdapterIds,now) ||
             proof==null || !proof.freshAt(now) || djIntentKeys.isEmpty())
             return false;
@@ -209,7 +214,10 @@ public final class ClassicOriginalMusicSelection {
      * selection change, group switch, host destruction or timeout returns [].
      */
     static synchronized java.util.List<String> resolvedOriginalLanIps() {
-        long now=monotonicMs();
+        return resolvedOriginalLanIpsAt(monotonicMs());
+    }
+
+    static synchronized java.util.List<String> resolvedOriginalLanIpsAt(long now) {
         if (!freshAt(now) || lanGroupOwner==null ||
             !lanGroupOwner.equals(selectedId) || lanBoundAtMs==Long.MIN_VALUE ||
             now<lanBoundAtMs || now-lanBoundAtMs>LAN_FRESH_MS ||

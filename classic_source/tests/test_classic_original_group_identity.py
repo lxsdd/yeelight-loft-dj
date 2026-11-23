@@ -138,7 +138,8 @@ public final class GroupKeysRuntimeHarness {
             main=base/"GroupKeysRuntimeHarness.java"
             main.write_text(harness)
             subprocess.run(["javac","--release","8","-d",d,
-                str(POLICY),str(WITNESS),str(SELECTOR),str(stub),str(main)],
+                str(POLICY),str(WITNESS),str(SELECTOR),
+                str(UI / "ClassicOriginalLanDiscovery.java"),str(stub),str(main)],
                 check=True,capture_output=True,text=True,timeout=30)
             run=subprocess.run(["java","-cp",d,
                 "io.github.lxsdd.yeelightclassicdj.ui.GroupKeysRuntimeHarness"],

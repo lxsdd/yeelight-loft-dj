@@ -202,7 +202,9 @@ public final class OriginalGroupHarness {
             witness = source.with_name("ClassicOriginalGroupMemberWitness.java")
             policy = source.with_name("ClassicOrderPolicy.java")
             subprocess.run(["javac","--release","8","-d",d,
-                            str(source),str(witness),str(policy),str(helper)],
+                            str(source),str(witness),str(policy),
+                            str(source.with_name("ClassicOriginalLanDiscovery.java")),
+                            str(helper)],
                            check=True, timeout=25, capture_output=True, text=True)
             subprocess.run(["java","-cp",d,
                 "io.github.lxsdd.yeelightclassicdj.ui.OriginalGroupHarness"],

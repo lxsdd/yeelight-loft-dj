@@ -181,7 +181,8 @@ public final class OriginalMusicSelectionHarness {
             subprocess.run(
                 ["javac", "--release", "8", "-d", d, str(source),
                  str(source.with_name("ClassicOriginalGroupMemberWitness.java")),
-                 str(source.with_name("ClassicOrderPolicy.java")), str(helper)],
+                 str(source.with_name("ClassicOrderPolicy.java")),
+                 str(source.with_name("ClassicOriginalLanDiscovery.java")),str(helper)],
                 check=True, timeout=25, capture_output=True, text=True
             )
             subprocess.run(
