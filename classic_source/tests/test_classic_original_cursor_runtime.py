@@ -110,14 +110,38 @@ public final class ClassicOriginalCursorHarness {
   long preRefreshGeneration=adapter.revision();
   source.values[1]=200;
   ok(!adapter.moveTo("20","30",preRefreshGeneration),
-     "changed OEM identity invalidates old adapter");
+     "changed OEM identity invalidates old gesture");
   ok(!adapter.validRevision(preRefreshGeneration),
-     "source mutation revokes all old gestures");
+     "source mutation revokes the previous gesture generation");
+  ok(ctx.prefs.writes==writes,"read-only OEM cursor refresh never persists");
+  ok(wrapped.moveToPosition(2)&&wrapped.getLong(0)==200,
+     "updated OEM member mapped without recreating adapter");
+  ok(adapter.moveTo("200","30",adapter.revision()),
+     "new genuine OEM stable id can be sorted after refresh");
+  ok(wrapped.moveToPosition(0)&&wrapped.getLong(0)==200,
+     "new OEM identity participates in saved display order");
+  int afterRefreshedDrop=ctx.prefs.writes;
+  long preAdd=adapter.revision();
+  source.values=new long[]{10,200,30,40};
+  ok(!adapter.validRevision(preAdd),"adding a lamp invalidates current drag");
+  ok(wrapped.moveToPosition(3)&&wrapped.getLong(0)==40,
+     "new OEM device visible at original tail without restart");
+  ok(ctx.prefs.writes==afterRefreshedDrop,
+     "new OEM membership is never silently saved");
+  long preRemove=adapter.revision();
+  source.values=new long[]{10,30,40};
+  ok(!adapter.validRevision(preRemove),"removing a device invalidates drag");
+  ok(wrapped.moveToPosition(2)&&wrapped.getLong(0)==40,
+     "remaining original IDs remain available after removal");
   ok(ctx.prefs.writes==writes,"stale source did not mutate preference");
   Cursor otherScope=ClassicOriginalCursorOrder.wrapGroups(ctx,wrapped);
   ok(otherScope instanceof ClassicOriginalCursorOrder.OrderedCursor,
      "cross-surface wrapped cursor is revalidated, not dropped");
   ok(otherScope!=wrapped,"foreign surface never inherits old gesture scope");
+  source.values=new long[]{10,10,40};
+  ok(!adapter.validSnapshot(),"ambiguous refreshed OEM identifiers fail closed");
+  ok(!adapter.moveRelative("10",1,adapter.revision()),
+     "ambiguous cursor cannot persist a reorder");
   Data duplicates=new Data(1,1);
   ok(ClassicOriginalCursorOrder.wrapDevices(ctx,duplicates)==duplicates,
      "duplicate OEM ids refuse wrapper");

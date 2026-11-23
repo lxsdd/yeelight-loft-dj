@@ -195,7 +195,7 @@ public final class ClassicOriginalCursorOrder {
         final ClassicLocalOrderStore store;
         final ClassicOrderPolicy.Surface surface;
         final String scope;
-        final List<String> original;
+        private List<String> original;
         private final Map<String, Integer> sourcePositions = new HashMap<>();
         private List<String> displayed;
         private int position = -1;
@@ -237,14 +237,33 @@ public final class ClassicOriginalCursorOrder {
         }
 
         synchronized boolean validSnapshot() {
-            if (invalid || delegate.isClosed()) return false;
+            if (invalid) return false;
+            if (delegate.isClosed()) {
+                invalid = true;
+                revision++;
+                return false;
+            }
             try {
-                if (!original.equals(scan(delegate))) {
-                    invalid = true;
+                List<String> refreshed = scan(delegate);
+                if (!original.equals(refreshed)) {
+                    // Same OEM Cursor instance, new set/order of stable _id
+                    // rows. Rebuild only the read-through position map. The
+                    // original cursor and account/database are never modified.
+                    original = Collections.unmodifiableList(refreshed);
+                    sourcePositions.clear();
+                    for (int i = 0; i < original.size(); i++)
+                        sourcePositions.put(original.get(i), i);
+                    displayed = ClassicOrderPolicy.project(original, store.read(surface, scope));
                     revision++;
+                    // The row currently binding was resolved before this
+                    // refresh; prohibit attaching a potentially wrong grip.
+                    position = -1;
+                    return false;
                 }
-                return !invalid;
+                return true;
             } catch (RuntimeException mismatch) {
+                // Missing/duplicate/non-numeric OEM identities are not a
+                // refresh. Deny all future drag writes for this cursor.
                 invalid = true;
                 revision++;
                 return false;
