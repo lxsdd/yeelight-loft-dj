@@ -60,5 +60,35 @@ fun main() {
     check(fake.active["foreign"] == true && fake.active["b"] == true)
     check(engine.selected().isEmpty())
     check(engine.audio(1000L,doubleArrayOf(1.0,1.0,1.0,1.0)).sent.isEmpty())
+
+    // A group handshake is fail-fast. A foreign middle peer must not cause
+    // needless Music-start commands on later selected lamps.
+    val earlyTransport = Fake()
+    val earlyCoordinator = ClassicMusicCoordinator(earlyTransport)
+    for (id in listOf("a", "foreign", "c", "d")) earlyCoordinator.register(id, true)
+    earlyTransport.active["foreign"] = true
+    val earlyEngine = ClassicDjEngine(earlyCoordinator)
+    val earlyStates = earlyEngine.select(listOf("a", "foreign", "c", "d"))
+    check(earlyStates.keys.toList() == listOf("a", "foreign"))
+    check(earlyStates["foreign"] == ClassicMusicCoordinator.State.UNKNOWN_OWNER)
+    check(earlyTransport.active["c"] != true && earlyTransport.active["d"] != true)
+    check(earlyEngine.selected() == setOf("a"))
+    check(earlyEngine.stop()["a"] == ClassicMusicCoordinator.State.IDLE)
+    check(earlyTransport.active["foreign"] == true)
+
+    // A user revocation between handshakes also skips every later lamp;
+    // only the previously OWNED participant is eligible for STOP.
+    val cancelledTransport = Fake()
+    val cancelledCoordinator = ClassicMusicCoordinator(cancelledTransport)
+    for (id in listOf("a", "b", "c")) cancelledCoordinator.register(id, true)
+    val cancelledEngine = ClassicDjEngine(cancelledCoordinator)
+    var admissionChecks = 0
+    val cancelledStates = cancelledEngine.select(listOf("a", "b", "c")) {
+        ++admissionChecks == 1
+    }
+    check(cancelledStates.keys.toList() == listOf("a"))
+    check(cancelledEngine.selected() == setOf("a"))
+    check(cancelledEngine.stop()["a"] == ClassicMusicCoordinator.State.IDLE)
+    check(cancelledTransport.active["b"] != true && cancelledTransport.active["c"] != true)
     println("PASS DJ bridge: 4-lamp, quiet flow, rate-bound HSV/brightness, foreign owner, all-peer fault stop, stale audio")
 }

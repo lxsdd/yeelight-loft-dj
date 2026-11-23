@@ -573,6 +573,117 @@ fun main() {
     }
     partial.stop()
 
+
+    // ORIGINAL timed scenes previously used the non-callback route and could
+    // silently run on a subset. The same complete-cohort gate now applies to
+    // all public and original start paths, including a 14-device selection.
+    // In-memory reverse transport only: no IPs are contacted.
+    for (kind in listOf("ORIGINAL_TIMED", "INDEPENDENT_TIMED", "MICROPHONE")) {
+        val requested = (21..34).map { "192.168.77.$it" }
+        val foreignPeer = requested[6]
+        val remote = requested.associateWith { it == foreignPeer }.toMutableMap()
+        val started = mutableListOf<String>()
+        val stopped = mutableListOf<String>()
+        val writes = mutableListOf<String>()
+        val input = MockMic()
+        val attemptRuntime = CheckpointRuntime()
+        attemptRuntime.wifiAddress = { "192.168.77.10" }
+        attemptRuntime.inputFactory = { input }
+        attemptRuntime.transportFactory = { _, proposed ->
+            check(proposed == requested.toSet())
+            object : loftdj.classic.ClassicMusicCoordinator.Transport {
+                override fun readMusic(id: String): Boolean? = remote[id]
+                override fun requestStart(id: String): Boolean {
+                    started.add(id)
+                    remote[id] = true
+                    return true
+                }
+                override fun reverseConnected(id: String) = true
+                override fun requestStop(id: String): Boolean {
+                    stopped.add(id)
+                    remote[id] = false
+                    return true
+                }
+                override fun closeReverse(id: String) {}
+                override fun sendReverseFrame(id: String, generation: Long,
+                                              rgb: Int, brightness: Int): Boolean {
+                    writes.add(id)
+                    return true
+                }
+            }
+        }
+        if (kind != "MICROPHONE") check(attemptRuntime.configure(1.0, "SCANNER"))
+        val output = Listener()
+        val result = runCatching {
+            when (kind) {
+                "ORIGINAL_TIMED" -> attemptRuntime.startOriginalTimedScene(requested, output,
+                    object : DjRuntime.ConsentGuard {
+                        override fun isStillAuthorized() = true
+                    })
+                "INDEPENDENT_TIMED" -> attemptRuntime.startTimedScene(Context(), requested, output)
+                else -> attemptRuntime.start(Context(), "microphone", requested, output)
+            }
+        }
+        check(result.isFailure) { "$kind accepted a partial 14-lamp group" }
+        check(started == requested.take(6) && stopped == requested.take(6)) {
+            "$kind did not stop ONLY already-owned lamps or started later ones"
+        }
+        check(remote[foreignPeer] == true &&
+              requested.drop(7).all { remote[it] == false }) {
+            "$kind affected a foreign or later unselected Music session"
+        }
+        check(writes.isEmpty() && output.states.isEmpty()) {
+            "$kind emitted a frame or reported success before all peers were confirmed"
+        }
+        check(input.closed == (kind == "MICROPHONE")) {
+            "$kind opened/failed to close an unrelated audio source"
+        }
+        attemptRuntime.stop()
+    }
+
+    // Revocation DURING handshake (after A has been confirmed) must not start
+    // B/C or leave A playing. This also covers the ORIGINAL clock-only path.
+    val revokedGuard = java.util.concurrent.atomic.AtomicBoolean(true)
+    val revokedRequested = listOf("192.168.78.21", "192.168.78.22", "192.168.78.23")
+    val revokedRemote = revokedRequested.associateWith { false }.toMutableMap()
+    val revokedStarts = mutableListOf<String>()
+    val revokedStops = mutableListOf<String>()
+    val revokedRuntime = CheckpointRuntime()
+    revokedRuntime.wifiAddress = { "192.168.78.10" }
+    check(revokedRuntime.configure(1.0, "WAVE"))
+    revokedRuntime.transportFactory = { _, _ ->
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = revokedRemote[id]
+            override fun requestStart(id: String): Boolean {
+                revokedStarts.add(id)
+                revokedRemote[id] = true
+                revokedGuard.set(false)
+                return true
+            }
+            override fun reverseConnected(id: String) = true
+            override fun requestStop(id: String): Boolean {
+                revokedStops.add(id)
+                revokedRemote[id] = false
+                return true
+            }
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String, generation: Long,
+                                          rgb: Int, brightness: Int) = true
+        }
+    }
+    check(runCatching {
+        revokedRuntime.startOriginalTimedScene(revokedRequested, Listener(),
+            object : DjRuntime.ConsentGuard {
+                override fun isStillAuthorized() = revokedGuard.get()
+            })
+    }.isFailure)
+    check(revokedStarts == listOf(revokedRequested[0]) &&
+          revokedStops == listOf(revokedRequested[0]) &&
+          revokedRequested.all { revokedRemote[it] == false }) {
+        "Original timed consent revocation leaked or started later participants"
+    }
+    revokedRuntime.stop()
+
     // Real production runtime, in-memory ONLY: a failed reverse frame must
     // revoke the whole chosen show for original, timer and microphone paths.
     // No LAN, APK or device is touched by this regression.

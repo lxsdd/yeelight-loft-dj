@@ -328,10 +328,13 @@ class CheckpointRuntime : DjRuntime {
             if (selectedLampIps.isNotEmpty() && owned.isEmpty()) {
                 error("No confirmed reverse channel; leave remote state untouched and stop")
             }
-            // Original-Classic confirmation covers the ENTIRE selected group.
-            // One foreign, offline or unconfirmed peer revokes that proposal.
-            if (originalCallbacks && owned.size != selectedLampIps.size)
-                error("Original cohort only partially owned")
+            // All explicitly selected start paths (original audio, original
+            // timed, independent scene, microphone/Visualizer) require the
+            // ENTIRE confirmed cohort. A foreign, unavailable or cancelled
+            // peer revokes the proposal. Never silently light a subset.
+            // The catch/finally rollback stops only already OWNED peers.
+            if (selectedLampIps.isNotEmpty() && owned.size != selectedLampIps.size)
+                error("Selected Music cohort only partially owned")
             synchronized(lock) {
                 check(state == State.STARTING) { "Session stopped during setup" }
                 if (originalAuthorization != null)

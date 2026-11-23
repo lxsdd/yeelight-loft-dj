@@ -152,7 +152,12 @@ class ClassicMusicCoordinator(private val transport: Transport) {
         val states = linkedMapOf<String, State>()
         for (id in ids) {
             if (!allowNextStart()) break
-            states[id] = start(id)
+            val state = start(id)
+            states[id] = state
+            // A foreign owner, missing ACK or uncertain session revokes the
+            // proposed show. Never needlessly open Music on later lamps.
+            // Caller rolls back independently confirmed OWNED predecessors.
+            if (state != State.OWNED) break
         }
         return states
     }
