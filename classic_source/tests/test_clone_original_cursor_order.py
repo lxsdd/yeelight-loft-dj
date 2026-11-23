@@ -62,6 +62,51 @@ class OriginalCursorIntegrationTests(unittest.TestCase):
                 hook.patch_text(changed, GROUP) if symbol == "wrapDevices" else hook.patch_text(DEVICE,changed)
         self.assertEqual(d.count("->" + hook.DEVICE_INIT),1)
 
+    def test_constructor_register_shapes_no_two_local_limit(self):
+        for device in (False, True):
+            signature = hook.DEVICE_INIT if device else hook.INIT
+            base = DEVICE if device else GROUP
+            for shape in ('.locals 0', '.locals 1', '.locals 10',
+                          '.locals 16', '.locals 128',
+                          '.registers ' + ('4' if device else '3'),
+                          '.registers 24'):
+                with self.subTest(device=device, shape=shape):
+                    edited = base.replace(
+                        '.method public ' + signature + '\n    .locals 2\n',
+                        '.method public ' + signature + '\n    ' + shape + '\n', 1)
+                    if shape in ('.locals 0', '.registers 4', '.registers 3'):
+                        edited = edited.replace('    const/4 v0, 0x0\n', '', 1)
+                    d, g = hook.patch_text(edited, GROUP) if device else hook.patch_text(DEVICE, edited)
+                    adapter = d if device else g
+                    self.assertIn(shape, hook.method(adapter, signature).group())
+                    self.assertEqual(adapter.count('->' + ('wrapDevices' if device else 'wrapGroups') + '('), 1)
+                    self.assertEqual(adapter.count(hook.BIND), 1)
+
+    def test_constructor_invalid_register_forms_fail_closed(self):
+        for shape in ('.locals -1', '.locals 65536', '.locals x',
+                      '.registers 0', '.registers 1', '.registers 2',
+                      '.registers 65536', '.registers 99999'):
+            with self.subTest(shape=shape):
+                bad = DEVICE.replace('.locals 2', shape, 1)
+                with self.assertRaisesRegex(GateFailure, 'REGISTERS_DRIFT'):
+                    hook.patch_text(bad, GROUP)
+        duplicate = DEVICE.replace('    .locals 2\n',
+                                   '    .locals 2\n    .registers 8\n', 1)
+        with self.assertRaisesRegex(GateFailure, 'REGISTERS_DRIFT'):
+            hook.patch_text(duplicate, GROUP)
+        premutation = DEVICE.replace('    invoke-direct {p0, p1, p2}, ' + hook.BASE,
+            '    const/4 p2, 0x0\n    invoke-direct {p0, p1, p2}, ' + hook.BASE, 1)
+        with self.assertRaisesRegex(GateFailure, 'PRE_SUPER_DRIFT'):
+            hook.patch_text(premutation, GROUP)
+
+    def test_crlf_oem_constructor_and_row(self):
+        d, g = hook.patch_text(DEVICE.replace('\n', '\r\n'),
+                               GROUP.replace('\n', '\r\n'))
+        self.assertEqual(d.count('->wrapDevices('), 1)
+        self.assertEqual(g.count('->wrapGroups('), 1)
+        self.assertEqual(d.count(hook.BIND), 1)
+        self.assertEqual(g.count(hook.BIND), 1)
+
     def test_changed_oem_abi_and_callback_provenance_fail_closed(self):
         invalid = [
             (DEVICE.replace("DeviceRecyclerViewAdapter;","ForeignRecyclerViewAdapter;"),GROUP),

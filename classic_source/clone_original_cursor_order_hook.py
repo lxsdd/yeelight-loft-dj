@@ -31,27 +31,36 @@ def method(source, signature):
 def constructor(source, signature, wrapper):
     m = method(source, signature)
     body = m.group()
-    decl = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)\.locals [2-9][0-9]*[ \t]*$", body))
-    if len(decl) != 1:
+    # The original OEM may use .locals 0/1/10+ or .registers.
+    # This wrapper only uses named parameters p1/p2, never a new v-register.
+    declarations = list(re.finditer(
+        r"(?m)^(?P<indent>[ \t]*)\.(?P<kind>locals|registers)[ \t]+"
+        r"(?P<count>0|[1-9][0-9]*)[ \t]*\r?$", body))
+    if len(declarations) != 1:
+        raise GateFailure("CLASSIC_OEM_CURSOR_REGISTERS_DRIFT")
+    decl = declarations[0]
+    count = int(decl.group("count"))
+    parameters = 4 if signature == DEVICE_INIT else 3
+    if count > 65535 or (decl.group("kind") == "registers" and count < parameters):
         raise GateFailure("CLASSIC_OEM_CURSOR_REGISTERS_DRIFT")
     target = BASE + "->" + INIT
     calls = list(re.finditer(
         r"(?m)^[ \t]*invoke-direct(?:/range)? \{p0, p1, p2\}, " +
-        re.escape(target) + r"[ \t]*$", body))
+        re.escape(target) + r"[ \t]*\r?$", body))
     if len(calls) != 1 or body.count(target) != 1:
         raise GateFailure("CLASSIC_OEM_CURSOR_SUPER_DRIFT")
-    before = body[decl[0].end():calls[0].start()]
+    before = body[decl.end():calls[0].start()]
     # Original 3.5.4 constructor must be a direct super call. No register
     # mutations of p1/p2 or invocation of unknown OEM code may precede it.
     if re.search(r"(?m)^\s*(?:invoke-|move|iput|iget|new-|return-|const)", before):
         raise GateFailure("CLASSIC_OEM_CURSOR_PRE_SUPER_DRIFT")
     injected = (
-        "\n" + decl[0].group("indent") +
+        "\n" + decl.group("indent") +
         "invoke-static/range {p1 .. p2}, " + BRIDGE + "->" + wrapper +
         "(Landroid/content/Context;Landroid/database/Cursor;)Landroid/database/Cursor;\n" +
-        decl[0].group("indent") + "move-result-object p2"
+        decl.group("indent") + "move-result-object p2"
     )
-    revised = body[:decl[0].end()] + injected + body[decl[0].end():]
+    revised = body[:decl.end()] + injected + body[decl.end():]
     if revised.count("->" + wrapper + "(") != 1:
         raise GateFailure("CLASSIC_OEM_CURSOR_INIT_RECHECK")
     return source[:m.start()] + revised + source[m.end():]
@@ -61,7 +70,7 @@ def bind_row(source):
     body = m.group()
     if BIND in body:
         raise GateFailure("CLASSIC_OEM_CURSOR_ALREADY_PATCHED")
-    returns = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)return-void[ \t]*$", body))
+    returns = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)return-void[ \t]*\r?$", body))
     if not 1 <= len(returns) <= 3:
         raise GateFailure("CLASSIC_OEM_CURSOR_ROW_EXITS_DRIFT")
     for r in reversed(returns):
