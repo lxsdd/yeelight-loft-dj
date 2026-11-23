@@ -135,7 +135,31 @@ public final class ClassicOriginalCursorHarness {
      "remaining original IDs remain available after removal");
   ok(ctx.prefs.writes==afterRefreshedDrop,
      "changed and removed OEM rows never write local preferences");
+  // No drag callback is needed to discover a changed source: the original
+  // RecyclerView binder must never use stale source positions.
+  Data silent=new Data(11,22,33);
+  ClassicOriginalCursorOrder.OrderedCursor hot=
+      (ClassicOriginalCursorOrder.OrderedCursor)
+          ClassicOriginalCursorOrder.wrapDevices(ctx,silent);
+  ok(hot.moveTo("33","11",hot.revision()),"new cursor reordered");
+  long oldHot=hot.revision();
+  int beforeSilent=ctx.prefs.writes;
+  silent.values=new long[]{11,22,44};
+  ok(hot.moveToPosition(0)&&hot.getLong(0)==11,
+      "first OEM row bind after in-place refresh uses correct new device");
+  ok(!hot.validRevision(oldHot),"silent refresh revokes old gesture");
+  ok(ctx.prefs.writes==beforeSilent,"silent refresh never writes preferences");
+  silent.values=new long[]{11,11,44};
+  ok(hot.moveToPosition(2)&&hot.getLong(0)==44,
+      "duplicate OEM IDs use authentic source row, not a stale mapping");
+  ok(!hot.moveRelative("11",1,hot.revision()),
+      "ambiguous OEM cursor never accepts a user drag");
+  ok(ctx.prefs.writes==beforeSilent,
+      "ambiguous OEM cursor never changes preferences");
+  long oldOwner=adapter.revision();
   Cursor otherScope=ClassicOriginalCursorOrder.wrapGroups(ctx,wrapped);
+  ok(!adapter.validRevision(oldOwner),
+      "cross-surface handoff revokes the prior device gesture owner");
   ok(otherScope instanceof ClassicOriginalCursorOrder.OrderedCursor,
      "cross-surface wrapped cursor is revalidated, not dropped");
   ok(otherScope!=wrapped,"foreign surface never inherits old gesture scope");

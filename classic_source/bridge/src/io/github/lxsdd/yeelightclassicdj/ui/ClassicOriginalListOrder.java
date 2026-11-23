@@ -129,6 +129,9 @@ public final class ClassicOriginalListOrder {
             if (previous == supplied && supplied.matches(modelName, getter, surface, scope)
                 && supplied.valid()) return rows;
             rows = supplied.source;
+            // An original list handed to a new OEM adapter must have only ONE
+            // active local drag owner, even if the new model ABI is rejected.
+            if (supplied != previous) supplied.revoke();
         }
         if (previous != null) {
             previous.revoke();

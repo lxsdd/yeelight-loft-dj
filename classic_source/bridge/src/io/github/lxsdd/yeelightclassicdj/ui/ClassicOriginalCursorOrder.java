@@ -42,16 +42,18 @@ public final class ClassicOriginalCursorOrder {
 
     private static Cursor wrap(Context context, Cursor cursor,
                                ClassicOrderPolicy.Surface surface, String scope) {
+        if (context == null || !CLONE.equals(context.getPackageName()) ||
+            cursor == null) return cursor;
         if (cursor instanceof OrderedCursor) {
             OrderedCursor previous = (OrderedCursor) cursor;
             if (previous.surface == surface && previous.scope.equals(scope))
                 return cursor;
-            // A recycled OEM cursor may be presented on another independent
-            // list surface. Unwrap first, then validate the new scope.
+            // A cross-surface handoff must revoke the previous owner's drag
+            // generation. An unrelated package must never revoke it.
+            previous.revoke();
             cursor = previous.delegate;
         }
-        if (context == null || !CLONE.equals(context.getPackageName()) ||
-            cursor == null || cursor.isClosed()) return cursor;
+        if (cursor.isClosed()) return cursor;
         try {
             return new OrderedCursor(cursor, new ClassicLocalOrderStore(context),
                 surface, scope);
@@ -236,6 +238,12 @@ public final class ClassicOriginalCursorOrder {
             } finally { cursor.moveToPosition(prior); }
         }
 
+        synchronized void revoke() {
+            invalid = true;
+            position = -1;
+            revision++;
+        }
+
         synchronized boolean validSnapshot() {
             if (invalid) return false;
             if (delegate.isClosed()) {
@@ -276,18 +284,29 @@ public final class ClassicOriginalCursorOrder {
         }
 
         synchronized String idAt(int p) {
-            List<String> rows = invalid ? original : displayed;
-            return p < 0 || p >= rows.size() ? null : rows.get(p);
+            // A recycled OEM cursor may change before the next gesture.
+            if (!validSnapshot()) return null;
+            return p < 0 || p >= displayed.size() ? null : displayed.get(p);
         }
 
         @Override public synchronized int getPosition() {
+            if (!invalid) validSnapshot();
             return invalid ? delegate.getPosition() : position;
         }
         @Override public synchronized boolean moveToPosition(int requested) {
-            List<String> rows = invalid ? original : displayed;
+            // The original row binder can be the FIRST observer of a changed
+            // source cursor. Verify the position map before using it.
+            if (!invalid) validSnapshot();
+            if (delegate.isClosed()) return false;
             int source = requested;
-            if (!invalid && requested >= 0 && requested < rows.size())
-                source = sourcePositions.get(rows.get(requested));
+            if (!invalid && requested >= 0 && requested < displayed.size()) {
+                Integer mapped = sourcePositions.get(displayed.get(requested));
+                if (mapped == null) {
+                    revoke();
+                    return false;
+                }
+                source = mapped;
+            }
             boolean moved = delegate.moveToPosition(source);
             position = requested;
             return moved;

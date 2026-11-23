@@ -163,8 +163,14 @@ public final class OriginalModelListHarness {
       "new adapter model list remains draggable");
   check("next-3".equals(scene(next,0).id),
       "new list order projects without mutating underlying OEM model list");
+  long oldSceneOwner=nextOrder.revision();
+  int writesBeforeHandoff=app.prefs.writes;
   List<?> foreign=ClassicOriginalListOrder.wrapRoom(roomAdapter, next);
   check(foreign==nextSource,"room adapter cannot inherit a scene model wrapper");
+  check(!nextOrder.moveRelative("next-3",1,oldSceneOwner),
+      "new adapter with same OEM list revokes the old scene drag owner");
+  check(app.prefs.writes==writesBeforeHandoff,
+      "incompatible original model never writes local preferences");
   check("next-1".equals(nextSource.get(0).id),"original model objects remain untouched");
   // The real FavoriteSceneAdapter.e(List) copies a sorted DETACHED snapshot.
   FavoriteSceneAdapter favorite=new FavoriteSceneAdapter("favorite-catalog-A",true);
