@@ -40,6 +40,7 @@ public final class GroupMusicModeManagerActivity {
     public final ArrayList<e> items=new ArrayList<>();
     private final Context context;
     public int lastDrawn=-1;
+    public View forced;
     public g(Context ctx, String... ids){
       context=ctx;
       for(String id:ids) items.add(new e(id));
@@ -49,6 +50,7 @@ public final class GroupMusicModeManagerActivity {
     @Override public long getItemId(int pos){return 1000+pos;}
     @Override public View getView(int pos,View reuse,ViewGroup parent){
       lastDrawn=pos;
+      if (forced!=null) return forced;
       return reuse!=null ? reuse : new View(context);
     }
   }
@@ -138,6 +140,30 @@ public final class GroupMemberOrderHarness {
     check(persisted.displayIdAt(0)==null,"duplicated identity disables handle");
     check(!persisted.moveRelative("a",1,persisted.revision()),"no drop with duplicates");
     check(persisted.getItem(0)==sameGroup.getItem(0),"falls back to OEM list");
+    // A valid displayed wrapper contains a recycled OEM child. When its
+    // exact source identities drift, returning that still-attached child
+    // would crash the actual Android ListView with a parent conflict.
+    sameGroup.items.remove(sameGroup.items.size()-1);
+    View oldHost=persisted.getView(0,null,recreated);
+    check(oldHost instanceof FrameLayout,"valid original row wrapped");
+    sameGroup.items.add(new e("g")); // duplicate identity => OEM fallback
+    View fallback=persisted.getView(0,oldHost,recreated);
+    check(fallback!=oldHost && fallback.getParent()==null,
+      "fallback OEM row fully detached from stale wrapper");
+    check(!persisted.moveRelative("a",1,persisted.revision()),
+      "recycled invalid row cannot reorder");
+    // Original returning a view owned by another parent must not be
+    // stolen/reparented or handed back attached to the ListView.
+    FrameLayout foreignParent=new FrameLayout(context);
+    View foreignChild=new View(context);
+    foreignParent.addView(foreignChild,new FrameLayout.LayoutParams(20,20));
+    sameGroup.forced=foreignChild;
+    View denied=persisted.getView(0,null,recreated);
+    check(denied!=foreignChild && denied.getParent()==null,
+      "foreign OEM-parent view rejected without detaching it");
+    check(foreignChild.getParent()==foreignParent,
+      "foreign original parent left intact");
+    sameGroup.forced=null;
     // A different original group cannot inherit the saved display preferences.
     owner("room-two");
     ListView second=new ListView(context);
@@ -175,6 +201,31 @@ class GroupMemberOrderRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             stubs=dict(STUBS)
+            # Track actual view parenting in the existing Java/Android
+            # fixture; a no-op getParent stub would miss this crash.
+            stubs["android/view/View.java"]=stubs["android/view/View.java"].replace(
+                "public android.view.ViewGroup getParent(){return null;}",
+                """private android.view.ViewGroup testParent;
+                public void __testParent(android.view.ViewGroup next){testParent=next;}
+                public android.view.ViewGroup getParent(){return testParent;}""")
+            frame=stubs["android/widget/FrameLayout.java"]
+            frame=frame.replace(
+                "public void addView(android.view.View v,LayoutParams params){}",
+                """public void addView(android.view.View v,LayoutParams params){
+                 if(v.getParent()!=null) throw new IllegalStateException("already attached");
+                 v.__testParent(this);
+                }""")
+            frame=frame.replace(
+                "public void addView(android.view.View v,int index,LayoutParams params){}",
+                """public void addView(android.view.View v,int index,LayoutParams params){
+                 addView(v,params);
+                }""")
+            frame=frame.replace(
+                "public void removeView(android.view.View v){}",
+                """public void removeView(android.view.View v){
+                 if(v.getParent()==this) v.__testParent(null);
+                }""")
+            stubs["android/widget/FrameLayout.java"]=frame
             original_list=stubs["android/widget/ListView.java"]
             self.assertIn("public void setAdapter(ListAdapter adapter){}",original_list)
             stubs["android/widget/ListView.java"]=original_list.replace(

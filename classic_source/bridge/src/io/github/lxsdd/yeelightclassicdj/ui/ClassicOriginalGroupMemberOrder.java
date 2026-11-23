@@ -203,19 +203,28 @@ public final class ClassicOriginalGroupMemberOrder {
                     ? shownIds.get(position) : null;
             }
             View row=original.getView(sourcePosition,priorOriginal,parent);
+            // An OEM getView() may recycle the child of our FrameLayout.
+            // Never return an attached child to ListView when the original
+            // identities become stale, or Android throws a parent conflict.
+            // Nor may a foreign parent's view be detached: fail closed with
+            // an inert row instead of rebinding a potentially wrong device.
+            if (row != null && row.getParent() != null &&
+                (oldRow == null || row.getParent() != oldRow ||
+                 row != oldRow.content)) {
+                if (oldRow != null) oldRow.release();
+                return new FrameLayout(row.getContext());
+            }
             if (stable==null || row==null) {
-                if (oldRow != null) oldRow.clear();
+                if (oldRow != null) oldRow.release();
                 return row;
             }
             try {
-                if (row.getParent()!=null &&
-                    (oldRow==null || row.getParent()!=oldRow)) return row;
                 Row host=oldRow == null ? new Row(row.getContext()) : oldRow;
                 host.bind(this,row,stable,expected);
                 return host;
             } catch (RuntimeException layoutMismatch) {
-                if (oldRow != null) oldRow.clear();
-                return row;
+                if (oldRow != null) oldRow.release();
+                return row.getParent() == null ? row : new FrameLayout(row.getContext());
             }
         }
     }
@@ -250,7 +259,16 @@ public final class ClassicOriginalGroupMemberOrder {
             }
             grip.bind(adapter,id,revision);
         }
-        void clear() { grip.clear(); }
+        /** Release a recycled OEM child before returning it to ListView.
+         * Never detach a view that belongs to an unrelated OEM parent.
+         * Revocation also disables the stale drag/menu callbacks.
+         */
+        void release() {
+            grip.clear();
+            if (content != null && content.getParent() == this)
+                removeView(content);
+            content = null;
+        }
     }
     private static final class Grip extends TextView {
         private OrderedGroupAdapter adapter;
