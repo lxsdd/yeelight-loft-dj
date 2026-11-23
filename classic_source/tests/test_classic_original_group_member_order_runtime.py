@@ -273,6 +273,9 @@ public final class GroupMemberOrderHarness {
     ClassicOriginalGroupMemberOrder.installGroupAdapter(liveList,liveOEM);
     ClassicOriginalGroupMemberOrder.OrderedGroupAdapter live=installed(liveList);
     ClassicOriginalMusicSelection.observedOriginalGroupMembers(liveOEM.items);
+    // The first OEM ListAdapter read pins its member model and revision.
+    // A gesture captured BEFORE that read is correctly rejected as stale.
+    check(live.getItem(0)==liveOEM.getItem(0),"first original member snapshot");
     check(live.markDjMember(lamp,true,live.revision()),"real selected OEM lamp");
     long observed=System.nanoTime()/1_000_000L;
     String newline="" + (char)13 + (char)10;
