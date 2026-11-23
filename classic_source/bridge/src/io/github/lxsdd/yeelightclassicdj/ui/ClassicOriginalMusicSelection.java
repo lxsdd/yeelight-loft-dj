@@ -16,6 +16,8 @@ public final class ClassicOriginalMusicSelection {
     private static boolean groupEntryObserved;
     private static int observedGroupCount = -1;
     private static long groupObservedAtMs = Long.MIN_VALUE;
+    private static ClassicOriginalGroupMemberWitness.Snapshot originalMemberKeys =
+        ClassicOriginalGroupMemberWitness.unknown();
 
     private ClassicOriginalMusicSelection() {}
 
@@ -75,14 +77,31 @@ public final class ClassicOriginalMusicSelection {
         // After Back, retain the last read-only count for MusicActivity's
         // return screen, but reject late refreshes from a destroyed host.
         if (!groupEntryFreshAt(nowMs)) return;
-        if (members == null) { observedGroupCount = -1; return; }
-        try {
-            // No fixed fleet maximum, no access to IDs/IPs, no device commands.
-            observedGroupCount = members.size();
-            groupObservedAtMs = nowMs;
-        } catch (RuntimeException unreadable) {
-            observedGroupCount = -1;
-        }
+        // Only a bounded display witness is retained, never an authorized target.
+        originalMemberKeys = ClassicOriginalGroupMemberWitness.inspect(members);
+        observedGroupCount = originalMemberKeys.observedCount;
+        if (observedGroupCount >= 0) groupObservedAtMs = nowMs;
+    }
+
+    /** A verified read-only identity snapshot while the original group screen
+     * is active. It does NOT authorize any LAN/Yeelight device operations.
+     * -1 means missing/ambiguous OEM identities, including a closed group.
+     */
+    public static synchronized int originalGroupVerifiedIdentityCount() {
+        return verifiedIdentityCountAt(monotonicMs());
+    }
+
+    static synchronized int verifiedIdentityCountAt(long nowMs) {
+        return groupEntryFreshAt(nowMs) && groupFreshAt(nowMs) &&
+            originalMemberKeys.identitiesVerified
+            ? originalMemberKeys.observedCount : -1;
+    }
+
+    /** In-process, package-private original display keys only. */
+    static synchronized java.util.List<String> verifiedDisplayKeysAt(long nowMs) {
+        if (verifiedIdentityCountAt(nowMs) < 0)
+            return java.util.Collections.emptyList();
+        return new java.util.ArrayList<>(originalMemberKeys.keysForDisplay());
     }
 
     /** -1 = unknown, zero = actual observed empty OEM group. Not a DJ grant. */
@@ -117,9 +136,12 @@ public final class ClassicOriginalMusicSelection {
      */
     public static synchronized void originalGroupClosed() {
         groupEntryObserved = false;
+        // The count is safe to show briefly after Back; private OEM keys are not.
+        originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
     }
 
     private static void resetGroup() {
+        originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
         groupEntryObserved = false;
         observedGroupCount = -1;
         groupObservedAtMs = Long.MIN_VALUE;

@@ -191,7 +191,10 @@ public final class OriginalGroupHarness {
         with tempfile.TemporaryDirectory() as d:
             helper = Path(d) / "OriginalGroupHarness.java"
             helper.write_text(harness)
-            subprocess.run(["javac","--release","8","-d",d,str(source),str(helper)],
+            witness = source.with_name("ClassicOriginalGroupMemberWitness.java")
+            policy = source.with_name("ClassicOrderPolicy.java")
+            subprocess.run(["javac","--release","8","-d",d,
+                            str(source),str(witness),str(policy),str(helper)],
                            check=True, timeout=25, capture_output=True, text=True)
             subprocess.run(["java","-cp",d,
                 "io.github.lxsdd.yeelightclassicdj.ui.OriginalGroupHarness"],
