@@ -135,17 +135,38 @@ public final class GroupMemberOrderHarness {
     check(!wrapped.stillSameLanCandidate(verifiedGeneration,scannedOriginal,
         scannedOriginal),"cleared DJ intent revokes in-flight LAN proof");
     check(ClassicOriginalMusicSelection.djIntentCount()==0,"all cleared");
+    // Use a genuine positional OEM listener: the index, ID, displayed
+    // view and getItemAtPosition must all describe the SAME source member.
+    final ArrayList<String> clicks = new ArrayList<>();
+    view.setOnItemClickListener((parent,row,pos,id)->{
+      check(row!=null,"OEM receives the original rendered content");
+      check(((e)parent.getItemAtPosition(pos)).key.equals(original.getItem(pos).key),
+        "ListView.getItemAtPosition cannot use the wrong DnD row");
+      check(view.getAdapter().getItemId(pos)==original.getItemId(pos),
+        "original callback uses source-indexed getItemId");
+      check(id==original.getItemId(pos),"click ID matches source row");
+      clicks.add(pos+":"+original.getItem(pos).key);
+    });
     check(wrapped.getItemId(0)==1000,"initial id and original click contract");
-    check(wrapped.getView(0,null,view)!=null && original.lastDrawn==0,
+    View originalRow=wrapped.getView(0,null,view);
+    check(originalRow!=null && original.lastDrawn==0,
       "real original row renderer invoked");
+    check(originalRow.performClick() && clicks.equals(Arrays.asList("0:a")),
+      "unmoved OEM item click forwarded once");
     long initial=wrapped.revision();
     check(wrapped.moveTo("e","b",initial),"real persisted explicit drop");
     check(!wrapped.stillSameLanCandidate(initial,scannedOriginal,
         Collections.singletonList("a")),"reordering invalidates pending scan revision");
     check(((e)wrapped.getItem(1)).key.equals("e"),"displayed item resolves source member");
     check(wrapped.getItemId(1)==1004,"index mapping preserves OEM item id");
-    check(wrapped.getView(1,null,view)!=null && original.lastDrawn==4,
+    View movedRow=wrapped.getView(1,null,view);
+    check(movedRow!=null && original.lastDrawn==4,
       "original onClick closure binds actual moved member");
+    check(movedRow.performClick() && clicks.equals(Arrays.asList("0:a","4:e")),
+      "display DnD click forwarded to actual original source position");
+    int beforeStale=clicks.size();
+    originalRow.performClick();
+    check(clicks.size()==beforeStale,"recycled prior-revision click denied");
     check(original.items.get(1).key.equals("b"),"original membership and order untouched");
     // The original J1() list remains in OEM order, but explicit DJ choices
     // must follow the dragged DISPLAY order for the real spatial light engine.
@@ -161,6 +182,20 @@ public final class GroupMemberOrderHarness {
     check(wrapped.undo(wrapped.revision()),"last user drop undone");
     check(((e)wrapped.getItem(1)).key.equals("b"),"original order restored");
     check(!wrapped.undo(wrapped.revision()),"single use undo");
+    view.setOnItemClickListener(null);
+    int beforeAbsent=clicks.size();
+    View absentHandler=wrapped.getView(0,null,view);
+    check(absentHandler.performClick() && clicks.size()==beforeAbsent,
+      "no synthetic action when original listener is absent");
+    final int[] reentered={0};
+    View recursive=wrapped.getView(0,null,view);
+    view.setOnItemClickListener((parent,row,pos,id)->{
+      reentered[0]++;
+      check(reentered[0]==1,"nested OEM row callback denied");
+      recursive.performClick();
+    });
+    recursive.performClick();
+    check(reentered[0]==1,"reentrant OEM click never duplicated");
     check(wrapped.moveRelative("f",-1,wrapped.revision()),"relative move persists");
     check(((e)wrapped.getItem(4)).key.equals("f"),"relative stable ID order");
     // A new adapter instance in this same group reads the preference, not DB.
@@ -223,6 +258,9 @@ public final class GroupMemberOrderHarness {
       "different original group scope isolated");
     check(!persisted.moveTo("b","a",persisted.revision()),
       "old GroupMusic session fenced after navigation");
+    int beforeForeign=clicks.size();
+    movedRow.performClick();
+    check(clicks.size()==beforeForeign,"other group cannot reuse stale click");
     ClassicOriginalMusicSelection.originalGroupClosed();
     check(!installed(second).moveRelative("a",1,installed(second).revision()),
       "group close revokes sort and member IDs");
@@ -251,6 +289,15 @@ class GroupMemberOrderRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             stubs=dict(STUBS)
+            # Run the exact production View.OnClickListener installed by Row.
+            stubs["android/view/View.java"]=stubs["android/view/View.java"].replace(
+                "public void setOnClickListener(OnClickListener x){}",
+                """private OnClickListener testClick;
+                public void setOnClickListener(OnClickListener x){testClick=x;}
+                public boolean performClick(){
+                  if(testClick==null) return false;
+                  testClick.onClick(this); return true;
+                }""")
             # Track actual view parenting in the existing Java/Android
             # fixture; a no-op getParent stub would miss this crash.
             stubs["android/view/View.java"]=stubs["android/view/View.java"].replace(

@@ -12,6 +12,7 @@ import android.view.DragEvent;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.FrameLayout;
 import android.widget.ListAdapter;
@@ -70,6 +71,9 @@ public final class ClassicOriginalGroupMemberOrder {
         private boolean verified;
         private boolean revoked;
         private long revision;
+        // A positional OEM click must observe source-indexed getItem/getItemId
+        // during that one synchronous callback, not the DnD display indices.
+        private final ThreadLocal<Boolean> originalClickIndex = new ThreadLocal<>();
         private final DataSetObserver observer = new DataSetObserver() {
             @Override public void onChanged() {
                 synchronized (OrderedGroupAdapter.this) {
@@ -160,10 +164,35 @@ public final class ClassicOriginalGroupMemberOrder {
                 ? shownIds.get(position) : null;
         }
         private synchronized int originalIndex(int displayed) {
+            if (Boolean.TRUE.equals(originalClickIndex.get())) return displayed;
             if (!refresh() || displayed < 0 || displayed >= shownIds.size())
                 return displayed;
             int pos=sourceIds.indexOf(shownIds.get(displayed));
             return pos < 0 ? displayed : pos;
+        }
+
+        /** Route ONLY the verified, still-attached original GroupMusic row
+         * to the OEM listener. No synthetic device action or network request.
+         */
+        synchronized boolean dispatchOriginalClick(String key,long expected,View originalView) {
+            if (key==null || originalView==null || originalClickIndex.get()!=null ||
+                !originalList.isAttachedToWindow() || originalList.getAdapter()!=this ||
+                !refresh() || revision!=expected) return false;
+            int visible=shownIds.indexOf(key);
+            int actual=sourceIds.indexOf(key);
+            if (visible<0 || actual<0 || visible>=original.getCount() ||
+                !original.isEnabled(actual)) return false;
+            AdapterView.OnItemClickListener listener=originalList.getOnItemClickListener();
+            if (listener==null) return false;
+            originalClickIndex.set(Boolean.TRUE);
+            try {
+                listener.onItemClick(originalList,originalView,actual,original.getItemId(actual));
+                return true;
+            } finally {
+                // A throw, reentrant click or OEM list invalidation must never
+                // leave subsequent display positions in the source-index mode.
+                originalClickIndex.remove();
+            }
         }
         synchronized boolean moveTo(String from, String target, long expected) {
             if (!refresh() || revision != expected || from.equals(target) ||
@@ -286,15 +315,28 @@ public final class ClassicOriginalGroupMemberOrder {
         @Override public View getView(int position, View convert, ViewGroup parent) {
             Row oldRow = convert instanceof Row ? (Row)convert : null;
             View priorOriginal = oldRow == null ? convert : oldRow.content;
-            final int sourcePosition=originalIndex(position);
+            final int sourcePosition;
             final long expected;
             final String stable;
             synchronized (this) {
+                sourcePosition=originalIndex(position);
                 expected=revision;
                 stable=verified && position>=0 && position<shownIds.size()
                     ? shownIds.get(position) : null;
             }
             View row=original.getView(sourcePosition,priorOriginal,parent);
+            // OEM getView may mutate/refresh its source during rendering.
+            // Do not bind a stale row to any new click or drag gesture.
+            synchronized (this) {
+                if (stable == null || !refresh() || revision!=expected ||
+                    position<0 || position>=shownIds.size() ||
+                    !stable.equals(shownIds.get(position)) ||
+                    sourcePosition!=sourceIds.indexOf(stable)) {
+                    if (oldRow!=null) oldRow.release();
+                    return row!=null && row.getParent()==null
+                        ? row : new FrameLayout(parent.getContext());
+                }
+            }
             // An OEM getView() may recycle the child of our FrameLayout.
             // Never return an attached child to ListView when the original
             // identities become stale, or Android throws a parent conflict.
@@ -350,6 +392,11 @@ public final class ClassicOriginalGroupMemberOrder {
                     ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
             }
             grip.bind(adapter,id,revision);
+            // OEM child controls still execute their own source-bound actions.
+            // Otherwise intercept the list-level click and forward the correct
+            // original index, never the newly displayed DnD position.
+            setOnClickListener(v -> adapter.dispatchOriginalClick(id,revision,content));
+            setClickable(true);
         }
         /** Release a recycled OEM child before returning it to ListView.
          * Never detach a view that belongs to an unrelated OEM parent.
@@ -357,6 +404,8 @@ public final class ClassicOriginalGroupMemberOrder {
          */
         void release() {
             grip.clear();
+            setOnClickListener(null);
+            setClickable(false);
             if (content != null && content.getParent() == this)
                 removeView(content);
             content = null;

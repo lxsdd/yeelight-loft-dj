@@ -573,8 +573,22 @@ public abstract class BaseAdapter implements ListAdapter {
  public int getViewTypeCount(){return 1;}
  public boolean isEmpty(){return getCount()==0;}
 }''',
+'android/widget/AdapterView.java': '''package android.widget;
+public class AdapterView<T extends Adapter> extends android.view.ViewGroup {
+ public AdapterView(android.content.Context c){super(c);}
+ public interface OnItemClickListener {
+  void onItemClick(AdapterView<?> parent,android.view.View row,int position,long id);
+ }
+ private OnItemClickListener listener;
+ public OnItemClickListener getOnItemClickListener(){return listener;}
+ public void setOnItemClickListener(OnItemClickListener next){listener=next;}
+ public T getAdapter(){return null;}
+ public Object getItemAtPosition(int position){
+  T current=getAdapter();return current==null?null:current.getItem(position);
+ }
+}''',
 'android/widget/ListView.java': '''package android.widget;
-public class ListView extends android.view.ViewGroup {
+public class ListView extends AdapterView<ListAdapter> {
  public ListView(android.content.Context c){super(c);}
  public void setAdapter(ListAdapter adapter){}
 }''',
