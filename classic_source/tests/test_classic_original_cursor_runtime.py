@@ -133,7 +133,8 @@ public final class ClassicOriginalCursorHarness {
   ok(!adapter.validRevision(preRemove),"removing a device invalidates drag");
   ok(wrapped.moveToPosition(2)&&wrapped.getLong(0)==40,
      "remaining original IDs remain available after removal");
-  ok(ctx.prefs.writes==writes,"stale source did not mutate preference");
+  ok(ctx.prefs.writes==afterRefreshedDrop,
+     "changed and removed OEM rows never write local preferences");
   Cursor otherScope=ClassicOriginalCursorOrder.wrapGroups(ctx,wrapped);
   ok(otherScope instanceof ClassicOriginalCursorOrder.OrderedCursor,
      "cross-surface wrapped cursor is revalidated, not dropped");
