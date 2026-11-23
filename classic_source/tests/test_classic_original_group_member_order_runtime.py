@@ -17,6 +17,7 @@ PRODUCTION = [
     "ClassicOriginalGroupMemberOrder.java",
     "ClassicOriginalGroupMemberWitness.java",
     "ClassicOriginalMusicSelection.java",
+    "ClassicOriginalLanDiscovery.java",
     "ClassicLocalOrderStore.java",
     "ClassicOrderPolicy.java",
 ]

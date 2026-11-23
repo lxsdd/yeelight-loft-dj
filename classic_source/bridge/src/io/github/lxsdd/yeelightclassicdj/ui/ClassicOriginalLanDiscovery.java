@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.Inet4Address;
+import java.net.NetworkInterface;
 import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
@@ -156,6 +158,29 @@ public final class ClassicOriginalLanDiscovery {
                 (parts[0]==172 && parts[1]>=16 && parts[1]<=31) ||
                 (parts[0]==192 && parts[1]==168)) &&
             parts[3]>=1 && parts[3]<=254;
+    }
+
+
+    /** No network I/O: choose an already configured Wi-Fi interface address.
+     * Never use a cellular/default route or an arbitrary loopback endpoint.
+     */
+    public static String wifiPrivateIpv4() throws IOException {
+        java.util.Enumeration<NetworkInterface> interfaces=NetworkInterface.getNetworkInterfaces();
+        if (interfaces==null) return null;
+        while (interfaces.hasMoreElements()) {
+            NetworkInterface iface=interfaces.nextElement();
+            if (!iface.isUp() || iface.isLoopback() ||
+                !(iface.getName().startsWith("wlan") ||
+                  iface.getName().startsWith("wifi"))) continue;
+            java.util.Enumeration<InetAddress> addresses=iface.getInetAddresses();
+            while (addresses.hasMoreElements()) {
+                InetAddress candidate=addresses.nextElement();
+                if (candidate instanceof Inet4Address &&
+                    privateIpv4(candidate.getHostAddress()))
+                    return candidate.getHostAddress();
+            }
+        }
+        return null;
     }
 
     /**

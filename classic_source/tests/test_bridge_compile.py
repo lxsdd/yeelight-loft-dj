@@ -60,6 +60,24 @@ STUBS = {
 'android/os/SystemClock.java': '''package android.os; public class SystemClock { public static long elapsedRealtime(){ return 0L; } }''',
 'android/os/Looper.java': '''package android.os; public class Looper { public static Looper getMainLooper(){return null;} }''',
 'android/os/Handler.java': '''package android.os; public class Handler { public Handler(Looper l){} public void post(Runnable r){} public void postDelayed(Runnable r,long t){} public void removeCallbacks(Runnable r){} }''',
+'android/app/AlertDialog.java': '''package android.app; public class AlertDialog {
+ public static class Builder {
+  public Builder(android.content.Context c){}
+  public Builder setTitle(CharSequence t){return this;}
+  public Builder setMessage(CharSequence t){return this;}
+  public Builder setNegativeButton(CharSequence t,android.content.DialogInterface.OnClickListener l){return this;}
+  public Builder setPositiveButton(CharSequence t,android.content.DialogInterface.OnClickListener l){return this;}
+  public AlertDialog show(){return new AlertDialog();}
+ }
+}''',
+'android/content/DialogInterface.java': '''package android.content; public interface DialogInterface {
+ interface OnClickListener { void onClick(DialogInterface dialog, int which); }
+}''',
+'android/widget/Toast.java': '''package android.widget; public class Toast {
+ public static final int LENGTH_LONG=1;
+ public static Toast makeText(android.content.Context c,CharSequence text,int duration){return new Toast();}
+ public void show(){}
+}''',
 'android/os/IBinder.java': '''package android.os; public interface IBinder {}''',
 'android/util/AttributeSet.java': '''package android.util; public interface AttributeSet {}''',
 'android/util/Log.java': '''package android.util; public class Log {

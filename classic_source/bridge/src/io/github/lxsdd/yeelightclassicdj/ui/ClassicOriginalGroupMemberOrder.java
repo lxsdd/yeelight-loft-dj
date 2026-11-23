@@ -6,7 +6,6 @@ import android.app.AlertDialog;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
-import io.github.lxsdd.yeelightclassicdj.runtime.ClassicYeelightMusicTransport;
 import android.database.DataSetObserver;
 import android.os.Build;
 import android.view.DragEvent;
@@ -219,7 +218,7 @@ public final class ClassicOriginalGroupMemberOrder {
                     new Thread(()->{
                         boolean complete=false;
                         try {
-                            String localIp=ClassicYeelightMusicTransport.wifiPrivateIpv4();
+                            String localIp=ClassicOriginalLanDiscovery.wifiPrivateIpv4();
                             ClassicOriginalLanDiscovery.VerifiedTargets proof =
                                 ClassicOriginalLanDiscovery.discover(chosen,localIp);
                             complete=ClassicOriginalMusicSelection.acceptLanProof(
