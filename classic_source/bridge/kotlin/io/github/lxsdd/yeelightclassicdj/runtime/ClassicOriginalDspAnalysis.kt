@@ -16,6 +16,21 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
     private var pcmBands: ClassicPcmBands? = null
     private val beats = ClassicBeatAnalyzer()
     private var gain = 1.0
+    @Volatile private var frameObserver: ClassicOriginalMusicAudioSignal.FrameObserver? = null
+
+    /** The Original MusicActivity binds its own output owner. No recorder or
+     * socket is opened here; delivery must be a bounded nonblocking enqueue.
+     */
+    fun setFrameObserver(observer: ClassicOriginalMusicAudioSignal.FrameObserver?) {
+        frameObserver = observer
+    }
+
+    private fun publish(frame: ClassicOriginalMusicAudioSignal.Frame,
+                        timestampMs: Long): ClassicOriginalMusicAudioSignal.Frame {
+        try { frameObserver?.onFrame(frame, timestampMs) }
+        catch (_: RuntimeException) { /* Observer is never OEM authority. */ }
+        return frame
+    }
 
     private var lastPcmAtMs = -1L
     // Short, in-memory rolling window only. Original PCM is never persisted.
@@ -45,6 +60,8 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
         rateHz = 0
         lastTime = -1L
         lastPcmAtMs = -1L
+        try { frameObserver?.onCaptureClosed() }
+        catch (_: RuntimeException) { /* OEM capture must remain unaffected. */ }
     }
 
     /**
@@ -112,12 +129,12 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
         val target = if (rms < 0.0015) 1.0 else (0.12 / rms).coerceIn(1.0, 8.0)
         gain += (target - gain) * if (target > gain) 0.22 else 0.08
         val result = beats.accept(timestampMs, bands, gain.coerceIn(1.0, 8.0))
-        return ClassicOriginalMusicAudioSignal.Frame(
+        return publish(ClassicOriginalMusicAudioSignal.Frame(
             sqrt(rms).toFloat().coerceIn(0f, 1f),
             floatArrayOf(result.bass.toFloat(), result.mid.toFloat(),
                          result.presence.toFloat(), result.treble.toFloat()),
             result.beat, (result.bpm ?: 0.0).toFloat(), result.confidence.toFloat()
-        )
+        ), timestampMs)
     }
 
     @Synchronized override fun onFft(
@@ -150,11 +167,11 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
         }
         val result = beats.accept(timestampMs, bands)
         val level = bands.maxOrNull() ?: 0.0
-        return ClassicOriginalMusicAudioSignal.Frame(
+        return publish(ClassicOriginalMusicAudioSignal.Frame(
             level.toFloat(),
             floatArrayOf(result.bass.toFloat(), result.mid.toFloat(),
                          result.presence.toFloat(), result.treble.toFloat()),
             result.beat, (result.bpm ?: 0.0).toFloat(), result.confidence.toFloat()
-        )
+        ), timestampMs)
     }
 }

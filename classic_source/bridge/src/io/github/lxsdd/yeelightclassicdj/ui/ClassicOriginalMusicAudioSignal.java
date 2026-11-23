@@ -22,6 +22,12 @@ public final class ClassicOriginalMusicAudioSignal {
         default void onCaptureClosed() {}
     }
 
+    /** A nonblocking observer only. Its callbacks MUST NOT do LAN I/O. */
+    public interface FrameObserver {
+        void onFrame(Frame frame, long timestampMs);
+        void onCaptureClosed();
+    }
+
     public static final class Frame {
         public final float level, bpm, confidence;
         public final boolean beat;

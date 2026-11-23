@@ -2,6 +2,11 @@ package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.content.ClipData;
 import android.content.Context;
+import android.app.AlertDialog;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.Toast;
+import io.github.lxsdd.yeelightclassicdj.runtime.ClassicYeelightMusicTransport;
 import android.database.DataSetObserver;
 import android.os.Build;
 import android.view.DragEvent;
@@ -58,6 +63,7 @@ public final class ClassicOriginalGroupMemberOrder {
 
     static final class OrderedGroupAdapter extends BaseAdapter implements WrapperListAdapter {
         final ListAdapter original;
+        final ListView originalList;
         final ClassicLocalOrderStore store;
         final String scope;
         private List<String> sourceIds = Collections.emptyList();
@@ -82,7 +88,7 @@ public final class ClassicOriginalGroupMemberOrder {
 
         OrderedGroupAdapter(ListView list, ListAdapter original,
                             ClassicLocalOrderStore store, String scope) {
-            this.original=original; this.store=store; this.scope=scope;
+            this.original=original; this.originalList=list; this.store=store; this.scope=scope;
             original.registerDataSetObserver(observer);
             list.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
                 @Override public void onViewAttachedToWindow(View v) {}
@@ -191,6 +197,49 @@ public final class ClassicOriginalGroupMemberOrder {
                 ClassicOriginalMusicSelection.markAllDjIntentFromOriginalAdapter(
                     include,sourceIds);
         }
+        /** Deliberate, READ-ONLY LAN inquiry from the original GroupMusic
+         * menu. Never scans when an Activity opens or during background music.
+         * Verified identity and the exact current adapter set are checked both
+         * BEFORE sending and AFTER returning from the asynchronous query.
+         */
+        synchronized boolean requestLanCheck(long expected) {
+            if (!refresh() || revision!=expected) return false;
+            final ArrayList<String> originalIds=new ArrayList<>(sourceIds);
+            final java.util.List<String> chosen=
+                ClassicOriginalMusicSelection.selectedKeysForLanCheck(originalIds);
+            if (chosen.isEmpty()) return false;
+            final Context context=originalList.getContext();
+            new AlertDialog.Builder(context)
+                .setTitle("Ausgewählte DJ-Lampen prüfen")
+                .setMessage("Nur die ausdrücklich vorgemerkten Classic-Geräte werden " +
+                    "über eine einmalige lokale Yeelight-Suche abgeglichen. " +
+                    "Es wird keine Lampe eingeschaltet und keine Szene geändert.")
+                .setNegativeButton("Abbrechen",null)
+                .setPositiveButton("LAN nur lesen",(dialog,which)->{
+                    new Thread(()->{
+                        boolean complete=false;
+                        try {
+                            String localIp=ClassicYeelightMusicTransport.wifiPrivateIpv4();
+                            ClassicOriginalLanDiscovery.VerifiedTargets proof =
+                                ClassicOriginalLanDiscovery.discover(chosen,localIp);
+                            complete=ClassicOriginalMusicSelection.acceptLanProof(
+                                originalIds,proof);
+                        } catch (java.io.IOException | RuntimeException denied) {
+                            complete=false;
+                        }
+                        final boolean accepted=complete;
+                        new Handler(Looper.getMainLooper()).post(()->{
+                            if (originalList.isAttachedToWindow())
+                                Toast.makeText(context,accepted ?
+                                    "DJ-LAN-Ziele geprüft · zur Music-Ansicht zurückkehren" :
+                                    "Keine eindeutige LAN-Zuordnung · Lampensteuerung gesperrt",
+                                    Toast.LENGTH_LONG).show();
+                        });
+                    },"Classic-Original-LAN-Readonly").start();
+                }).show();
+            return true;
+        }
+
         synchronized boolean undo(long expected) {
             if (!refresh() || revision!=expected ||
                 !store.undoLastUserDrop(ClassicOrderPolicy.Surface.GROUP_MEMBERS,
@@ -323,6 +372,8 @@ public final class ClassicOriginalGroupMemberOrder {
                     adapter.markDjGroup(true,revision));
                 menu.getMenu().add("DJ-Vormerkung leeren").setOnMenuItemClickListener(item ->
                     adapter.markDjGroup(false,revision));
+                menu.getMenu().add("Vorgemerkte DJ-Lampen im LAN prüfen").setOnMenuItemClickListener(item ->
+                    adapter.requestLanCheck(revision));
                 menu.show();
             });
         }
