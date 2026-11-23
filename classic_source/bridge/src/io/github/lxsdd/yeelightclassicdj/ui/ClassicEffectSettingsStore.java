@@ -79,14 +79,15 @@ final class ClassicEffectSettingsStore {
             s.rangeIndex >= 0 && s.rangeIndex < ClassicSceneUiState.RANGES.length &&
             s.gainIndex >= 0 && s.gainIndex < 4 &&
             s.pulseTempoIndex >= 0 && s.pulseTempoIndex < 5 &&
-            s.pulseShapeIndex >= 0 && s.pulseShapeIndex < 3;
+            s.pulseShapeIndex >= 0 && s.pulseShapeIndex < 3 &&
+            s.colorIndex >= 0 && s.colorIndex < ClassicSceneUiState.COLORS.length;
     }
 
     private static String encode(ClassicSceneUiState.Selection s) {
-        return "v1," + s.scene + "," + s.speedIndex + "," + (s.reverse ? 1 : 0) +
+        return "v2," + s.scene + "," + s.speedIndex + "," + (s.reverse ? 1 : 0) +
             "," + s.trailIndex + "," + s.rangeIndex + "," + s.gainIndex +
             "," + (s.beatPulse ? 1 : 0) + "," + s.pulseTempoIndex +
-            "," + s.pulseShapeIndex;
+            "," + s.pulseShapeIndex + "," + s.colorIndex;
     }
 
     /** Opaque bounded data only. Malformed, stale-version or foreign-scene
@@ -95,9 +96,12 @@ final class ClassicEffectSettingsStore {
     private static ClassicSceneUiState.Selection readEncoded(String data, int expectedScene) {
         if (data == null || data.length() < 18 || data.length() > 96) return null;
         String[] parts = data.split(",", -1);
-        if (parts.length != 10 || !"v1".equals(parts[0])) return null;
+        // v1 is an existing owner-authored profile without colour. Read it
+        // unchanged using pink index zero; upgrade only after an explicit edit.
+        boolean legacy = parts.length == 10 && "v1".equals(parts[0]);
+        if (!legacy && !(parts.length == 11 && "v2".equals(parts[0]))) return null;
         try {
-            int[] v = new int[9];
+            int[] v = new int[legacy ? 9 : 10];
             for (int i = 0; i < v.length; i++) {
                 if (!parts[i + 1].matches("[0-9]{1,3}")) return null;
                 v[i] = Integer.parseInt(parts[i + 1]);
@@ -105,7 +109,8 @@ final class ClassicEffectSettingsStore {
             if (v[2] > 1 || v[6] > 1) return null;
             ClassicSceneUiState.Selection candidate =
                 new ClassicSceneUiState.Selection(v[0], v[1], v[2] != 0,
-                    v[3], v[4], v[5], v[6] != 0, v[7], v[8]);
+                    v[3], v[4], v[5], v[6] != 0, v[7], v[8],
+                    legacy ? 0 : v[9]);
             if (!valid(candidate) ||
                 expectedScene >= 0 && candidate.scene != expectedScene) return null;
             return candidate;

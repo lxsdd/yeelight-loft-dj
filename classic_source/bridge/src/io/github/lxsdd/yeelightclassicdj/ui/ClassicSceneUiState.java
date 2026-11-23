@@ -15,14 +15,33 @@ final class ClassicSceneUiState {
     static final int[] SPEEDS = {50, 75, 100, 150, 200};
     static final int[] TRAILS = {1, 2, 4, 6, 8};
     static final int[][] RANGES = {{1, 100}, {5, 60}, {20, 85}};
+    // Clone-local DJ scene colours; OEM device colours/scenes are never edited.
+    // Index zero preserves every existing v1 profile's original pink.
+    static final int[] COLORS = {
+        0xFF2E79, 0xF44336, 0xFF8C00, 0xFFD83D,
+        0x34C759, 0x00C8B8, 0x20BFE5, 0x3877FF,
+        0x8054D9, 0xD34ABD, 0xFFB06D, 0xFFFFFF
+    };
+    static final String[] COLOR_NAMES = {
+        "Pink", "Rot", "Orange", "Gelb", "Grün", "Türkis",
+        "Cyan", "Blau", "Violett", "Magenta", "Apricot", "Weiß"
+    };
 
     static final class Selection {
         final int scene, speedIndex, trailIndex, rangeIndex;
         final boolean reverse, beatPulse;
-        final int gainIndex, pulseTempoIndex, pulseShapeIndex;
+        final int gainIndex, pulseTempoIndex, pulseShapeIndex, colorIndex;
         Selection(int scene, int speedIndex, boolean reverse,
                   int trailIndex, int rangeIndex, int gainIndex,
                   boolean beatPulse, int pulseTempoIndex, int pulseShapeIndex) {
+            this(scene, speedIndex, reverse, trailIndex, rangeIndex, gainIndex,
+                beatPulse, pulseTempoIndex, pulseShapeIndex, 0);
+        }
+        Selection(int scene, int speedIndex, boolean reverse,
+                  int trailIndex, int rangeIndex, int gainIndex,
+                  boolean beatPulse, int pulseTempoIndex, int pulseShapeIndex,
+                  int colorIndex) {
+            this.colorIndex = colorIndex;
             this.scene = scene;
             this.speedIndex = speedIndex;
             this.reverse = reverse;
@@ -54,11 +73,12 @@ final class ClassicSceneUiState {
             chosen.rangeIndex < 0 || chosen.rangeIndex >= RANGES.length ||
             chosen.gainIndex < 0 || chosen.gainIndex >= 4 ||
             chosen.pulseTempoIndex < 0 || chosen.pulseTempoIndex >= 5 ||
-            chosen.pulseShapeIndex < 0 || chosen.pulseShapeIndex >= 3)
+            chosen.pulseShapeIndex < 0 || chosen.pulseShapeIndex >= 3 ||
+            chosen.colorIndex < 0 || chosen.colorIndex >= COLORS.length)
             return false;
         current = new Selection(chosen.scene, chosen.speedIndex, chosen.reverse,
             chosen.trailIndex, chosen.rangeIndex, chosen.gainIndex, chosen.beatPulse,
-            chosen.pulseTempoIndex, chosen.pulseShapeIndex);
+            chosen.pulseTempoIndex, chosen.pulseShapeIndex, chosen.colorIndex);
         revision++;
         return true;
     }
@@ -73,7 +93,7 @@ final class ClassicSceneUiState {
         Selection v = current;
         return new Selection(v.scene, v.speedIndex, v.reverse,
             v.trailIndex, v.rangeIndex, v.gainIndex, v.beatPulse,
-            v.pulseTempoIndex, v.pulseShapeIndex);
+            v.pulseTempoIndex, v.pulseShapeIndex, v.colorIndex);
     }
 
     static synchronized boolean update(int scene, int speedIndex,
@@ -84,7 +104,8 @@ final class ClassicSceneUiState {
             rangeIndex < 0 || rangeIndex >= RANGES.length) return false;
         Selection old = current;
         current = new Selection(scene, speedIndex, reverse, trailIndex, rangeIndex,
-            old.gainIndex, old.beatPulse, old.pulseTempoIndex, old.pulseShapeIndex);
+            old.gainIndex, old.beatPulse, old.pulseTempoIndex, old.pulseShapeIndex,
+            old.colorIndex);
         revision++;
         return true;
     }
@@ -97,7 +118,18 @@ final class ClassicSceneUiState {
         Selection old = current;
         current = new Selection(old.scene, old.speedIndex, old.reverse,
             old.trailIndex, old.rangeIndex, gainIndex, beatPulse,
-            pulseTempoIndex, pulseShapeIndex);
+            pulseTempoIndex, pulseShapeIndex, old.colorIndex);
+        revision++;
+        return true;
+    }
+
+    /** Explicit user choice. A colour edit is a pure profile update: no LAN write. */
+    static synchronized boolean updateColor(int colorIndex) {
+        if (colorIndex < 0 || colorIndex >= COLORS.length) return false;
+        Selection old = current;
+        current = new Selection(old.scene, old.speedIndex, old.reverse,
+            old.trailIndex, old.rangeIndex, old.gainIndex, old.beatPulse,
+            old.pulseTempoIndex, old.pulseShapeIndex, colorIndex);
         revision++;
         return true;
     }

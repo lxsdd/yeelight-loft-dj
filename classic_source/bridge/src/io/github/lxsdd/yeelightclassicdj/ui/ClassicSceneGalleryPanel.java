@@ -1,5 +1,6 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
+import android.app.AlertDialog;
 import android.content.Context;
 import io.github.lxsdd.yeelightclassicdj.runtime.DjRuntime;
 import android.content.ClipData;
@@ -39,7 +40,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final LinearLayout[] sceneRows = new LinearLayout[4];
     private Button dragSource;
     private final Button moveUp, moveDown, undoOrder;
-    private final Button speed, direction, trail, brightness;
+    private final Button speed, direction, trail, brightness, sceneColor;
     private final LinearLayout spatialEditor, pulseEditor;
     private final Button pulseMode, pulseTempo, pulseShape;
     private final TextView note;
@@ -277,6 +278,21 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         spatialEditor.addView(second);
         content.addView(spatialEditor);
 
+        // Same original SceneFragment, same clone-only profile and runtime.
+        // No guessed OEM ColorPicker ABI or second scene database.
+        sceneColor = new Button(context);
+        sceneColor.setAllCaps(false);
+        sceneColor.setContentDescription("DJ-Lichtfarbe für Puls, Scanner, Meteor oder Welle wählen");
+        sceneColor.setOnClickListener(v ->
+            new AlertDialog.Builder(getContext())
+                .setTitle("DJ-Lichtfarbe")
+                .setItems(ClassicSceneUiState.COLOR_NAMES, (dialog, index) -> {
+                    if (ClassicSceneUiState.updateColor(index)) onSceneEdited();
+                })
+                .setNegativeButton("Abbrechen", null)
+                .show());
+        content.addView(sceneColor);
+
         pulseEditor = new LinearLayout(context);
         pulseEditor.setOrientation(VERTICAL);
         LinearLayout pulseRow = new LinearLayout(context);
@@ -405,12 +421,14 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         config.putExtra(ClassicDjService.EXTRA_GAIN, profile.sensitivity);
         config.putExtra(ClassicDjService.EXTRA_PULSE_MODE,
             profile.beatSync ? "BEAT" : "TIMER");
+        config.putExtra(ClassicDjService.EXTRA_PULSE_COLOR, (double) profile.pulseRgb);
         config.putExtra(ClassicDjService.EXTRA_PULSE_BPM, (double) profile.pulseBpm);
         config.putExtra(ClassicDjService.EXTRA_PULSE_MIN, (double) profile.pulseMin);
         config.putExtra(ClassicDjService.EXTRA_PULSE_MAX, (double) profile.pulseMax);
         config.putExtra(ClassicDjService.EXTRA_PULSE_ATTACK, (double) profile.attackMs);
         config.putExtra(ClassicDjService.EXTRA_PULSE_DECAY, (double) profile.decayMs);
         config.putExtra(ClassicDjService.EXTRA_PULSE_GAMMA, profile.gamma);
+        config.putExtra(ClassicDjService.EXTRA_SPATIAL_RGB, (double) profile.spatialRgb);
         config.putExtra(ClassicDjService.EXTRA_SPATIAL_SPEED,
             (double) profile.spatialSpeed);
         config.putExtra(ClassicDjService.EXTRA_SPATIAL_REVERSE, profile.reverse);
@@ -445,6 +463,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         }
         spatialEditor.setVisibility(s.scene >= 4 ? View.VISIBLE : View.GONE);
         pulseEditor.setVisibility(s.scene == 3 ? View.VISIBLE : View.GONE);
+        sceneColor.setVisibility(s.scene >= 3 ? View.VISIBLE : View.GONE);
+        sceneColor.setText("DJ-Lichtfarbe: " + ClassicSceneUiState.COLOR_NAMES[s.colorIndex]);
         pulseMode.setText(s.beatPulse ? "Puls: Beat" : "Puls: Timer");
         int[] pulseTempos = {60, 90, 120, 150, 180};
         String[] pulseShapes = {"Sanft", "Kräftig", "Normal"};

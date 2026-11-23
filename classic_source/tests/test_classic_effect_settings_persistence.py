@@ -59,18 +59,21 @@ public class ClassicEffectSettingsHarness {
     check(settings.saveExplicit(ClassicSceneUiState.snapshot()),"save real selection");
     check(ctx.mem.commits==1 && ctx.mem.map.size()==2,"atomic 2-key single edit");
     check(ClassicSceneUiState.update(4, 4, true, 4, 2),"original editor setting");
+    check(ClassicSceneUiState.updateColor(7),"original scene colour edit");
     check(settings.saveExplicit(ClassicSceneUiState.snapshot()),"real geometry save");
     check(ctx.mem.commits==2,"second editor event one commit");
     check(settings.selectScene(3),"independent pulse configuration");
     check(ClassicSceneUiState.updateAudio(3,false,4,1),"timer pulse editor");
+    check(ClassicSceneUiState.updateColor(2),"independent pulse scene colour");
     check(settings.saveExplicit(ClassicSceneUiState.snapshot()),"save pulse");
     check(settings.selectScene(4),"return to stored scanner");
     ClassicSceneUiState.Selection scanner=ClassicSceneUiState.snapshot();
     check(scanner.speedIndex==4 && scanner.reverse && scanner.trailIndex==4 &&
-      scanner.rangeIndex==2 && scanner.scene==4, "scene profile retained");
+      scanner.rangeIndex==2 && scanner.scene==4 && scanner.colorIndex==7,
+      "scene profile including colour retained");
     check(settings.selectScene(3),"pulse independent of scanner");
     ClassicSceneUiState.Selection pulse=ClassicSceneUiState.snapshot();
-    check(!pulse.beatPulse && pulse.pulseTempoIndex==4 && pulse.pulseShapeIndex==1,
+    check(!pulse.beatPulse && pulse.pulseTempoIndex==4 && pulse.pulseShapeIndex==1 && pulse.colorIndex==2,
       "pulse mode and envelope retained");
     int count=ctx.mem.commits;
     settings.restoreOnFirstHost();
@@ -81,7 +84,7 @@ public class ClassicEffectSettingsHarness {
        0,0,0,false,0,0)), "invalid profile rejects before any write");
     check(ctx.mem.commits==count,"invalid data no write");
     String prefix="dj-effect.";
-    ctx.mem.map.put(prefix+"SCANNER","v2,4,4,1,4,2,1,1,2,2");
+    ctx.mem.map.put(prefix+"SCANNER","v3,4,4,1,4,2,1,1,2,2,7");
     check(settings.readProfile(4)==null,"wrong version ignored");
     check(settings.selectScene(4),"corrupt profile reverts to valid local default");
     check(ClassicSceneUiState.snapshot().speedIndex==2 &&
@@ -90,6 +93,18 @@ public class ClassicEffectSettingsHarness {
     check(settings.readProfile(4)==null,"foreign scene key mismatch rejected");
     ctx.mem.map.put(prefix+"SCANNER","v1,4,999,1,4,2,1,1,2,2");
     check(settings.readProfile(4)==null,"out of range rejected");
+    // Legacy v1 preferences are read-only-compatible. An explicit next edit
+    // writes bounded v2 data; no background migration may overwrite a user file.
+    ctx.mem.map.put(prefix+"SCANNER","v1,4,4,1,4,2,1,1,2,2");
+    check(settings.readProfile(4)!=null && settings.readProfile(4).colorIndex==0,
+          "previous v1 profile maps to unchanged default pink");
+    ctx.mem.map.put(prefix+"SCANNER","v2,4,4,1,4,2,1,1,2,2,12");
+    check(settings.readProfile(4)==null,"out-of-range colour rejected");
+    ctx.mem.map.put(prefix+"SCANNER","v2,4,4,1,4,2,1,1,2,2,-1");
+    check(settings.readProfile(4)==null,"negative colour rejected");
+    check(!ClassicSceneUiState.updateColor(-1) &&
+          !ClassicSceneUiState.updateColor(ClassicSceneUiState.COLORS.length),
+          "invalid colours rejected without mutation");
     check(ctx.mem.commits==count,"bad reads do not rewrite stored bytes");
     ctx.mem.accept=false;
     check(!settings.saveExplicit(ClassicSceneUiState.snapshot()),

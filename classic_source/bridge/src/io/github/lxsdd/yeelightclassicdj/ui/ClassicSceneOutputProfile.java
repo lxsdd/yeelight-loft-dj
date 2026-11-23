@@ -17,7 +17,6 @@ public final class ClassicSceneOutputProfile {
         {12, 90, 90, 600}   // normal
     };
     private static final double[] PULSE_GAMMA = {2.2, 1.2, 2.0};
-    private static final int PINK_RGB = 0xFF2E79;
 
     private ClassicSceneOutputProfile() {}
 
@@ -28,16 +27,18 @@ public final class ClassicSceneOutputProfile {
             s.pulseShapeIndex < 0 || s.pulseShapeIndex >= PULSE_SHAPES.length ||
             s.speedIndex < 0 || s.speedIndex >= ClassicSceneUiState.SPEEDS.length ||
             s.trailIndex < 0 || s.trailIndex >= ClassicSceneUiState.TRAILS.length ||
-            s.rangeIndex < 0 || s.rangeIndex >= ClassicSceneUiState.RANGES.length)
+            s.rangeIndex < 0 || s.rangeIndex >= ClassicSceneUiState.RANGES.length ||
+            s.colorIndex < 0 || s.colorIndex >= ClassicSceneUiState.COLORS.length)
             throw new IllegalArgumentException("Invalid original scene selection");
+        int rgb = ClassicSceneUiState.COLORS[s.colorIndex];
         int[] shape = PULSE_SHAPES[s.pulseShapeIndex];
         int[] spatialRange = ClassicSceneUiState.RANGES[s.rangeIndex];
         return new DjRuntime.SceneSettings(
             GAINS[s.gainIndex], ClassicSceneUiState.SCENES[s.scene],
-            PINK_RGB, s.beatPulse, PULSE_BPM[s.pulseTempoIndex],
+            rgb, s.beatPulse, PULSE_BPM[s.pulseTempoIndex],
             shape[0], shape[1], shape[2], shape[3],
             PULSE_GAMMA[s.pulseShapeIndex],
-            PINK_RGB, ClassicSceneUiState.SPEEDS[s.speedIndex],
+            rgb, ClassicSceneUiState.SPEEDS[s.speedIndex],
             s.reverse, ClassicSceneUiState.TRAILS[s.trailIndex],
             spatialRange[0], spatialRange[1]);
     }

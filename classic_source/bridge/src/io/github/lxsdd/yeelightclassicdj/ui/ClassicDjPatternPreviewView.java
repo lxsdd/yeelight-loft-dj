@@ -24,15 +24,21 @@ public final class ClassicDjPatternPreviewView extends View {
     private int mode;
     private boolean beatPulse = true;
     private int pulseTempo = 120;
+    private int previewRgb = PINK;
     private ClassicOriginalMusicAudioSignal.Snapshot originalFrame;
 
     public ClassicDjPatternPreviewView(Context context) { super(context); }
 
     public void setMode(int selected, boolean beat, int bpm) {
-        if (selected < 0 || selected > 6 || bpm < 40 || bpm > 240) return;
+        setMode(selected, beat, bpm, PINK);
+    }
+    public void setMode(int selected, boolean beat, int bpm, int rgb) {
+        if (selected < 0 || selected > 6 || bpm < 40 || bpm > 240 ||
+            rgb < 0 || rgb > 0xFFFFFF) return;
         mode = selected;
         beatPulse = beat;
         pulseTempo = bpm;
+        previewRgb = rgb;
         invalidate();
     }
 
@@ -64,7 +70,7 @@ public final class ClassicDjPatternPreviewView extends View {
                 source == null ? new float[4] : source.bands,
                 source != null && source.beat);
             paint.setColor(Color.argb(40 + Math.round(215f * intensity),
-                Color.red(PINK), Color.green(PINK), Color.blue(PINK)));
+                Color.red(previewRgb), Color.green(previewRgb), Color.blue(previewRgb)));
             canvas.drawRoundRect(bounds, radius, radius, paint);
         }
     }

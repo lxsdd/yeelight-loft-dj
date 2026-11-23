@@ -52,6 +52,14 @@ public class OriginalSceneOutputHarness {
                 yes(p.spatialRgb==0xFF2E79 && p.pulseRgb==0xFF2E79,
                     "consistent Classic colour contract");
             }
+        for(int ci=0;ci<ClassicSceneUiState.COLORS.length;ci++) {
+            ClassicSceneUiState.Selection c =
+                new ClassicSceneUiState.Selection(6,4,false,4,1,1,false,2,1,ci);
+            DjRuntime.SceneSettings p=ClassicSceneOutputProfile.fromSelection(c);
+            yes(p.spatialRgb==ClassicSceneUiState.COLORS[ci] &&
+                p.pulseRgb==ClassicSceneUiState.COLORS[ci],
+                "user-selected colour must reach pulse and spatial output");
+        }
         for(int i=0;i<3;i++) {
             DjRuntime.SceneSettings p=make(3,2,1,i,true,2,0);
             yes(p.beatSync && p.pulseBpm==180,"beat pulse selection");
@@ -106,6 +114,13 @@ class OriginalSceneOutputProfileTest(unittest.TestCase):
         self.assertIn("profile.sensitivity",gallery)
         self.assertIn("profile.pulseMin",gallery)
         self.assertIn("profile.spatialMin",gallery)
+        self.assertIn("ClassicSceneUiState.COLOR_NAMES",gallery)
+        self.assertIn("ClassicSceneUiState.COLORS[selected.colorIndex]",ui)
+        self.assertIn("ClassicSceneOutputProfile.fromSelection(",gallery)
+        self.assertIn("config.putExtra(ClassicDjService.EXTRA_PULSE_COLOR",gallery)
+        self.assertIn("config.putExtra(ClassicDjService.EXTRA_SPATIAL_RGB",gallery)
+        self.assertIn("(double) profile.pulseRgb",gallery)
+        self.assertIn("(double) profile.spatialRgb",gallery)
         self.assertNotIn("new double[]{0.5,1.0,1.5,2.0}",ui)
         self.assertNotIn("double[][] shapes =",gallery)
 
