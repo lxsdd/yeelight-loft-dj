@@ -186,6 +186,9 @@ public final class ClassicOriginalGroupMemberOrder {
             if (listener==null) return false;
             originalClickIndex.set(Boolean.TRUE);
             try {
+                // A native row action may power/toggle/reassign its OEM device.
+                // Never keep a separate DJ Music grant over that action.
+                ClassicOriginalMusicSelection.originalGroupRowAction();
                 listener.onItemClick(originalList,originalView,actual,original.getItemId(actual));
                 return true;
             } finally {

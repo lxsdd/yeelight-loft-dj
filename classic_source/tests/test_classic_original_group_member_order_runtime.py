@@ -264,6 +264,58 @@ public final class GroupMemberOrderHarness {
     ClassicOriginalMusicSelection.originalGroupClosed();
     check(!installed(second).moveRelative("a",1,installed(second).revision()),
       "group close revokes sort and member IDs");
+    // Full production LAN witness + lease: original OEM row actions revoke
+    // the active Music grant BEFORE their actual click handler is invoked.
+    owner("room-live-click");
+    ListView liveList=new ListView(context);
+    String lamp="0x00000000000000aa";
+    g liveOEM=new g(context,lamp);
+    ClassicOriginalGroupMemberOrder.installGroupAdapter(liveList,liveOEM);
+    ClassicOriginalGroupMemberOrder.OrderedGroupAdapter live=installed(liveList);
+    ClassicOriginalMusicSelection.observedOriginalGroupMembers(liveOEM.items);
+    check(live.markDjMember(lamp,true,live.revision()),"real selected OEM lamp");
+    long observed=System.nanoTime()/1_000_000L;
+    String newline="" + (char)13 + (char)10;
+    String udp="HTTP/1.1 200 OK"+newline+
+      "id: "+lamp+newline+"model: color4"+newline+
+      "location: yeelight://192.168.1.42:55443"+newline+
+      "support: get_prop set_music set_scene"+newline+newline;
+    ClassicOriginalLanDiscovery.Witness witness=new ClassicOriginalLanDiscovery.Witness();
+    check(witness.observe(udp,"192.168.1.42",observed),"valid synthetic Color4 UDP proof");
+    List<String> justLamp=Collections.singletonList(lamp);
+    check(ClassicOriginalMusicSelection.acceptLanProof(justLamp,justLamp,
+        witness.resolveAll(justLamp,observed)),"positive exact original LAN proof");
+    ClassicOriginalMusicSelection.OutputLease lease=
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(lease!=null && ClassicOriginalMusicSelection.isOutputLeaseCurrent(lease),
+        "verified one-device output lease exists");
+    final int[] nativeClicks={0};
+    liveList.setOnItemClickListener((parent,row,pos,id)->{
+      nativeClicks[0]++;
+      check(pos==0 && id==1000,"original member identity unchanged");
+      check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(lease),
+        "stale Music grant revoked BEFORE native OEM handler");
+      check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
+        "LAN targets cannot survive original device action");
+      check(ClassicOriginalMusicSelection.djIntentCount()==1,
+        "only DJ consent/grant revoked, not user membership intention");
+    });
+    View liveRow=live.getView(0,null,liveList);
+    check(liveRow.performClick() && nativeClicks[0]==1,"original click delivered once");
+    check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(lease),
+        "OEM click permanently fences old output lease");
+    // Errors from OEM code must not leave a valid LAN grant or click mode.
+    liveList.setOnItemClickListener((parent,row,pos,id)->{
+      throw new IllegalStateException("synthetic original callback exception");
+    });
+    boolean exceptionSeen=false;
+    try { liveRow.performClick(); } catch(IllegalStateException expected) {
+      exceptionSeen=true;
+    }
+    check(exceptionSeen && ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
+        "original callback failure cannot revive a lamp grant");
+    check(live.getItem(0)==liveOEM.getItem(0),
+        "source click mode cleared even after OEM exception");
     // Real original app / unknown adapter ownership must always fall back.
     ListView originalPackage=new ListView(new OriginalContext());
     g unowned=new g(context,"x","y");

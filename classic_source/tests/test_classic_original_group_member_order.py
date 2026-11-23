@@ -23,6 +23,10 @@ class GroupAdapterOrderingSourceTests(unittest.TestCase):
         self.assertIn("listener.onItemClick(originalList,originalView,actual,",java)
         self.assertIn("originalList.getAdapter()!=this",java)
         self.assertIn("sourcePosition!=sourceIds.indexOf(stable)",java)
+        self.assertIn("ClassicOriginalMusicSelection.originalGroupRowAction();",java)
+        self.assertIn("static synchronized void originalGroupRowAction()",(
+            ROOT/"bridge/src/io/github/lxsdd/yeelightclassicdj/ui/ClassicOriginalMusicSelection.java"
+        ).read_text())
         self.assertIn("original.getItem(originalIndex(position))",java)
         self.assertIn("original.getItemId(originalIndex(position))",java)
         self.assertIn("original.isEnabled(originalIndex(position))",java)

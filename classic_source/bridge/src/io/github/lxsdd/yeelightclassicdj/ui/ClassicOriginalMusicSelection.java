@@ -251,6 +251,16 @@ public final class ClassicOriginalMusicSelection {
         revokeLan();
     }
 
+    /** An original GroupMusic row tap may modify membership or issue an OEM
+     * command. Withdraw our independent DJ participant/IP proof BEFORE handing
+     * the action to OEM. The user's DJ intention remains, but a fresh explicit
+     * read-only LAN confirmation is required to resume lighting.
+     */
+    static synchronized void originalGroupRowAction() {
+        ++outputRevision;
+        revokeLan();
+    }
+
     /** Install only a positive, single-scan proof produced by the LAN parser
      * while the original GroupMusic adapter and selected identity set still
      * match. No direct caller-supplied IP map is accepted here.
