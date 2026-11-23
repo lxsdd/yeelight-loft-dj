@@ -113,18 +113,35 @@ public final class GroupMemberOrderHarness {
     check(wrapped.markDjMember("a",true,verifiedGeneration),
       "original member opt-in through real production adapter");
     check(ClassicOriginalMusicSelection.djIntentCount()==1,"one marked member");
+    List<String> scannedOriginal=Arrays.asList("a","b","c","d","e","f");
+    check(wrapped.stillSameLanCandidate(verifiedGeneration,scannedOriginal,
+        Collections.singletonList("a")),
+        "unchanged original adapter and explicit DJ choice may be scanned");
+    check(!wrapped.stillSameLanCandidate(verifiedGeneration,scannedOriginal,
+        Arrays.asList("a","b")),"unselected device cannot be silently included");
+    check(!wrapped.stillSameLanCandidate(verifiedGeneration-1,scannedOriginal,
+        Collections.singletonList("a")),"old adapter revision cannot approve LAN");
     check(!wrapped.markDjMember("foreign",true,verifiedGeneration),
       "foreign member cannot be opted in");
     check(wrapped.markDjGroup(true,verifiedGeneration),"explicit group opt-in");
     check(ClassicOriginalMusicSelection.djIntentCount()==6,
       "all original J1 members recorded without 4-item ceiling");
+    check(!wrapped.stillSameLanCandidate(verifiedGeneration,scannedOriginal,
+        Collections.singletonList("a")),
+        "changed selection invalidates in-flight LAN result");
+    check(wrapped.stillSameLanCandidate(verifiedGeneration,scannedOriginal,
+        scannedOriginal),"current exact six-member choice may be checked");
     check(wrapped.markDjGroup(false,verifiedGeneration),"explicit clear");
+    check(!wrapped.stillSameLanCandidate(verifiedGeneration,scannedOriginal,
+        scannedOriginal),"cleared DJ intent revokes in-flight LAN proof");
     check(ClassicOriginalMusicSelection.djIntentCount()==0,"all cleared");
     check(wrapped.getItemId(0)==1000,"initial id and original click contract");
     check(wrapped.getView(0,null,view)!=null && original.lastDrawn==0,
       "real original row renderer invoked");
     long initial=wrapped.revision();
     check(wrapped.moveTo("e","b",initial),"real persisted explicit drop");
+    check(!wrapped.stillSameLanCandidate(initial,scannedOriginal,
+        Collections.singletonList("a")),"reordering invalidates pending scan revision");
     check(((e)wrapped.getItem(1)).key.equals("e"),"displayed item resolves source member");
     check(wrapped.getItemId(1)==1004,"index mapping preserves OEM item id");
     check(wrapped.getView(1,null,view)!=null && original.lastDrawn==4,

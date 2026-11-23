@@ -201,13 +201,32 @@ public final class ClassicOriginalGroupMemberOrder {
          * Verified identity and the exact current adapter set are checked both
          * BEFORE sending and AFTER returning from the asynchronous query.
          */
+        /**
+         * Match both the ORIGINAL adapter's live models and the user's
+         * explicit DJ choices. This runs on the UI thread before discovery
+         * and again AFTER the async scan, before installing a LAN grant.
+         * A reordered, refreshed or detached original view cannot revive
+         * old IP endpoints or silently authorize a different cohort.
+         */
+        synchronized boolean stillSameLanCandidate(long expected,
+                List<String> originalIds, List<String> chosen) {
+            return originalList.isAttachedToWindow() && refresh() &&
+                revision == expected && sourceIds.equals(originalIds) &&
+                chosen != null && !chosen.isEmpty() &&
+                chosen.equals(ClassicOriginalMusicSelection.selectedKeysForLanCheck(originalIds));
+        }
+
+        /** One user-approved read-only query; any intervening selection or
+         * adapter mutation revokes the candidate before and after network I/O.
+         * Only the foreground ORIGINAL GroupMusic host can accept its result.
+         */
         synchronized boolean requestLanCheck(long expected) {
-            if (!refresh() || revision!=expected) return false;
-            final ArrayList<String> originalIds=new ArrayList<>(sourceIds);
-            final java.util.List<String> chosen=
+            if (!refresh() || revision != expected) return false;
+            final ArrayList<String> originalIds = new ArrayList<>(sourceIds);
+            final List<String> chosen =
                 ClassicOriginalMusicSelection.selectedKeysForLanCheck(originalIds);
             if (chosen.isEmpty()) return false;
-            final Context context=originalList.getContext();
+            final Context context = originalList.getContext();
             new AlertDialog.Builder(context)
                 .setTitle("Ausgewählte DJ-Lampen prüfen")
                 .setMessage("Nur die ausdrücklich vorgemerkten Classic-Geräte werden " +
@@ -215,23 +234,31 @@ public final class ClassicOriginalGroupMemberOrder {
                     "Es wird keine Lampe eingeschaltet und keine Szene geändert.")
                 .setNegativeButton("Abbrechen",null)
                 .setPositiveButton("LAN nur lesen",(dialog,which)->{
+                    // The user may have changed a row while the dialog was open.
+                    if (!stillSameLanCandidate(expected,originalIds,chosen)) return;
                     new Thread(()->{
-                        boolean complete=false;
+                        ClassicOriginalLanDiscovery.VerifiedTargets proof = null;
                         try {
-                            String localIp=ClassicOriginalLanDiscovery.wifiPrivateIpv4();
-                            ClassicOriginalLanDiscovery.VerifiedTargets proof =
-                                ClassicOriginalLanDiscovery.discover(chosen,localIp);
-                            complete=ClassicOriginalMusicSelection.acceptLanProof(
-                                originalIds,proof);
+                            String localIp = ClassicOriginalLanDiscovery.wifiPrivateIpv4();
+                            proof = ClassicOriginalLanDiscovery.discover(chosen,localIp);
                         } catch (java.io.IOException | RuntimeException denied) {
-                            complete=false;
+                            // A failed scan can never install an endpoint grant.
                         }
-                        final boolean accepted=complete;
+                        final ClassicOriginalLanDiscovery.VerifiedTargets verified = proof;
                         new Handler(Looper.getMainLooper()).post(()->{
+                            // Original adapters are UI-owned; never read their
+                            // current models on the discovery thread.
+                            final boolean accepted;
+                            synchronized (OrderedGroupAdapter.this) {
+                                accepted = verified != null &&
+                                    stillSameLanCandidate(expected,originalIds,chosen) &&
+                                    ClassicOriginalMusicSelection.acceptLanProof(
+                                        originalIds,verified);
+                            }
                             if (originalList.isAttachedToWindow())
                                 Toast.makeText(context,accepted ?
                                     "DJ-LAN-Ziele geprüft · zur Music-Ansicht zurückkehren" :
-                                    "Keine eindeutige LAN-Zuordnung · Lampensteuerung gesperrt",
+                                    "Auswahl geändert oder LAN-Zuordnung unklar · Lichtausgabe gesperrt",
                                     Toast.LENGTH_LONG).show();
                         });
                     },"Classic-Original-LAN-Readonly").start();
