@@ -17,7 +17,7 @@ class NativePulseControlsTest(unittest.TestCase):
         self.assertIn("(s.pulseShapeIndex + 1) % 3", GALLERY)
         self.assertIn("pulseTempo.setEnabled(!s.beatPulse)", GALLERY)
         self.assertIn("pulseShape.setText(", GALLERY)
-        self.assertIn("ClassicSceneUiState.update(", INLINE)
+        self.assertIn("effectSettings.selectScene(index)", INLINE)
         self.assertNotIn("pulseModeButton", INLINE)
         self.assertNotIn("gainButton", INLINE)
         self.assertNotIn("EXTRA_PULSE_BPM", INLINE)

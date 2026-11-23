@@ -47,6 +47,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final ClassicDjPatternPreviewView preview;
     private final TextView[] choices = new TextView[NAMES.length];
     private final ClassicEffectOrder effectOrder;
+    private final ClassicEffectSettingsStore effectSettings;
     private final LinearLayout chips;
     private final int compactHeightPx;
     private final int detailsHeightPx;
@@ -82,6 +83,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         super(activity);
         host = activity;
         effectOrder = new ClassicEffectOrder(activity);
+        effectSettings = new ClassicEffectSettingsStore(activity);
+        effectSettings.restoreOnFirstHost();
         setTag("io.github.lxsdd.yeelightclassicdj.music.inline");
         setOrientation(VERTICAL);
         setBackgroundColor(Color.WHITE);
@@ -214,11 +217,11 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         if (index < 0 || index >= NAMES.length) return;
         // Atomic revisioned shared scene UI (same original SceneFragment); no
         // fabricated OEM scene record, remote effect or secondary database.
-        ClassicSceneUiState.Selection current = ClassicSceneUiState.snapshot();
-        if (!ClassicSceneUiState.update(index, current.speedIndex, current.reverse,
-                                        current.trailIndex, current.rangeIndex))
-            return;
+        if (!effectSettings.selectScene(index)) return;
+        boolean saved = effectSettings.saveExplicit(ClassicSceneUiState.snapshot());
         redraw();
+        if (!saved) stateNotice.setText(
+            "DJ-Effekt gewählt, aber lokale Speicherung fehlgeschlagen.");
     }
 
     private void redraw() {

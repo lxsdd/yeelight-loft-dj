@@ -59,7 +59,7 @@ class ClassicMusicSheetRegression(unittest.TestCase):
 
     def test_scene_state_is_original_gallery_shared_not_remote_record(self):
         self.assertIn("ClassicSceneUiState.snapshot()", INLINE)
-        self.assertIn("ClassicSceneUiState.update(", INLINE)
+        self.assertIn("effectSettings.selectScene(index)", INLINE)
         self.assertIn("shownRevision != ClassicSceneUiState.revision()", INLINE)
         self.assertIn("HorizontalScrollView effectsScroll", INLINE)
         self.assertIn("chip.setOnClickListener(v -> selectScene(choice))", INLINE)

@@ -14,7 +14,7 @@ class SpatialSettingsMusicUiTest(unittest.TestCase):
         self.assertIn("HorizontalScrollView effectsScroll", INLINE)
         self.assertIn("chip.setOnClickListener(v -> selectScene(choice))", INLINE)
         self.assertIn("chip.setSelected(active)", INLINE) if "chip.setSelected(active)" in INLINE else self.assertIn("v.setSelected(active)", INLINE)
-        self.assertIn("ClassicSceneUiState.update(", INLINE)
+        self.assertIn("effectSettings.selectScene(index)", INLINE)
         self.assertIn("preview.setMode(selected.scene", INLINE)
         self.assertIn("Math.sin(", MATH)
         self.assertIn("case 4:", MATH)

@@ -34,6 +34,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final Button[] cards = new Button[ClassicSceneUiState.SCENES.length];
     // Stable IDs belong to seven DJ effects, never the opaque OEM scene list.
     private final ClassicEffectOrder effectOrder;
+    private final ClassicEffectSettingsStore effectSettings;
     private final LinearLayout[] sceneRows = new LinearLayout[4];
     private Button dragSource;
     private final Button moveUp, moveDown, undoOrder;
@@ -151,6 +152,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private ClassicSceneGalleryPanel(Context context) {
         super(context);
         effectOrder = new ClassicEffectOrder(context);
+        effectSettings = new ClassicEffectSettingsStore(context);
+        effectSettings.restoreOnFirstHost();
         setOrientation(VERTICAL);
         setTag("io.github.lxsdd.yeelightclassicdj.scenes.inline");
         float density = getResources().getDisplayMetrics().density;
@@ -189,9 +192,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
                 Button card = new Button(context);
                 card.setAllCaps(false);
                 card.setOnClickListener(v -> {
-                    ClassicSceneUiState.Selection old = ClassicSceneUiState.snapshot();
-                    if (ClassicSceneUiState.update(index, old.speedIndex, old.reverse,
-                            old.trailIndex, old.rangeIndex)) onSceneEdited();
+                    if (effectSettings.selectScene(index)) onSceneEdited();
                 });
                 card.setOnLongClickListener(v -> startEffectDrag(card));
                 card.setOnDragListener((v, event) -> handleEffectDrop(card, event));
@@ -383,7 +384,11 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
      * Every Intent goes through the original single owner-fenced service.
      */
     private void onSceneEdited() {
+        // Persist only after the user's genuine original SceneFragment action.
+        // Failure cannot be misreported as a saved preference or disturb OEM data.
+        boolean saved = effectSettings.saveExplicit(ClassicSceneUiState.snapshot());
         redraw();
+        if (!saved) note.setText("DJ-Effekt geändert, lokale Speicherung fehlgeschlagen");
         String owner = ClassicDjService.ownerForInternal();
         if (owner == null || !ClassicDjService.hasActiveSession()) return;
         if (!CLONE_PACKAGE.equals(getContext().getPackageName())) return;

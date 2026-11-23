@@ -36,6 +36,32 @@ final class ClassicSceneUiState {
     }
 
     private static long revision;
+    // Process-local, first original host reads a verified private DJ profile.
+    // No implicit write occurs on attach/resume; later host recreation cannot
+    // reset a user's in-process edits or resurrect an old scene selection.
+    private static boolean initializedFromStore;
+
+    static synchronized void initializeFromStore(Selection stored) {
+        if (initializedFromStore) return;
+        initializedFromStore = true;
+        if (revision == 0 && stored != null) restoreSelection(stored);
+    }
+
+    static synchronized boolean restoreSelection(Selection chosen) {
+        if (chosen == null || chosen.scene < 0 || chosen.scene >= SCENES.length ||
+            chosen.speedIndex < 0 || chosen.speedIndex >= SPEEDS.length ||
+            chosen.trailIndex < 0 || chosen.trailIndex >= TRAILS.length ||
+            chosen.rangeIndex < 0 || chosen.rangeIndex >= RANGES.length ||
+            chosen.gainIndex < 0 || chosen.gainIndex >= 4 ||
+            chosen.pulseTempoIndex < 0 || chosen.pulseTempoIndex >= 5 ||
+            chosen.pulseShapeIndex < 0 || chosen.pulseShapeIndex >= 3)
+            return false;
+        current = new Selection(chosen.scene, chosen.speedIndex, chosen.reverse,
+            chosen.trailIndex, chosen.rangeIndex, chosen.gainIndex, chosen.beatPulse,
+            chosen.pulseTempoIndex, chosen.pulseShapeIndex);
+        revision++;
+        return true;
+    }
     private static Selection current =
         new Selection(0, 2, false, 2, 0, 1, true, 2, 2);
     private ClassicSceneUiState() {}
