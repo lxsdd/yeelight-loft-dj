@@ -77,6 +77,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private int shownDjIntentCount = Integer.MIN_VALUE;
     private int shownLanVerifiedCount = Integer.MIN_VALUE;
     private boolean shownDeviceWitness;
+    private boolean shownLightRunning;
+    private boolean shownLightConfirmed;
     private int activeScene = -1;
     interface DockHeightListener { void onHeightChanged(int pixels); }
     private DockHeightListener dockHeightListener;
@@ -565,12 +567,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             ClassicOriginalMusicSelection.resolvedOriginalLanCount();
         if (shownDeviceWitness != witnessed || shownGroupCount != members ||
             shownVerifiedIdentityCount != verifiedIds || shownDjIntentCount != marked ||
-            shownLanVerifiedCount != verifiedLan) {
+            shownLanVerifiedCount != verifiedLan || shownLightRunning != runningOutput ||
+            shownLightConfirmed != lightConfirmed) {
             shownDeviceWitness = witnessed;
             shownGroupCount = members;
             shownVerifiedIdentityCount = verifiedIds;
             shownDjIntentCount = marked;
             shownLanVerifiedCount = verifiedLan;
+            shownLightRunning = runningOutput;
+            shownLightConfirmed = lightConfirmed;
             originalMusicSelectionStatus.setText(
                 runningOutput ? (lightConfirmed ?
                     "Original-Classic Live-DJ: " + live.size() +
