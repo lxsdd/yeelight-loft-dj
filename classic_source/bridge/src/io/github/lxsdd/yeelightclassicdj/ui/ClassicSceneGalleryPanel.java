@@ -1,6 +1,10 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
 import android.content.Context;
+import android.content.ClipData;
+import android.os.Build;
+import android.view.DragEvent;
+import java.util.List;
 import android.content.Intent;
 import android.view.Gravity;
 import android.view.View;
@@ -28,6 +32,11 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final Button header;
     private final ScrollView details;
     private final Button[] cards = new Button[ClassicSceneUiState.SCENES.length];
+    // Stable IDs belong to seven DJ effects, never the opaque OEM scene list.
+    private final ClassicEffectOrder effectOrder;
+    private final LinearLayout[] sceneRows = new LinearLayout[4];
+    private Button dragSource;
+    private final Button moveUp, moveDown, undoOrder;
     private final Button speed, direction, trail, brightness;
     private final LinearLayout spatialEditor, pulseEditor;
     private final Button pulseMode, pulseTempo, pulseShape;
@@ -141,6 +150,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
 
     private ClassicSceneGalleryPanel(Context context) {
         super(context);
+        effectOrder = new ClassicEffectOrder(context);
         setOrientation(VERTICAL);
         setTag("io.github.lxsdd.yeelightclassicdj.scenes.inline");
         float density = getResources().getDisplayMetrics().density;
@@ -172,6 +182,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         for (int rowIndex = 0; rowIndex < 4; rowIndex++) {
             LinearLayout row = new LinearLayout(context);
             row.setOrientation(HORIZONTAL);
+            sceneRows[rowIndex] = row;
             int first = rowIndex * 2;
             for (int i = first; i < Math.min(first + 2, cards.length); i++) {
                 final int index = i;
@@ -182,11 +193,42 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
                     if (ClassicSceneUiState.update(index, old.speedIndex, old.reverse,
                             old.trailIndex, old.rangeIndex)) onSceneEdited();
                 });
+                card.setOnLongClickListener(v -> startEffectDrag(card));
+                card.setOnDragListener((v, event) -> handleEffectDrop(card, event));
                 cards[i] = card;
                 row.addView(card, new LinearLayout.LayoutParams(0, -2, 1f));
             }
             content.addView(row);
         }
+        // True SceneFragment in-place sort; explicit gesture -> existing
+        // clone-only stable-ID persistence. Never edits OEM scene records.
+        renderEffectCards();
+        LinearLayout orderActions = new LinearLayout(context);
+        orderActions.setOrientation(HORIZONTAL);
+        moveUp = new Button(context);
+        moveUp.setAllCaps(false);
+        moveUp.setText("↑");
+        moveUp.setContentDescription("Gewählten DJ-Lichteffekt nach oben verschieben");
+        moveUp.setOnClickListener(v -> moveSelectedEffect(-1));
+        orderActions.addView(moveUp, new LinearLayout.LayoutParams(0, -2, 1f));
+        moveDown = new Button(context);
+        moveDown.setAllCaps(false);
+        moveDown.setText("↓");
+        moveDown.setContentDescription("Gewählten DJ-Lichteffekt nach unten verschieben");
+        moveDown.setOnClickListener(v -> moveSelectedEffect(1));
+        orderActions.addView(moveDown, new LinearLayout.LayoutParams(0, -2, 1f));
+        undoOrder = new Button(context);
+        undoOrder.setAllCaps(false);
+        undoOrder.setText("Sortierung zurück");
+        undoOrder.setContentDescription("Letzte eigene DJ-Lichteffekt-Sortierung rückgängig");
+        undoOrder.setOnClickListener(v -> {
+            if (effectOrder.undo()) {
+                renderEffectCards();
+                redraw();
+            }
+        });
+        orderActions.addView(undoOrder, new LinearLayout.LayoutParams(0, -2, 2f));
+        content.addView(orderActions);
         spatialEditor = new LinearLayout(context);
         spatialEditor.setOrientation(VERTICAL);
         LinearLayout row = new LinearLayout(context);
@@ -273,6 +315,68 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         redraw();
     }
 
+    private boolean startEffectDrag(Button card) {
+        if (card == null || card.getParent() == null) return false;
+        dragSource = card;
+        // Empty local payload; exact source View identity proves ownership.
+        ClipData data = ClipData.newPlainText("loft-dj-local-effect", "");
+        boolean started = Build.VERSION.SDK_INT >= 24
+            ? card.startDragAndDrop(data, new View.DragShadowBuilder(card), card, 0)
+            : card.startDrag(data, new View.DragShadowBuilder(card), card, 0);
+        if (!started) dragSource = null;
+        return started;
+    }
+
+    private boolean handleEffectDrop(Button target, DragEvent event) {
+        if (event == null) return false;
+        if (event.getAction() == DragEvent.ACTION_DRAG_STARTED)
+            return dragSource != null && event.getLocalState() == dragSource;
+        if (event.getAction() == DragEvent.ACTION_DRAG_ENDED) {
+            dragSource = null;
+            return true;
+        }
+        if (event.getAction() == DragEvent.ACTION_DROP) {
+            if (dragSource == null || event.getLocalState() != dragSource)
+                return false;
+            int sourceIndex = -1, targetIndex = -1;
+            for (int i = 0; i < cards.length; i++) {
+                if (cards[i] == dragSource) sourceIndex = i;
+                if (cards[i] == target) targetIndex = i;
+            }
+            if (sourceIndex < 0 || targetIndex < 0) return false;
+            int destination = effectOrder.order().indexOf(
+                ClassicSceneUiState.SCENES[targetIndex]);
+            if (!effectOrder.move(ClassicSceneUiState.SCENES[sourceIndex], destination))
+                return false;
+            renderEffectCards();
+            redraw();
+            return true;
+        }
+        return dragSource != null && event.getLocalState() == dragSource;
+    }
+
+    private void moveSelectedEffect(int direction) {
+        ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
+        if (effectOrder.moveRelative(ClassicSceneUiState.SCENES[s.scene], direction)) {
+            renderEffectCards();
+            redraw();
+        }
+    }
+
+    private void renderEffectCards() {
+        List<String> order = effectOrder.order();
+        if (order.size() != cards.length) return;
+        for (LinearLayout row : sceneRows) row.removeAllViews();
+        int position = 0;
+        for (String id : order) {
+            int index = ClassicEffectOrder.sceneIndex(id);
+            if (index < 0 || cards[index] == null) return;
+            sceneRows[position / 2].addView(cards[index],
+                new LinearLayout.LayoutParams(0, -2, 1f));
+            position++;
+        }
+    }
+
     /**
      * An explicit tap may update an already-owned internal-audio session.
      * There is no OEM participant lookup and NO session/transport start.
@@ -320,9 +424,15 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     }
 
     private void redraw() {
+        if (effectOrder.refresh()) renderEffectCards();
         ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
         note.setText(ClassicSceneUiState.LABELS[s.scene] + " · " +
             EXPLANATIONS[s.scene] + " · ohne verifizierte Lampenauswahl nur Vorschau");
+        List<String> orderedEffects = effectOrder.order();
+        int selectedPosition = orderedEffects.indexOf(ClassicSceneUiState.SCENES[s.scene]);
+        moveUp.setEnabled(selectedPosition > 0);
+        moveDown.setEnabled(selectedPosition >= 0 &&
+            selectedPosition < orderedEffects.size() - 1);
         for (int i = 0; i < cards.length; i++) {
             cards[i].setSelected(i == s.scene);
             cards[i].setText((i == s.scene ? "✓ " : "") + ClassicSceneUiState.LABELS[i]);

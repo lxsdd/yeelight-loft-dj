@@ -46,6 +46,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final TextView stateNotice;
     private final ClassicDjPatternPreviewView preview;
     private final TextView[] choices = new TextView[NAMES.length];
+    private final ClassicEffectOrder effectOrder;
+    private final LinearLayout chips;
     private final int compactHeightPx;
     private final int detailsHeightPx;
     private boolean attached;
@@ -79,6 +81,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     public ClassicMusicInlineControls(Activity activity) {
         super(activity);
         host = activity;
+        effectOrder = new ClassicEffectOrder(activity);
         setTag("io.github.lxsdd.yeelightclassicdj.music.inline");
         setOrientation(VERTICAL);
         setBackgroundColor(Color.WHITE);
@@ -123,7 +126,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
 
         HorizontalScrollView effectsScroll = new HorizontalScrollView(activity);
         effectsScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout chips = new LinearLayout(activity);
+        chips = new LinearLayout(activity);
         chips.setOrientation(HORIZONTAL);
         for (int i = 0; i < NAMES.length; i++) {
             final int choice = i;
@@ -140,6 +143,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         }
         effectsScroll.addView(chips);
         content.addView(effectsScroll);
+        renderEffectChips();
 
         preview = new ClassicDjPatternPreviewView(activity);
         LinearLayout.LayoutParams pv = new LinearLayout.LayoutParams(-1, dp(48));
@@ -192,6 +196,20 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         notifyDockHeight();
     }
 
+    /** Original MusicActivity reads SceneFragment's DJ effect order without
+     * opening another audio source or writing original OEM scenes.
+     */
+    private void renderEffectChips() {
+        chips.removeAllViews();
+        for (String id : effectOrder.order()) {
+            int index = ClassicEffectOrder.sceneIndex(id);
+            if (index < 0 || choices[index] == null) continue;
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
+            params.setMargins(0, 0, dp(7), 0);
+            chips.addView(choices[index], params);
+        }
+    }
+
     private void selectScene(int index) {
         if (index < 0 || index >= NAMES.length) return;
         // Atomic revisioned shared scene UI (same original SceneFragment); no
@@ -204,6 +222,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     private void redraw() {
+        if (effectOrder.refresh()) renderEffectChips();
         ClassicSceneUiState.Selection selected = ClassicSceneUiState.snapshot();
         boolean changed = shownRevision != ClassicSceneUiState.revision() ||
                           selected.scene != activeScene;

@@ -424,6 +424,33 @@ public final class ClassicOriginalDspAnalysis implements ClassicOriginalMusicAud
 }''',
 })
 
+# Java synthetic framework API only; actual Android SDK compiles production.
+STUBS.update({
+'android/content/ClipData.java': '''package android.content;
+public class ClipData {
+ public static ClipData newPlainText(String label,String data){return new ClipData();}
+}''',
+'android/view/DragEvent.java': '''package android.view;
+public class DragEvent {
+ public static final int ACTION_DRAG_STARTED=1,ACTION_DROP=3,ACTION_DRAG_ENDED=4;
+ public int getAction(){return 0;}
+ public Object getLocalState(){return null;}
+}''',
+})
+STUBS['android/view/View.java'] = STUBS['android/view/View.java'].replace(
+ ' public interface OnClickListener {void onClick(View v);}',
+ ''' public void setOnLongClickListener(OnLongClickListener l){}
+ public void setOnDragListener(OnDragListener l){}
+ public boolean startDrag(android.content.ClipData data,DragShadowBuilder b,Object state,int flags){return true;}
+ public boolean startDragAndDrop(android.content.ClipData data,DragShadowBuilder b,Object state,int flags){return true;}
+ public static class DragShadowBuilder {public DragShadowBuilder(View v){}}
+ public interface OnLongClickListener {boolean onLongClick(View v);}
+ public interface OnDragListener {boolean onDrag(View v,DragEvent e);}
+ public interface OnClickListener {void onClick(View v);}''')
+STUBS['android/widget/LinearLayout.java'] = STUBS['android/widget/LinearLayout.java'].replace(
+ ' public void addView(android.view.View view,LayoutParams p){}',
+ ' public void addView(android.view.View view,LayoutParams p){} public void removeAllViews(){}')
+
 class BridgeCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('javac'), 'javac not present')
     def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):

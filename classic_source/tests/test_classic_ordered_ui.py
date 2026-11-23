@@ -7,7 +7,7 @@ import unittest
 
 BASE = Path(__file__).resolve().parents[1] / "bridge/src/io/github/lxsdd/yeelightclassicdj/ui"
 SRC = [BASE / (name + ".java") for name in
-       ("ClassicOrderPolicy", "ClassicLocalOrderStore", "ClassicDragDropController")]
+       ("ClassicOrderPolicy", "ClassicLocalOrderStore", "ClassicDragDropController", "ClassicEffectOrder", "ClassicSceneUiState")]
 CONTEXT = r'''package android.content;
 public class Context {
  public static final int MODE_PRIVATE=0;
@@ -186,6 +186,40 @@ public class ClassicOrderHarness {
     check(undo.shown.equals(list("A","B","C")),"recovered order is exact");
     check(ctx.prefs.map.size()>3,"independent scopes persist simultaneously");
 
+    // Real owned DJ card integration. OEM scene records and users' devices
+    // are never modified, and no read/restart causes a new preference write.
+    int writesBeforeEffects=ctx.prefs.writes;
+    ClassicEffectOrder effects=new ClassicEffectOrder(ctx);
+    check(effects.order().equals(list("SPECTRUM","AMBIENT","BEAT","PULSE",
+        "SCANNER","METEOR","WAVE")),"default original DJ effect IDs");
+    check(ctx.prefs.writes==writesBeforeEffects,"initial read never writes");
+    check(effects.move("WAVE",0),"long-drop moves real card");
+    check(effects.order().get(0).equals("WAVE"),"new gallery order");
+    check(ctx.prefs.writes==writesBeforeEffects+1,"exact one user preference commit");
+    ClassicEffectOrder music=new ClassicEffectOrder(ctx);
+    check(music.order().equals(effects.order()),"original music shares persisted order");
+    int safeWrites=ctx.prefs.writes;
+    check(!music.move("foreign-scene",0),"unverified OEM scene rejected");
+    check(!music.move("WAVE",-1),"out-of-range rejected");
+    check(!music.moveRelative("WAVE",-1),"cannot move top element");
+    check(ctx.prefs.writes==safeWrites,"invalid action never persists");
+    check(effects.moveRelative("WAVE",1),"accessible action uses same controller");
+    check(effects.order().get(1).equals("WAVE"),"accessibility changes real card");
+    check(!music.move("PULSE",0),"stale other UI cannot overwrite");
+    check(music.refresh(),"other UI detects external reorder");
+    check(music.order().equals(effects.order()),"exact updated shared order");
+    check(effects.undo(),"single-use undo accepted");
+    check(effects.order().get(0).equals("WAVE"),"undo restores prior order");
+    check(!effects.undo(),"second undo rejected");
+    check(music.refresh(),"music sees undo without restarting capture");
+    ctx.prefs.allow=false;
+    check(!effects.move("WAVE",2),"write-failure returns false");
+    check(effects.order().get(0).equals("WAVE"),"failed persist keeps visible order");
+    ctx.prefs.allow=true;
+    check(ClassicEffectOrder.sceneIndex("METEOR")==5,"stable symbolic ID");
+    check(ClassicEffectOrder.sceneIndex("OEM-private-id")==-1,"no OEM scene ABI guess");
+    check(new ClassicEffectOrder(ctx).order().get(0).equals("WAVE"),
+        "order survives recreation");
     System.out.println("PASS actual Classic order, persistence, offline, scopes, stale, accessible up/down, exact Undo, safety");
   }
 }
