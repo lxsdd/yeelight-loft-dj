@@ -213,7 +213,8 @@ public final class ClassicOriginalGroupMemberOrder {
             return originalList.isAttachedToWindow() && refresh() &&
                 revision == expected && sourceIds.equals(originalIds) &&
                 chosen != null && !chosen.isEmpty() &&
-                chosen.equals(ClassicOriginalMusicSelection.selectedKeysForLanCheck(originalIds));
+                chosen.equals(ClassicOriginalMusicSelection.selectedKeysForLanCheck(
+                    originalIds,shownIds));
         }
 
         /** One user-approved read-only query; any intervening selection or
@@ -224,7 +225,8 @@ public final class ClassicOriginalGroupMemberOrder {
             if (!refresh() || revision != expected) return false;
             final ArrayList<String> originalIds = new ArrayList<>(sourceIds);
             final List<String> chosen =
-                ClassicOriginalMusicSelection.selectedKeysForLanCheck(originalIds);
+                ClassicOriginalMusicSelection.selectedKeysForLanCheck(originalIds,
+                    new ArrayList<>(shownIds));
             if (chosen.isEmpty()) return false;
             final Context context = originalList.getContext();
             new AlertDialog.Builder(context)
@@ -253,7 +255,7 @@ public final class ClassicOriginalGroupMemberOrder {
                                 accepted = verified != null &&
                                     stillSameLanCandidate(expected,originalIds,chosen) &&
                                     ClassicOriginalMusicSelection.acceptLanProof(
-                                        originalIds,verified);
+                                        originalIds,new ArrayList<>(shownIds),verified);
                             }
                             if (originalList.isAttachedToWindow())
                                 Toast.makeText(context,accepted ?

@@ -206,13 +206,38 @@ public final class ClassicOriginalMusicSelection {
     }
 
     /** Exact USER intent is never automatically a LAN transport authority. */
+    /** Display order is user-controlled; the OEM adapter order is used ONLY
+     * to verify membership. Both lists must describe the same unique members.
+     * Spatial Scanner/Meteor/Wave order must not silently revert to J1() order.
+     */
+    private static boolean validDisplayOrder(java.util.List<String> originalIds,
+                                             java.util.List<String> displayIds) {
+        return originalIds != null && displayIds != null &&
+            displayIds.size() == originalIds.size() &&
+            new java.util.HashSet<>(displayIds).size() == displayIds.size() &&
+            new java.util.HashSet<>(displayIds).equals(
+                new java.util.HashSet<>(originalIds));
+    }
+
     static synchronized java.util.List<String> selectedKeysForLanCheck(
-            java.util.List<String> adapterIds) {
-        long now=monotonicMs();
-        if (!matchesCurrentOriginalMemberSetAt(adapterIds,now) ||
-            djIntentKeys.isEmpty()) return java.util.Collections.emptyList();
+            java.util.List<String> originalIds) {
+        return selectedKeysForLanCheck(originalIds,originalIds);
+    }
+
+    static synchronized java.util.List<String> selectedKeysForLanCheck(
+            java.util.List<String> originalIds, java.util.List<String> displayIds) {
+        return selectedKeysForLanCheckAt(originalIds,displayIds,monotonicMs());
+    }
+
+    static synchronized java.util.List<String> selectedKeysForLanCheckAt(
+            java.util.List<String> originalIds, java.util.List<String> displayIds,
+            long nowMs) {
+        if (!matchesCurrentOriginalMemberSetAt(originalIds,nowMs) ||
+            !validDisplayOrder(originalIds,displayIds) || djIntentKeys.isEmpty())
+            return java.util.Collections.emptyList();
         java.util.ArrayList<String> ordered=new java.util.ArrayList<>();
-        for (String key:adapterIds) if (djIntentKeys.contains(key)) ordered.add(key);
+        for (String key:displayIds)
+            if (djIntentKeys.contains(key)) ordered.add(key);
         return ordered;
     }
 
@@ -223,13 +248,31 @@ public final class ClassicOriginalMusicSelection {
     static synchronized boolean acceptLanProof(
             java.util.List<String> originalAdapterIds,
             ClassicOriginalLanDiscovery.VerifiedTargets proof) {
-        return acceptLanProofAt(originalAdapterIds,proof,monotonicMs());
+        return acceptLanProof(originalAdapterIds,originalAdapterIds,proof);
+    }
+
+    /** Original membership and displayed spatial order are independently
+     * verified before a user-approved LAN proof becomes a Music output lease.
+     */
+    static synchronized boolean acceptLanProof(
+            java.util.List<String> originalAdapterIds,
+            java.util.List<String> displayIds,
+            ClassicOriginalLanDiscovery.VerifiedTargets proof) {
+        return acceptLanProofAt(originalAdapterIds,displayIds,proof,monotonicMs());
     }
 
     static synchronized boolean acceptLanProofAt(
             java.util.List<String> originalAdapterIds,
             ClassicOriginalLanDiscovery.VerifiedTargets proof,long now) {
+        return acceptLanProofAt(originalAdapterIds,originalAdapterIds,proof,now);
+    }
+
+    static synchronized boolean acceptLanProofAt(
+            java.util.List<String> originalAdapterIds,
+            java.util.List<String> displayIds,
+            ClassicOriginalLanDiscovery.VerifiedTargets proof,long now) {
         if (!matchesCurrentOriginalMemberSetAt(originalAdapterIds,now) ||
+            !validDisplayOrder(originalAdapterIds,displayIds) ||
             proof==null || !proof.freshAt(now) || djIntentKeys.isEmpty())
             return false;
         java.util.Map<String,String> exact=proof.copy();
@@ -241,7 +284,10 @@ public final class ClassicOriginalMusicSelection {
             if (!ClassicOriginalLanDiscovery.privateIpv4(ip)) return false;
         ++outputRevision;
         revokeLan();
-        for (String id : originalAdapterIds)
+        // LinkedHashMap iteration order is the ACTUAL device choreography.
+        // Original membership still controls authorization; only the already
+        // displayed, explicit local DnD order controls spatial progression.
+        for (String id : displayIds)
             if (exact.containsKey(id)) lanTargets.put(id,exact.get(id));
         lanGroupOwner=selectedId;
         lanBoundAtMs=now;

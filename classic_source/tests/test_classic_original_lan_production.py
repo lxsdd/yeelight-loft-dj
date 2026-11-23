@@ -120,8 +120,33 @@ public final class OriginalLanProofHarness {
     ClassicOriginalMusicSelection.markDjIntentAt(c,false,1011);
     ok(ClassicOriginalMusicSelection.acceptLanProofAt(originalIds,proof,1012),
        "re-confirm original pair");
+    // A DnD display permutation MUST become the actual ordered Music cohort.
+    // Original J1() membership still authorizes the same identities; it
+    // must not silently override scanner/wave direction during LAN binding.
+    List<String> displayOrder=Arrays.asList(c,b,a);
+    ok(ClassicOriginalMusicSelection.selectedKeysForLanCheckAt(
+      originalIds,displayOrder,1012).equals(Arrays.asList(b,a)),
+      "spatial participants follow displayed local DnD order");
+    ok(ClassicOriginalMusicSelection.selectedKeysForLanCheckAt(
+      originalIds,Arrays.asList(a,a,c),1012).isEmpty(),
+      "duplicate display identity cannot grant Music output");
+    ok(ClassicOriginalMusicSelection.selectedKeysForLanCheckAt(
+      originalIds,Arrays.asList(a,b,"foreign"),1012).isEmpty(),
+      "foreign display identity cannot grant Music output");
+    ok(!ClassicOriginalMusicSelection.acceptLanProofAt(
+      originalIds,Arrays.asList(a,b,b),proof,1012),"duplicate order rejected");
+    ok(!ClassicOriginalMusicSelection.acceptLanProofAt(
+      originalIds,Arrays.asList(a,b,"foreign"),proof,1012),"foreign order rejected");
+    ok(ClassicOriginalMusicSelection.acceptLanProofAt(
+      originalIds,displayOrder,proof,1012),"original proof accepted in DnD order");
+    ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1012).equals(
+      Arrays.asList("192.168.10.22","192.168.10.21")),
+      "Music output IP order matches the DnD display, not the OEM J1 order");
     ClassicOriginalMusicSelection.OutputLease beforeRefresh =
       ClassicOriginalMusicSelection.leaseForOriginalOutputAt(1012);
+    ok(beforeRefresh.targets().equals(Arrays.asList(
+      "192.168.10.22","192.168.10.21")),
+      "immutable output lease preserves exact visual choreography");
     ClassicOriginalMusicSelection.observeGroupMembersAt(
       Arrays.asList(member(a),member(c)),1013);
     ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1014).isEmpty(),

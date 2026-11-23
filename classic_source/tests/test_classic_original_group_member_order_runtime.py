@@ -147,6 +147,16 @@ public final class GroupMemberOrderHarness {
     check(wrapped.getView(1,null,view)!=null && original.lastDrawn==4,
       "original onClick closure binds actual moved member");
     check(original.items.get(1).key.equals("b"),"original membership and order untouched");
+    // The original J1() list remains in OEM order, but explicit DJ choices
+    // must follow the dragged DISPLAY order for the real spatial light engine.
+    long reordered=wrapped.revision();
+    check(wrapped.markDjMember("b",true,reordered),"select original B");
+    check(wrapped.markDjMember("e",true,reordered),"select moved original E");
+    check(wrapped.stillSameLanCandidate(reordered,scannedOriginal,
+        Arrays.asList("e","b")),"LAN scan uses DnD lamp order");
+    check(!wrapped.stillSameLanCandidate(reordered,scannedOriginal,
+        Arrays.asList("b","e")),"old OEM physical order rejected");
+    check(wrapped.markDjGroup(false,reordered),"clear test DJ choices");
     check(!wrapped.moveTo("c","a",initial),"old generation fenced");
     check(wrapped.undo(wrapped.revision()),"last user drop undone");
     check(((e)wrapped.getItem(1)).key.equals("b"),"original order restored");
