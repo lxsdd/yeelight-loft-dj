@@ -167,14 +167,14 @@ class CheckpointRuntime : DjRuntime {
 
     override fun start(context: Context, source: String, selectedLampIps: List<String>, listener: DjRuntime.Listener) {
         require(source == "microphone") { "Unapproved microphone source" }
-        startCapture(selectedLampIps, listener) { inputFactory() }
+        startCapture(selectedLampIps, listener, sourceInput = { inputFactory() })
     }
 
     override fun startInternal(context: Context, projection: MediaProjection,
                                selectedLampIps: List<String>, listener: DjRuntime.Listener) {
-        startCapture(selectedLampIps, listener) {
+        startCapture(selectedLampIps, listener, sourceInput = {
             ClassicPlaybackCaptureInput.open(projection, sampleRate = SAMPLE_RATE)
-        }
+        })
     }
 
     /** The original OEM Music source must verify the concrete session ID
@@ -183,7 +183,7 @@ class CheckpointRuntime : DjRuntime {
     override fun startVisualizer(context: Context, audioSessionId: Int,
                                  selectedLampIps: List<String>, listener: DjRuntime.Listener) {
         require(audioSessionId >= 0) { "Unverified original audio-session ID" }
-        startCapture(selectedLampIps, listener) { visualizerFactory(audioSessionId) }
+        startCapture(selectedLampIps, listener, sourceInput = { visualizerFactory(audioSessionId) })
     }
 
     /**
