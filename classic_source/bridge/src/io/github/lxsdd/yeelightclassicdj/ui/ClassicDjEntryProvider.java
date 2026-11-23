@@ -131,6 +131,9 @@ public final class ClassicDjEntryProvider extends ContentProvider
         if (!(app instanceof Application)) return false;
         try {
             ((Application) app).registerActivityLifecycleCallbacks(this);
+            // Original Scene/Room model-list order uses the same clone-private
+            // preferences; no extra Activity, database or OEM data provider.
+            ClassicOriginalListOrder.registerCloneContext(app);
             probe("ENTRY_PROVIDER_REGISTERED");
             return true;
         } catch (RuntimeException ignored) {
