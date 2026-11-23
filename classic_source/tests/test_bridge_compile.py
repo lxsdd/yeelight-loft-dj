@@ -409,6 +409,21 @@ public class HorizontalScrollView extends android.view.View {
 }''',
 })
 
+# Java-only synthetic host compilation cannot resolve Kotlin-built classes.
+# The real Android SDK bridge compiles the production Kotlin implementation.
+# This stub checks only Java source ABI at its actual constructor boundary.
+STUBS.update({
+'android/media/AudioRecord.java': '''package android.media;
+public class AudioRecord { public int getSampleRate() { return 16000; } }''',
+'io/github/lxsdd/yeelightclassicdj/runtime/ClassicOriginalDspAnalysis.java':
+'''package io.github.lxsdd.yeelightclassicdj.runtime;
+import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal;
+public final class ClassicOriginalDspAnalysis implements ClassicOriginalMusicAudioSignal.Analyzer {
+ public ClassicOriginalMusicAudioSignal.Frame onPcm(short[] data,int size,int rate,long at) { return null; }
+ public ClassicOriginalMusicAudioSignal.Frame onFft(byte[] data,int rate,long at) { return null; }
+}''',
+})
+
 class BridgeCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('javac'), 'javac not present')
     def test_all_original_bridge_java_sources_typecheck_against_synthetic_api(self):

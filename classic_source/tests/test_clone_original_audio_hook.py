@@ -81,6 +81,9 @@ public final class OriginalMusicAudioHarness {
     ClassicOriginalMusicAudioSignal.observedOriginalMicRate(new android.media.AudioRecord());
     ClassicOriginalMusicAudioSignal.observedOriginalMicSamples(pcm(1024));
     check(first.pcmCalls == 1,"one real original mic callback");
+    // The previous callback used a genuine monotonic clock; reset ownership
+    // before injecting deterministic synthetic timestamps for source gating.
+    ClassicOriginalMusicAudioSignal.installAnalyzer(first);
     ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1000);
     ClassicOriginalMusicAudioSignal.Snapshot s =
         ClassicOriginalMusicAudioSignal.snapshotAt(1010);
