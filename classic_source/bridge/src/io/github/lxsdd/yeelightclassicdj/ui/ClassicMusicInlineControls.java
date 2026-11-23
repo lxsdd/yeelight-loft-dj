@@ -270,7 +270,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     (verifiedIds < 0 ? "Geräteidentitäten ungeprüft" :
                      verifiedIds + " Geräteidentitäten gelesen") +
                     " · " + marked + " für DJ vorgemerkt" +
-                     " · LAN-/Lampenfreigabe weiterhin gesperrt.");
+                     " · keine bestätigte Auswahl für Lampensteuerung; " +
+                     "LAN-/Lampenfreigabe weiterhin gesperrt.");
         }
         ClassicOriginalMusicAudioSignal.Snapshot audio =
             ClassicOriginalMusicAudioSignal.snapshot();

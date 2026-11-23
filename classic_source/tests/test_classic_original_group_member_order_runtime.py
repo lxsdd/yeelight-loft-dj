@@ -105,7 +105,20 @@ public final class GroupMemberOrderHarness {
     ClassicOriginalGroupMemberOrder.installGroupAdapter(view,original);
     ClassicOriginalGroupMemberOrder.OrderedGroupAdapter wrapped=installed(view);
     check(wrapped.getCount()==6,"all original members");
+    ClassicOriginalMusicSelection.observedOriginalGroupMembers(original.items);
     check(wrapped.getItem(0)==original.getItem(0),"initial identity and item object");
+    check(ClassicOriginalMusicSelection.djIntentCount()==0,"no implicit opt in");
+    long verifiedGeneration=wrapped.revision();
+    check(wrapped.markDjMember("a",true,verifiedGeneration),
+      "original member opt-in through real production adapter");
+    check(ClassicOriginalMusicSelection.djIntentCount()==1,"one marked member");
+    check(!wrapped.markDjMember("foreign",true,verifiedGeneration),
+      "foreign member cannot be opted in");
+    check(wrapped.markDjGroup(true,verifiedGeneration),"explicit group opt-in");
+    check(ClassicOriginalMusicSelection.djIntentCount()==6,
+      "all original J1 members recorded without 4-item ceiling");
+    check(wrapped.markDjGroup(false,verifiedGeneration),"explicit clear");
+    check(ClassicOriginalMusicSelection.djIntentCount()==0,"all cleared");
     check(wrapped.getItemId(0)==1000,"initial id and original click contract");
     check(wrapped.getView(0,null,view)!=null && original.lastDrawn==0,
       "real original row renderer invoked");
