@@ -21,6 +21,20 @@ public final class ClassicOriginalMusicSelection {
     // Session-only, explicitly chosen OEM identities. NEVER LAN authorization.
     private static final java.util.LinkedHashSet<String> djIntentKeys =
         new java.util.LinkedHashSet<>();
+    // Ephemeral, exact LAN discovery proof for EXPLICITLY chosen OEM members.
+    // Unlike G()/T(), these are actual IP endpoints; no persistence or ID
+    // heuristics. A closed GroupMusic Activity keeps a short-lived snapshot
+    // only for the returning original MusicActivity.
+    private static final java.util.LinkedHashMap<String,String> lanTargets =
+        new java.util.LinkedHashMap<>();
+    private static String lanGroupOwner;
+    private static long lanBoundAtMs = Long.MIN_VALUE;
+    static final long LAN_FRESH_MS = 90_000L;
+    private static void revokeLan() {
+        lanTargets.clear();
+        lanGroupOwner = null;
+        lanBoundAtMs = Long.MIN_VALUE;
+    }
 
     private ClassicOriginalMusicSelection() {}
 
@@ -81,7 +95,12 @@ public final class ClassicOriginalMusicSelection {
         // return screen, but reject late refreshes from a destroyed host.
         if (!groupEntryFreshAt(nowMs)) return;
         // Only a bounded display witness is retained, never an authorized target.
+        java.util.Set<String> before = new java.util.HashSet<>(
+            originalMemberKeys.keysForDisplay());
         originalMemberKeys = ClassicOriginalGroupMemberWitness.inspect(members);
+        if (!originalMemberKeys.identitiesVerified ||
+            !before.equals(new java.util.HashSet<>(originalMemberKeys.keysForDisplay())))
+            revokeLan();
         if (originalMemberKeys.identitiesVerified)
             djIntentKeys.retainAll(originalMemberKeys.keysForDisplay());
         else djIntentKeys.clear();
@@ -150,6 +169,61 @@ public final class ClassicOriginalMusicSelection {
             markAllDjIntentAt(include,nowMs);
     }
 
+    /** Exact USER intent is never automatically a LAN transport authority. */
+    static synchronized java.util.List<String> selectedKeysForLanCheck(
+            java.util.List<String> adapterIds) {
+        long now=monotonicMs();
+        if (!matchesCurrentOriginalMemberSetAt(adapterIds,now) ||
+            djIntentKeys.isEmpty()) return java.util.Collections.emptyList();
+        java.util.ArrayList<String> ordered=new java.util.ArrayList<>();
+        for (String key:adapterIds) if (djIntentKeys.contains(key)) ordered.add(key);
+        return ordered;
+    }
+
+    /** Install only a positive, single-scan proof produced by the LAN parser
+     * while the original GroupMusic adapter and selected identity set still
+     * match. No direct caller-supplied IP map is accepted here.
+     */
+    static synchronized boolean acceptLanProof(
+            java.util.List<String> originalAdapterIds,
+            ClassicOriginalLanDiscovery.VerifiedTargets proof) {
+        long now=monotonicMs();
+        if (!matchesCurrentOriginalMemberSetAt(originalAdapterIds,now) ||
+            proof==null || !proof.freshAt(now) || djIntentKeys.isEmpty())
+            return false;
+        java.util.Map<String,String> exact=proof.copy();
+        if (!exact.keySet().equals(djIntentKeys) ||
+            new java.util.HashSet<>(exact.values()).size()!=exact.size() ||
+            !exact.values().stream().allMatch(
+                ClassicOriginalLanDiscovery::privateIpv4)) return false;
+        revokeLan();
+        for (String id : originalAdapterIds)
+            if (exact.containsKey(id)) lanTargets.put(id,exact.get(id));
+        lanGroupOwner=selectedId;
+        lanBoundAtMs=now;
+        return true;
+    }
+
+    /** Verified LAN endpoints in exact OEM display/selection order. Only the
+     * foreground original Music UI may ask the user to confirm output. A
+     * selection change, group switch, host destruction or timeout returns [].
+     */
+    static synchronized java.util.List<String> resolvedOriginalLanIps() {
+        long now=monotonicMs();
+        if (!freshAt(now) || lanGroupOwner==null ||
+            !lanGroupOwner.equals(selectedId) || lanBoundAtMs==Long.MIN_VALUE ||
+            now<lanBoundAtMs || now-lanBoundAtMs>LAN_FRESH_MS ||
+            lanTargets.isEmpty() || !lanTargets.keySet().equals(djIntentKeys)) {
+            revokeLan();
+            return java.util.Collections.emptyList();
+        }
+        return new java.util.ArrayList<>(lanTargets.values());
+    }
+
+    public static synchronized int resolvedOriginalLanCount() {
+        return resolvedOriginalLanIps().size();
+    }
+
     /** Explicit user intention only, independent of original OEM group membership. */
     public static synchronized boolean markDjIntent(String id, boolean include) {
         return markDjIntentAt(id,include,monotonicMs());
@@ -157,6 +231,7 @@ public final class ClassicOriginalMusicSelection {
     static synchronized boolean markDjIntentAt(String id, boolean include, long nowMs) {
         if (verifiedIdentityCountAt(nowMs) <= 0 || id == null ||
             !originalMemberKeys.keysForDisplay().contains(id)) return false;
+        revokeLan();
         if (include) djIntentKeys.add(id);
         else djIntentKeys.remove(id);
         return true;
@@ -166,6 +241,7 @@ public final class ClassicOriginalMusicSelection {
     }
     static synchronized boolean markAllDjIntentAt(boolean include, long nowMs) {
         if (verifiedIdentityCountAt(nowMs) <= 0) return false;
+        revokeLan();
         if (include) djIntentKeys.addAll(originalMemberKeys.keysForDisplay());
         else djIntentKeys.clear();
         return true;
@@ -215,6 +291,7 @@ public final class ClassicOriginalMusicSelection {
     }
 
     private static void resetGroup() {
+        revokeLan();
         originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
         djIntentKeys.clear();
         groupEntryObserved = false;
