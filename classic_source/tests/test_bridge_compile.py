@@ -448,7 +448,7 @@ import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal;
 /** Java-only ABI fixture: actual production type is compiled from Kotlin by Android CI. */
 public class CheckpointRuntime {
  public boolean applySceneSettings(DjRuntime.SceneSettings next){return true;}
- public void startOriginalAudio(List<String> targets,DjRuntime.Listener listener){}
+ public void startOriginalAudio(List<String> targets,DjRuntime.Listener listener,\n     DjRuntime.ConsentGuard consent){}
  public boolean submitOriginalFrame(ClassicOriginalMusicAudioSignal.Frame frame){return true;}
  public void stop(){}
 }'''
