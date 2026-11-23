@@ -99,15 +99,17 @@ public final class ClassicOriginalListOrder {
             !adapterName.equals(adapter.getClass().getName())) return;
         OrderedList list;
         synchronized (ClassicOriginalListOrder.class) { list = ADAPTERS.get(adapter); }
-        if (list == null || !list.valid()) return;
         try {
             Object view = holder.getClass().getField("itemView").get(holder);
             if (!(view instanceof FrameLayout)) return;
             FrameLayout row = (FrameLayout) view;
             if (!CLONE.equals(row.getContext().getPackageName())) return;
-            String id = list.idAt(index);
-            if (id == null) return;
             View old = row.findViewWithTag(HANDLE_TAG);
+            String id = list != null && list.valid() ? list.idAt(index) : null;
+            if (id == null) {
+                if (old instanceof Handle) ((Handle) old).clear();
+                return;
+            }
             Handle handle;
             if (old instanceof Handle) handle = (Handle) old;
             else if (old == null) {
@@ -190,6 +192,11 @@ public final class ClassicOriginalListOrder {
         }
         void bind(Object adapter, OrderedList list, String id, long revision) {
             this.adapter=adapter; this.list=list; this.id=id; this.revision=revision;
+            setEnabled(true);
+        }
+        void clear() {
+            adapter=null; list=null; id=null; revision=-1L;
+            setEnabled(false);
         }
     }
 

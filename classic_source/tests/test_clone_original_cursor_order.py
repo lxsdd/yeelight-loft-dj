@@ -110,7 +110,12 @@ class OriginalCursorIntegrationTests(unittest.TestCase):
         self.assertIn("setOnLongClickListener",bridge)
         self.assertIn("setOnDragListener",bridge)
         self.assertIn("startDragAndDrop",bridge)
-        self.assertIn("moveRelative(id, -1)",bridge)
+        self.assertIn("moveRelative(id, -1, revision)",bridge)
+        self.assertIn("moveRelative(id, 1, revision)",bridge)
+        self.assertIn("moving.revision != revision",bridge)
+        self.assertIn("!cursor.validRevision(revision)",bridge)
+        self.assertIn("((Handle) old).clear()",bridge)
+        self.assertIn("void clear()",bridge)
         self.assertIn("undoLastUserDrop", (ROOT/"bridge/src/io/github/lxsdd/yeelightclassicdj/ui/ClassicLocalOrderStore.java").read_text())
         for forbidden in ("getRemoteDeviceList(", "set_music(", "set_power(",
                           "SQLiteDatabase", "ContentResolver", "getContentResolver(",

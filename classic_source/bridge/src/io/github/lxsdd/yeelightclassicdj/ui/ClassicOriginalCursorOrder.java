@@ -73,15 +73,20 @@ public final class ClassicOriginalCursorOrder {
         if (!(DEVICE.equals(owner) && ordered.surface == ClassicOrderPolicy.Surface.DEVICE_LIST) &&
             !(GROUP.equals(owner) && ordered.surface == ClassicOrderPolicy.Surface.GROUP_LIST))
             return;
-        if (!ordered.validSnapshot()) return;
         try {
             Object item = holder.getClass().getField("itemView").get(holder);
             if (!(item instanceof FrameLayout)) return;
             FrameLayout row = (FrameLayout) item;
             if (!CLONE.equals(row.getContext().getPackageName())) return;
-            String stableId = ordered.idAt(cursor.getPosition());
-            if (stableId == null) return;
             Object old = row.findViewWithTag(HANDLE);
+            String stableId = ordered.validSnapshot()
+                ? ordered.idAt(cursor.getPosition()) : null;
+            if (stableId == null) {
+                // RecyclerView may recycle a former valid row into an
+                // unverified/empty entry. Revoke its old gesture immediately.
+                if (old instanceof Handle) ((Handle) old).clear();
+                return;
+            }
             Handle handle;
             if (old instanceof Handle) handle = (Handle) old;
             else if (old == null) {
@@ -176,6 +181,11 @@ public final class ClassicOriginalCursorOrder {
         void bind(OrderedCursor cursor, Object adapter, String id) {
             this.cursor = cursor; this.adapter = adapter; this.id = id;
             this.revision = cursor.revision();
+            setEnabled(true);
+        }
+        void clear() {
+            cursor = null; adapter = null; id = null; revision = -1L;
+            setEnabled(false);
         }
     }
 
