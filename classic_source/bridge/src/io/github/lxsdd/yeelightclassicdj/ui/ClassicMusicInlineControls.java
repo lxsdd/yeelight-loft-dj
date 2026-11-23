@@ -54,6 +54,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private volatile CheckpointRuntime lightRuntime;
     private volatile ClassicOriginalMusicSelection.OutputLease lightLease;
     private int lightEpoch;
+    // One process-wide output lease survives Activity recreation and async STOP.
+    private long lightSessionToken;
+    private volatile long originalObserverEpoch;
     private volatile String lightStatus = "";
     private final ClassicDjPatternPreviewView preview;
     private final TextView[] choices = new TextView[NAMES.length];
@@ -308,10 +311,18 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         final List<String> targets = consent.targets();
         final CheckpointRuntime runtime = new CheckpointRuntime();
         final int epoch;
+        final long token;
         synchronized (lightGuard) {
             if (lightRuntime != null || !attached || targets.isEmpty() ||
                 !ClassicOriginalMusicSelection.isOutputLeaseCurrent(consent) ||
                 !ClassicOriginalMusicAudioSignal.snapshot().fresh) return;
+            // Do not race a previous Activity's still-closing owned sockets.
+            token = ClassicOriginalLightOutputGate.tryAcquire();
+            if (token == 0L) {
+                lightStatus = "Vorherige DJ-Lichtsession noch nicht sicher beendet";
+                return;
+            }
+            lightSessionToken = token;
             lightRuntime = runtime;
             lightLease = consent;
             epoch = ++lightEpoch;
@@ -344,7 +355,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                                 if (lightRuntime != runtime || epoch != lightEpoch) return;
                                 lightStatus = "Music-Rückkanal unterbrochen · sicher gestoppt";
                             }
-                            stopLightOutput();
+                            stopLightOutput(runtime, epoch);
                         });
                     }
                 }, () -> attached &&
@@ -354,34 +365,63 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                     if (lightRuntime != runtime || epoch != lightEpoch) runtime.stop();
                 }
             } catch (Exception | LinkageError failed) {
-                // No endpoint/IP/OEM error text is exposed or logged.
-                try { runtime.stop(); } catch (RuntimeException ignored) {}
-                handler.post(() -> {
-                    synchronized (lightGuard) {
-                        if (lightRuntime != runtime || epoch != lightEpoch) return;
+                // A partially negotiated group must finish owned cleanup BEFORE
+                // a subsequent Activity or start attempt can acquire output.
+                synchronized (lightGuard) {
+                    if (lightRuntime == runtime && epoch == lightEpoch) {
                         lightRuntime = null;
                         lightLease = null;
+                        lightSessionToken = 0L;
                         ++lightEpoch;
                         lightStatus = "Lampenverbindung verweigert oder nicht bestätigt";
                     }
-                    if (attached) redraw();
-                });
+                }
+                finishLightSession(runtime, token);
+                handler.post(() -> { if (attached) redraw(); });
             }
         },"Classic-DJ-Original-Output").start();
     }
 
-    private void stopLightOutput() {
+    private void finishLightSession(CheckpointRuntime runtime, long token) {
+        if (token == 0L || !ClassicOriginalLightOutputGate.beginClose(token)) return;
+        Runnable cleanup = () -> {
+            boolean clean = false;
+            try {
+                runtime.stop();
+                clean = true;
+            } catch (RuntimeException | LinkageError ignored) {
+                // An uncertain reverse-session cleanup must block re-acquisition.
+            } finally {
+                ClassicOriginalLightOutputGate.finishClose(token, clean);
+                handler.post(() -> { if (attached) redraw(); });
+            }
+        };
+        try {
+            new Thread(cleanup, "Classic-DJ-Original-Stop").start();
+        } catch (RuntimeException threadUnavailable) {
+            // Last-resort synchronous close is safer than leaving owned sockets.
+            cleanup.run();
+        }
+    }
+
+    private void stopLightOutput() { stopLightOutput(null, 0); }
+
+    /** Stale error callbacks must never stop a subsequently acquired session. */
+    private void stopLightOutput(CheckpointRuntime expected, int expectedEpoch) {
         final CheckpointRuntime old;
+        final long token;
         synchronized (lightGuard) {
+            if (expected != null &&
+                (lightRuntime != expected || lightEpoch != expectedEpoch)) return;
             ++lightEpoch;
-            old=lightRuntime;
-            lightRuntime=null;
-            lightLease=null;
+            old = lightRuntime;
+            token = lightSessionToken;
+            lightRuntime = null;
+            lightLease = null;
+            lightSessionToken = 0L;
             lightStatus = "Music-Rückkanal wird gestoppt";
         }
-        if (old != null) new Thread(() -> {
-            try { old.stop(); } catch (RuntimeException ignored) { }
-        },"Classic-DJ-Original-Stop").start();
+        if (old != null) finishLightSession(old, token);
         if (attached) redraw();
     }
 
@@ -473,10 +513,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         }
         final int endpoints=verifiedLan;
         final boolean running=runningOutput;
+        final boolean outputBusy = ClassicOriginalLightOutputGate.isBusy();
+        final boolean outputUncertain = ClassicOriginalLightOutputGate.isQuarantined();
         lightControl.setText(running ? "DJ-Lichtausgabe beenden" :
+            outputUncertain ? "DJ-Lichtausgabe gesperrt · Sitzungszustand unklar" :
+            outputBusy ? "Vorherige DJ-Lichtsession wird beendet" :
             (endpoints>0 ? "DJ-Lichtausgabe für geprüfte Lampen starten" :
              "DJ-Lichtausgabe · zuerst Gruppenmitglieder im LAN prüfen"));
-        lightControl.setEnabled(running || endpoints>0);
+        lightControl.setEnabled(running || (!outputBusy && endpoints>0));
+        if (outputUncertain && !running)
+            lightStatus = "Sicherer Abschluss nicht bestätigt · keine neuen Lampenbefehle";
         if (running || !lightStatus.isEmpty())
             stateNotice.setText(lightStatus);
         if (inlineSheet.getVisibility() == View.VISIBLE) preview.invalidate();
@@ -492,23 +538,30 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     };
 
     public void onHostResumed() {
-        // Never start a second audio source; install only the read-only original callback DSP.
+        // A callback from the previous OEM capture must not revoke a newly
+        // resumed Activity or feed its new light session.
+        final long observerEpoch = ++originalObserverEpoch;
+        attached = true;
         originalDsp.setFrameObserver(new ClassicOriginalMusicAudioSignal.FrameObserver() {
             @Override public void onFrame(ClassicOriginalMusicAudioSignal.Frame frame,long atMs) {
-                CheckpointRuntime runtime=lightRuntime;
+                if (!attached || observerEpoch != originalObserverEpoch) return;
+                CheckpointRuntime runtime = lightRuntime;
                 if (runtime != null) runtime.submitOriginalFrame(frame);
             }
             @Override public void onCaptureClosed() {
-                handler.post(() -> stopLightOutput());
+                handler.post(() -> {
+                    if (attached && observerEpoch == originalObserverEpoch)
+                        stopLightOutput();
+                });
             }
         });
         ClassicOriginalMusicAudioSignal.installAnalyzer(originalDsp);
-        attached = true;
         handler.removeCallbacks(refresh);
         handler.post(refresh);
     }
 
     public void onHostPaused() {
+        ++originalObserverEpoch;
         attached = false;
         originalDsp.setFrameObserver(null);
         ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);
