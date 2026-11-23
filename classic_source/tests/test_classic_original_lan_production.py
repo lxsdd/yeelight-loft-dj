@@ -94,20 +94,40 @@ public final class OriginalLanProofHarness {
        "matching original and protocol identity");
     ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1007).equals(
       Arrays.asList("192.168.10.21","192.168.10.22")),"only selected IPs in OEM order");
+    ClassicOriginalMusicSelection.OutputLease active =
+      ClassicOriginalMusicSelection.leaseForOriginalOutputAt(1007);
+    ok(active!=null && active.size()==2,"live consent exact cohort");
+    active.targets().clear();
+    ok(active.size()==2 && ClassicOriginalMusicSelection.isOutputLeaseCurrent(active),
+       "caller cannot mutate immutable live cohort");
     ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(91007).isEmpty(),
        "LAN proof expiry clears");
+    ok(ClassicOriginalMusicSelection.isOutputLeaseCurrent(active),
+       "owned session must survive one-time discovery TTL");
     ok(ClassicOriginalMusicSelection.acceptLanProofAt(originalIds,proof,1008),
        "restore current proof");
+    ok(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(active),
+       "new proof revokes previous output consent");
+    ClassicOriginalMusicSelection.OutputLease renewed =
+      ClassicOriginalMusicSelection.leaseForOriginalOutputAt(1008);
+    ok(renewed!=null && ClassicOriginalMusicSelection.isOutputLeaseCurrent(renewed),
+       "renewed consent valid");
     ClassicOriginalMusicSelection.markDjIntentAt(c,true,1009);
+    ok(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(renewed),
+       "explicit participant change revokes live output");
     ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1010).isEmpty(),
        "selection revokes prior endpoint grant");
     ClassicOriginalMusicSelection.markDjIntentAt(c,false,1011);
     ok(ClassicOriginalMusicSelection.acceptLanProofAt(originalIds,proof,1012),
        "re-confirm original pair");
+    ClassicOriginalMusicSelection.OutputLease beforeRefresh =
+      ClassicOriginalMusicSelection.leaseForOriginalOutputAt(1012);
     ClassicOriginalMusicSelection.observeGroupMembersAt(
       Arrays.asList(member(a),member(c)),1013);
     ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1014).isEmpty(),
        "OEM refresh removes authority");
+    ok(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(beforeRefresh),
+       "OEM membership refresh revokes live output");
     ClassicOriginalMusicSelection.observeAt("another-group",1015);
     ok(ClassicOriginalMusicSelection.resolvedOriginalLanIpsAt(1016).isEmpty(),
        "group switch revokes LAN");
@@ -149,6 +169,9 @@ class OriginalLanProductionTests(unittest.TestCase):
         self.assertIn("ClassicOriginalMusicSelection.resolvedOriginalLanIps()",inline)
         self.assertIn("new CheckpointRuntime()",inline)
         self.assertIn("runtime.startOriginalAudio(targets,",inline)
+        self.assertIn("isOutputLeaseCurrent(consent)",inline)
+        self.assertIn("originalOutputGuard",runtime)
+        self.assertIn("owned.size != selectedLampIps.size",runtime)
         self.assertIn("runtime.submitOriginalFrame(frame)",inline)
         self.assertIn("originalDsp.setFrameObserver(",inline)
         self.assertIn("stopLightOutput();",inline)
