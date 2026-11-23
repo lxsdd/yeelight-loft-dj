@@ -86,6 +86,7 @@ public class ClassicEffectSettingsHarness {
     String prefix="dj-effect.";
     ctx.mem.map.put(prefix+"SCANNER","v4,4,4,1,4,2,1,1,2,2,7,0");
     check(settings.readProfile(4)==null,"wrong version ignored");
+    check(settings.selectScene(4),"switch to scanner before explicit palette edit");
     check(ClassicSceneUiState.updatePalette(1),"rainbow palette from original scene editor");
     check(settings.saveExplicit(ClassicSceneUiState.snapshot()),"rainbow profile persisted");
     check(settings.readProfile(4).paletteIndex==1,"rainbow profile round trip");
@@ -93,11 +94,16 @@ public class ClassicEffectSettingsHarness {
           !ClassicSceneUiState.updatePalette(2),"invalid palettes rejected");
     ctx.mem.map.put(prefix+"SCANNER","v3,4,4,1,4,2,1,1,2,2,7,4");
     check(settings.readProfile(4)==null,"invalid rainbow profile rejected");
+    check(settings.selectScene(4),"invalid stored palette safely resets to solid");
+    check(ClassicSceneUiState.snapshot().paletteIndex==0 &&
+          ClassicSceneUiState.snapshot().speedIndex==2,
+          "malformed v3 cannot change original scene state");
     ctx.mem.map.put(prefix+"SCANNER","v3,4,4,1,4,2,1,1,2,2,7,1");
     check(settings.readProfile(4).paletteIndex==1,"valid rainbow profile restored");
-    check(settings.selectScene(4),"corrupt profile reverts to valid local default");
-    check(ClassicSceneUiState.snapshot().speedIndex==2 &&
-          !ClassicSceneUiState.snapshot().reverse,"safe default after malformed");
+    check(settings.selectScene(4),"valid rainbow profile chosen");
+    check(ClassicSceneUiState.snapshot().paletteIndex==1 &&
+          ClassicSceneUiState.snapshot().speedIndex==4 &&
+          ClassicSceneUiState.snapshot().reverse,"saved rainbow parameters reach original UI");
     ctx.mem.map.put(prefix+"SCANNER","v1,3,4,1,4,2,1,1,2,2");
     check(settings.readProfile(4)==null,"foreign scene key mismatch rejected");
     ctx.mem.map.put(prefix+"SCANNER","v1,4,999,1,4,2,1,1,2,2");
