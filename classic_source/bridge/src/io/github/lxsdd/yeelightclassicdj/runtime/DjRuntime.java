@@ -82,7 +82,7 @@ public interface DjRuntime {
             this.kind = kind == null ? CaptureFailureKind.UNKNOWN : kind;
         }
     }
-    interface Listener {
+    /** Check original player and exact selected cohort during each Music handshake\n     * and every output-worker iteration, without capture or network I/O. */\n    interface ConsentGuard { boolean isStillAuthorized(); }\n    interface Listener {
         void onState(String state);
         void onBeat(double bpm, float level);
         /** Source-local FFT telemetry; optional for older listeners. Zero device I/O.
