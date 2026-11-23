@@ -187,6 +187,11 @@ class GroupMemberOrderRuntimeTests(unittest.TestCase):
             stubs["io/github/lxsdd/yeelightclassicdj/ui/GroupMemberOrderHarness.java"]=HARNESS
             paths=[]
             for file,body in stubs.items():
+                # This standalone adapter JDK test intentionally does not
+                # compile the unrelated Kotlin DSP Java ABI placeholder.
+                # The complete bridge test still validates it separately.
+                if file == "io/github/lxsdd/yeelightclassicdj/runtime/ClassicOriginalDspAnalysis.java":
+                    continue
                 p=root/file
                 p.parent.mkdir(parents=True,exist_ok=True)
                 p.write_text(body)
