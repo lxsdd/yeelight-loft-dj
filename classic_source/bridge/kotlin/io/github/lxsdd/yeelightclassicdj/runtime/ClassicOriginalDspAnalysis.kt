@@ -25,11 +25,15 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
         frameObserver = observer
     }
 
-    private fun publish(frame: ClassicOriginalMusicAudioSignal.Frame,
-                        timestampMs: Long): ClassicOriginalMusicAudioSignal.Frame {
+    /** Called by the Java Original-Music owner ONLY after it accepts a
+     * current MIC/FFT receipt. Rejecting a late frame cannot emit light.
+     * This callback enqueues into the existing bounded runtime, no I/O.
+     */
+    override fun onAcceptedFrame(frame: ClassicOriginalMusicAudioSignal.Frame,
+                                 timestampMs: Long) {
         try { frameObserver?.onFrame(frame, timestampMs) }
         catch (_: RuntimeException) { /* Observer is never OEM authority. */ }
-        return frame
+        catch (_: LinkageError) { /* Optional OEM bridge cannot crash capture. */ }
     }
 
     private var lastPcmAtMs = -1L
@@ -129,12 +133,12 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
         val target = if (rms < 0.0015) 1.0 else (0.12 / rms).coerceIn(1.0, 8.0)
         gain += (target - gain) * if (target > gain) 0.22 else 0.08
         val result = beats.accept(timestampMs, bands, gain.coerceIn(1.0, 8.0))
-        return publish(ClassicOriginalMusicAudioSignal.Frame(
+        return ClassicOriginalMusicAudioSignal.Frame(
             sqrt(rms).toFloat().coerceIn(0f, 1f),
             floatArrayOf(result.bass.toFloat(), result.mid.toFloat(),
                          result.presence.toFloat(), result.treble.toFloat()),
             result.beat, (result.bpm ?: 0.0).toFloat(), result.confidence.toFloat()
-        ), timestampMs)
+        )
     }
 
     @Synchronized override fun onFft(
@@ -167,11 +171,11 @@ class ClassicOriginalDspAnalysis : ClassicOriginalMusicAudioSignal.Analyzer {
         }
         val result = beats.accept(timestampMs, bands)
         val level = bands.maxOrNull() ?: 0.0
-        return publish(ClassicOriginalMusicAudioSignal.Frame(
+        return ClassicOriginalMusicAudioSignal.Frame(
             level.toFloat(),
             floatArrayOf(result.bass.toFloat(), result.mid.toFloat(),
                          result.presence.toFloat(), result.treble.toFloat()),
             result.beat, (result.bpm ?: 0.0).toFloat(), result.confidence.toFloat()
-        ), timestampMs)
+        )
     }
 }

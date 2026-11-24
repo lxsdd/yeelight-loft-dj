@@ -58,8 +58,18 @@ public final class OriginalMusicAudioHarness {
   static void check(boolean b, String name) { if (!b) throw new AssertionError(name); }
   static short[] pcm(int n) { short[] d = new short[n]; java.util.Arrays.fill(d,(short)8000); return d; }
   static final class Fake implements ClassicOriginalMusicAudioSignal.Analyzer {
-    int pcmCalls, fftCalls, closeCalls;
+    int pcmCalls, fftCalls, closeCalls, acceptedCalls;
+    boolean throwOnAccepted;
     public void onCaptureClosed() { closeCalls++; }
+    public void onAcceptedFrame(ClassicOriginalMusicAudioSignal.Frame frame, long ms) {
+      acceptedCalls++;
+      ClassicOriginalMusicAudioSignal.Snapshot current =
+          ClassicOriginalMusicAudioSignal.snapshotAt(ms);
+      check(current.fresh && current.level == frame.level &&
+            current.bpm == frame.bpm && current.confidence == frame.confidence,
+            "original audio state must be committed before any light observer");
+      if (throwOnAccepted) throw new IllegalStateException("bad optional observer");
+    }
     public ClassicOriginalMusicAudioSignal.Frame onPcm(short[] x, int n, int hz, long ms) {
       pcmCalls++;
       check(hz == 16000,"original recorder format");
@@ -148,6 +158,39 @@ public final class OriginalMusicAudioHarness {
     ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1300);
     check(!ClassicOriginalMusicAudioSignal.snapshotAt(2600).fresh,"stale music cannot remain live");
     ClassicOriginalMusicAudioSignal.clearAnalyzer(next);
+
+    // Adversarial OEM MIC/Visualizer interleaving: a stale frame from the
+    // OTHER source must not replace current evidence or reach light output.
+    ClassicOriginalMusicAudioSignal.resetForTest();
+    Fake overlap = new Fake();
+    ClassicOriginalMusicAudioSignal.installAnalyzer(overlap);
+    ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,2000);
+    check(overlap.acceptedCalls == 1,"fresh FFT admitted after owner install");
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1999);
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,2000);
+    check(overlap.pcmCalls == 2 && overlap.acceptedCalls == 1 &&
+          ClassicOriginalMusicAudioSignal.snapshotAt(2000).source.equals("FFT"),
+          "older and duplicate cross-source PCM cannot revoke FFT or light");
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,2001);
+    check(overlap.acceptedCalls == 2 &&
+          ClassicOriginalMusicAudioSignal.snapshotAt(2001).source.equals("MIC"),
+          "strictly newer MIC becomes the active source");
+    ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,2000);
+    check(overlap.acceptedCalls == 2 &&
+          ClassicOriginalMusicAudioSignal.snapshotAt(2001).source.equals("MIC"),
+          "old FFT cannot reclaim a newer MIC source");
+    ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,2002);
+    check(overlap.acceptedCalls == 3 &&
+          ClassicOriginalMusicAudioSignal.snapshotAt(2002).source.equals("FFT"),
+          "newer FFT may legitimately take over");
+    overlap.throwOnAccepted = true;
+    ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,2003);
+    check(overlap.acceptedCalls == 4 &&
+          ClassicOriginalMusicAudioSignal.snapshotAt(2003).source.equals("MIC"),
+          "failing optional observer cannot interrupt OEM capture or receipt");
+    ClassicOriginalMusicAudioSignal.clearAnalyzer(overlap);
+    ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,2004);
+    check(overlap.acceptedCalls == 4,"revoked owner cannot emit another frame");
     System.out.println("REAL_ORIGINAL_AUDIO_SIGNAL_JAVA_PRODUCTION_PASS");
   }
 }
@@ -235,6 +278,22 @@ class OriginalAudioSourceContract(unittest.TestCase):
             self.assertEqual(report["source_owned_original_methods_modified"],3)
             with self.assertRaises(GateFailure):
                 hook.patch_staged_clone(root)
+
+    def test_actual_audio_receipt_precedes_native_output_dispatch(self):
+        java=(ROOT/"bridge/src/io/github/lxsdd/yeelightclassicdj/ui"/
+              "ClassicOriginalMusicAudioSignal.java").read_text()
+        dsp=(ROOT/"bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime"/
+             "ClassicOriginalDspAnalysis.kt").read_text()
+        self.assertIn("expected.onAcceptedFrame(frame, nowMs)",java)
+        self.assertIn("nowMs <= observedAtMs",java,
+                      "source changes cannot bypass global monotonic receipt")
+        self.assertIn("override fun onAcceptedFrame(",dsp)
+        self.assertEqual(dsp.count("frameObserver?.onFrame(frame, timestampMs)"),1)
+        self.assertNotIn("return publish(",dsp)
+        self.assertIn("onAcceptedFrame",dsp)
+        # The existing original DSP never starts another capture or writer.
+        self.assertNotIn("new AudioRecord(",dsp)
+        self.assertNotIn("set_music(",dsp)
 
     def test_real_builder_and_primary_music_wiring_source(self):
         build=(ROOT/"build_private_unsigned.py").read_text()

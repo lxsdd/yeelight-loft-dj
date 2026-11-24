@@ -20,6 +20,8 @@ public final class ClassicOriginalMusicAudioSignal {
         Frame onFft(byte[] fft, int rateMilliHz, long timestampMs);
         /** Pure DSP reset only. An OEM stop cannot close another capture owner. */
         default void onCaptureClosed() {}
+        /** Only an accepted source/timestamp receipt may enter Original Music output. */
+        default void onAcceptedFrame(Frame frame, long timestampMs) {}
     }
 
     /** A nonblocking observer only. Its callbacks MUST NOT do LAN I/O. */
@@ -158,19 +160,32 @@ public final class ClassicOriginalMusicAudioSignal {
         }
     }
 
-    private static synchronized void acceptFrame(Analyzer expected, String kind,
-                                                  Frame frame, long nowMs) {
-        if (owner != expected || frame == null || !validFrame(frame) ||
-            (observedAtMs != Long.MIN_VALUE && nowMs < observedAtMs &&
-             source.equals(kind))) return;
-        if (!source.equals(kind)) clearSignal();
-        source = kind;
-        observedAtMs = nowMs;
-        energy = frame.level;
-        bpm = frame.bpm;
-        confidence = frame.confidence;
-        System.arraycopy(frame.bands, 0, bands, 0, 4);
-        if (frame.beat) lastBeatAtMs = nowMs;
+    private static void acceptFrame(Analyzer expected, String kind,
+                                    Frame frame, long nowMs) {
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            // Across MIC and FFT alike: an old or duplicate OEM callback
+            // cannot revoke newer audio evidence, or reach the lamp worker.
+            if (owner != expected || frame == null || !validFrame(frame) ||
+                (observedAtMs != Long.MIN_VALUE && nowMs <= observedAtMs)) return;
+            if (!source.equals(kind)) clearSignal();
+            source = kind;
+            observedAtMs = nowMs;
+            energy = frame.level;
+            bpm = frame.bpm;
+            confidence = frame.confidence;
+            System.arraycopy(frame.bands, 0, bands, 0, 4);
+            if (frame.beat) lastBeatAtMs = nowMs;
+        }
+        // Never call the optional DSP observer under this global monitor.
+        // A newer Activity can revoke this owner while the OEM worker runs.
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if (owner != expected || observedAtMs != nowMs || !source.equals(kind))
+                return;
+        }
+        try { expected.onAcceptedFrame(frame, nowMs); }
+        catch (RuntimeException | LinkageError ignored) {
+            // Optional light output must never crash the original OEM player.
+        }
     }
 
     private static boolean validFrame(Frame f) {
