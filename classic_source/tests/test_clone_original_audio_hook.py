@@ -54,12 +54,14 @@ WORKER = """
 
 JAVA_HARNESS = r"""
 package io.github.lxsdd.yeelightclassicdj.ui;
+import java.util.concurrent.*;
 public final class OriginalMusicAudioHarness {
   static void check(boolean b, String name) { if (!b) throw new AssertionError(name); }
   static short[] pcm(int n) { short[] d = new short[n]; java.util.Arrays.fill(d,(short)8000); return d; }
   static final class Fake implements ClassicOriginalMusicAudioSignal.Analyzer {
     int pcmCalls, fftCalls, closeCalls, acceptedCalls;
     boolean throwOnAccepted;
+    CountDownLatch entered, resume;
     public void onCaptureClosed() { closeCalls++; }
     public void onAcceptedFrame(ClassicOriginalMusicAudioSignal.Frame frame, long ms) {
       acceptedCalls++;
@@ -73,14 +75,26 @@ public final class OriginalMusicAudioHarness {
     public ClassicOriginalMusicAudioSignal.Frame onPcm(short[] x, int n, int hz, long ms) {
       pcmCalls++;
       check(hz == 16000,"original recorder format");
+      if (entered != null) {
+        entered.countDown();
+        try {
+          check(resume.await(5,TimeUnit.SECONDS),"concurrent OEM PCM released");
+        } catch (InterruptedException e) { throw new IllegalStateException(e); }
+      }
       return new ClassicOriginalMusicAudioSignal.Frame(.4f,new float[]{.7f,.2f,.1f,.05f},true,120f,.8f);
     }
     public ClassicOriginalMusicAudioSignal.Frame onFft(byte[] x, int hz, long ms) {
       fftCalls++;
+      if (entered != null) {
+        entered.countDown();
+        try {
+          check(resume.await(5,TimeUnit.SECONDS),"concurrent OEM FFT released");
+        } catch (InterruptedException e) { throw new IllegalStateException(e); }
+      }
       return new ClassicOriginalMusicAudioSignal.Frame(.3f,new float[]{.5f,.2f,.1f,.05f},false,120f,.8f);
     }
   }
-  public static void main(String[] args) {
+  public static void main(String[] args) throws Exception {
     ClassicOriginalMusicAudioSignal.resetForTest();
     check(!ClassicOriginalMusicAudioSignal.snapshotAt(100).fresh,"starts empty");
     ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,100);
@@ -191,6 +205,43 @@ public final class OriginalMusicAudioHarness {
     ClassicOriginalMusicAudioSignal.clearAnalyzer(overlap);
     ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,2004);
     check(overlap.acceptedCalls == 4,"revoked owner cannot emit another frame");
+
+    // A DSP result already executing when the OEM stops/release its capture
+    // cannot re-create fresh evidence or emit a late light frame.
+    for (String lane : new String[]{"MIC","FFT"}) {
+      ClassicOriginalMusicAudioSignal.resetForTest();
+      Fake racing = new Fake();
+      ClassicOriginalMusicAudioSignal.installAnalyzer(racing);
+      if ("MIC".equals(lane))
+        ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,3000);
+      else
+        ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,3000);
+      check(racing.acceptedCalls == 1,"initial "+lane+" receipt");
+      racing.entered = new CountDownLatch(1);
+      racing.resume = new CountDownLatch(1);
+      Thread worker = new Thread(() -> {
+        if ("MIC".equals(lane))
+          ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,3010);
+        else
+          ClassicOriginalMusicAudioSignal.observedFftAt(fft,44100000,3010);
+      });
+      worker.start();
+      check(racing.entered.await(5,TimeUnit.SECONDS),lane+" callback in flight");
+      if ("MIC".equals(lane))
+        ClassicOriginalMusicAudioSignal.observedOriginalMicStopped();
+      else
+        ClassicOriginalMusicAudioSignal.observedOriginalVisualizerStopped();
+      racing.resume.countDown();
+      worker.join(5000);
+      check(!worker.isAlive(),lane+" worker completed");
+      check(racing.acceptedCalls == 1 &&
+            !ClassicOriginalMusicAudioSignal.snapshotAt(3011).fresh,
+            lane+" post-stop in-flight callback cannot resurrect UI or lights");
+      racing.entered = null;
+      racing.resume = null;
+      ClassicOriginalMusicAudioSignal.clearAnalyzer(racing);
+    }
+
     System.out.println("REAL_ORIGINAL_AUDIO_SIGNAL_JAVA_PRODUCTION_PASS");
   }
 }
@@ -287,6 +338,9 @@ class OriginalAudioSourceContract(unittest.TestCase):
         self.assertIn("expected.onAcceptedFrame(frame, nowMs)",java)
         self.assertIn("nowMs <= observedAtMs",java,
                       "source changes cannot bypass global monotonic receipt")
+        self.assertIn("micCaptureEpoch = advanceEpoch(micCaptureEpoch)",java)
+        self.assertIn("fftCaptureEpoch = advanceEpoch(fftCaptureEpoch)",java)
+        self.assertIn("receiptEpoch !=",java)
         self.assertIn("override fun onAcceptedFrame(",dsp)
         self.assertEqual(dsp.count("frameObserver?.onFrame(frame, timestampMs)"),1)
         self.assertNotIn("return publish(",dsp)

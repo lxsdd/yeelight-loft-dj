@@ -66,6 +66,13 @@ public final class ClassicOriginalMusicAudioSignal {
     private static final float[] bands = new float[4];
     private static long observedAtMs = Long.MIN_VALUE;
     private static long lastBeatAtMs = Long.MIN_VALUE;
+    // Capture-stop epochs fence DSP work already running on an OEM worker
+    // when AudioRecord.stop or Visualizer.release was observed.
+    // Separate lanes: an older MIC stop must not revoke a live FFT.
+    private static long micCaptureEpoch, fftCaptureEpoch;
+    private static long advanceEpoch(long epoch) {
+        return epoch == Long.MAX_VALUE ? -1L : epoch < 0 ? -1L : epoch + 1L;
+    }
 
     private ClassicOriginalMusicAudioSignal() {}
 
@@ -133,10 +140,15 @@ public final class ClassicOriginalMusicAudioSignal {
         if (pcm == null || valid < 1 || valid > MAX_PCM || valid > pcm.length ||
             rate < 8000 || rate > 192000 || nowMs < 0) return;
         Analyzer current;
-        synchronized (ClassicOriginalMusicAudioSignal.class) { current = owner; }
-        if (current == null) return;
+        long receiptEpoch;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            current = owner;
+            receiptEpoch = micCaptureEpoch;
+        }
+        if (current == null || receiptEpoch < 0L) return;
         try {
-            acceptFrame(current, "MIC", current.onPcm(pcm, valid, rate, nowMs), nowMs);
+            acceptFrame(current, "MIC", current.onPcm(pcm, valid, rate, nowMs),
+                        nowMs, receiptEpoch);
         } catch (RuntimeException | LinkageError ignored) {
             // Observer failures must not interrupt the original OEM recorder.
         }
@@ -151,21 +163,28 @@ public final class ClassicOriginalMusicAudioSignal {
             (fft.length & 1) != 0 || rateMilliHz < 8000000 ||
             rateMilliHz > 192000000 || nowMs < 0) return;
         Analyzer current;
-        synchronized (ClassicOriginalMusicAudioSignal.class) { current = owner; }
-        if (current == null) return;
+        long receiptEpoch;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            current = owner;
+            receiptEpoch = fftCaptureEpoch;
+        }
+        if (current == null || receiptEpoch < 0L) return;
         try {
-            acceptFrame(current, "FFT", current.onFft(fft, rateMilliHz, nowMs), nowMs);
+            acceptFrame(current, "FFT", current.onFft(fft, rateMilliHz, nowMs),
+                        nowMs, receiptEpoch);
         } catch (RuntimeException | LinkageError ignored) {
             // Observer failures must not interrupt the original OEM callback.
         }
     }
 
     private static void acceptFrame(Analyzer expected, String kind,
-                                    Frame frame, long nowMs) {
+                                    Frame frame, long nowMs, long receiptEpoch) {
         synchronized (ClassicOriginalMusicAudioSignal.class) {
-            // Across MIC and FFT alike: an old or duplicate OEM callback
-            // cannot revoke newer audio evidence, or reach the lamp worker.
+            // Across MIC and FFT alike: an old, duplicate or post-stop OEM
+            // callback cannot revoke newer evidence or reach the lamp worker.
             if (owner != expected || frame == null || !validFrame(frame) ||
+                receiptEpoch < 0L ||
+                receiptEpoch != ("MIC".equals(kind) ? micCaptureEpoch : fftCaptureEpoch) ||
                 (observedAtMs != Long.MIN_VALUE && nowMs <= observedAtMs)) return;
             if (!source.equals(kind)) clearSignal();
             source = kind;
@@ -179,7 +198,8 @@ public final class ClassicOriginalMusicAudioSignal {
         // Never call the optional DSP observer under this global monitor.
         // A newer Activity can revoke this owner while the OEM worker runs.
         synchronized (ClassicOriginalMusicAudioSignal.class) {
-            if (owner != expected || observedAtMs != nowMs || !source.equals(kind))
+            if (owner != expected || observedAtMs != nowMs || !source.equals(kind) ||
+                receiptEpoch != ("MIC".equals(kind) ? micCaptureEpoch : fftCaptureEpoch))
                 return;
         }
         try { expected.onAcceptedFrame(frame, nowMs); }
@@ -214,6 +234,7 @@ public final class ClassicOriginalMusicAudioSignal {
         MIC_RATE.remove();
         Analyzer closing = null;
         synchronized (ClassicOriginalMusicAudioSignal.class) {
+            micCaptureEpoch = advanceEpoch(micCaptureEpoch);
             if ("MIC".equals(source)) {
                 closing = owner;
                 clearSignal();
@@ -227,6 +248,7 @@ public final class ClassicOriginalMusicAudioSignal {
     public static void observedOriginalVisualizerStopped() {
         Analyzer closing = null;
         synchronized (ClassicOriginalMusicAudioSignal.class) {
+            fftCaptureEpoch = advanceEpoch(fftCaptureEpoch);
             if ("FFT".equals(source)) {
                 closing = owner;
                 clearSignal();
@@ -240,6 +262,7 @@ public final class ClassicOriginalMusicAudioSignal {
         MIC_RATE.remove();
         owner = null;
         clearSignal();
+        micCaptureEpoch = fftCaptureEpoch = 0L;
     }
 
     private static long clockMs() { return System.nanoTime() / 1_000_000L; }
