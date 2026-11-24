@@ -147,8 +147,8 @@ class ClassicMusicCoordinator(private val transport: Transport) {
      * Already confirmed OWNED members remain visible to the caller for cleanup.
      */
     @Synchronized fun startGroup(
-        ids: List<String>, allowNextStart: () -> Boolean = { true },
-        onConfirmed: (Int, Int) -> Unit = { _, _ -> }
+        ids: List<String>, onConfirmed: (Int, Int) -> Unit = { _, _ -> },
+        allowNextStart: () -> Boolean = { true }
     ): Map<String, State> {
         require(ids.distinct().size == ids.size)
         ids.forEach { device(it) }
