@@ -46,6 +46,17 @@ class FavoriteOriginalHookTests(unittest.TestCase):
         with self.assertRaisesRegex(GateFailure, "ALREADY_PATCHED"):
             hook.patch_text(changed)
 
+    def test_reused_favorite_parameter_registers_are_not_read_at_original_return(self):
+        source = ORIGINAL.replace("    move-result-object v0\n    return-void",
+                                  "    move-result-object v0\n    move-object p2, v0\n    return-void")
+        changed = hook.patch_text(source)
+        body = hook._method(changed, "classicLoftDjOriginalRow_" + hook.BINDER).group()
+        wrapper = hook._method(changed, hook.BINDER).group()
+        self.assertIn("move-object p2, v0", body)
+        self.assertNotIn(hook.BIND, body)
+        self.assertIn(".locals 0", wrapper)
+        self.assertLess(wrapper.index("invoke-direct/range"), wrapper.index(hook.BIND))
+
     def test_source_drift_has_no_fallback(self):
         variants = (
             ORIGINAL.replace("FavoriteSceneAdapter;", "OtherAdapter;"),

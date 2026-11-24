@@ -8,6 +8,7 @@ on-row drag handle. Never distribute OEM smali or original APK data.
 from pathlib import Path
 import re
 from classic_first import GateFailure
+from clone_original_row_wrapper import wrap_row_method
 
 FOLDER = Path("smali_classes2/com/yeelight/cherry/ui/fragment")
 DEVICE = FOLDER / "DeviceRecyclerViewAdapter.smali"
@@ -65,7 +66,7 @@ def constructor(source, signature, wrapper):
         raise GateFailure("CLASSIC_OEM_CURSOR_INIT_RECHECK")
     return source[:m.start()] + revised + source[m.end():]
 
-def bind_row(source):
+def bind_row(source, owner):
     m = method(source, ROW_METHOD)
     body = m.group()
     if BIND in body:
@@ -73,13 +74,7 @@ def bind_row(source):
     returns = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)return-void[ \t]*\r?$", body))
     if not 1 <= len(returns) <= 3:
         raise GateFailure("CLASSIC_OEM_CURSOR_ROW_EXITS_DRIFT")
-    for r in reversed(returns):
-        body = (body[:r.start()] + r.group("indent") +
-                "invoke-static/range {p0 .. p2}, " + BIND + "\n" +
-                body[r.start():])
-    if body.count(BIND) != len(returns):
-        raise GateFailure("CLASSIC_OEM_CURSOR_ROW_RECHECK")
-    return source[:m.start()] + body + source[m.end():]
+    return wrap_row_method(source, m, owner, ROW_METHOD, BIND)
 
 def patch_text(device, group):
     if any(type(src) is not str or not 0 < len(src) < 1_000_000
@@ -102,7 +97,7 @@ def patch_text(device, group):
                 raise GateFailure("CLASSIC_OEM_CURSOR_DEVICE_DELEGATE_DRIFT")
         revised = constructor(source, DEVICE_INIT if wrapper == "wrapDevices"
                               else INIT, wrapper)
-        revised = bind_row(revised)
+        revised = bind_row(revised, owner)
         if revised.count("->" + wrapper + "(") != 1 or revised.count(BIND) < 1:
             raise GateFailure("CLASSIC_OEM_CURSOR_FINAL_RECHECK")
         out.append(revised)

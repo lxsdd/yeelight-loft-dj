@@ -47,6 +47,32 @@ class OriginalListHookTests(unittest.TestCase):
                 hook.patch_text(changed,ROOM) if kind=="Scene" else hook.patch_text(SCENE,changed)
         self.assertNotIn("set_power",scene+room)
 
+    def test_overwritten_original_parameter_registers_stay_in_callee(self):
+        # p2/v4 holds an object at return, not the original int argument.
+        # The former end-of-method hook would pass the object as int.
+        source = SCENE.replace("    check-cast v0, Ljava/lang/Object;",
+            "    move-object p2, v0\n    const/4 p1, 0x0")
+        changed, _ = hook.patch_text(source, ROOM)
+        helper = hook.method(changed, "classicLoftDjOriginalRow_" + hook.SCENE_BIND).group()
+        wrapper = hook.method(changed, hook.SCENE_BIND).group()
+        self.assertIn("move-object p2, v0", helper)
+        self.assertIn("const/4 p1, 0x0", helper)
+        self.assertNotIn(hook.BRIDGE, helper)
+        self.assertIn(".locals 0", wrapper)
+        self.assertIn("invoke-direct/range {p0 .. p2}, " + SCENE_OWNER +
+                      "->classicLoftDjOriginalRow_" + hook.SCENE_BIND, wrapper)
+        self.assertIn("invoke-static/range {p0 .. p2}, " + hook.BRIDGE, wrapper)
+        self.assertLess(wrapper.index("invoke-direct/range"), wrapper.index("invoke-static/range"))
+        self.assertEqual(changed.count("->bindSceneRow("), 1)
+
+    def test_multiple_returns_remain_in_original_body(self):
+        source = SCENE.replace("    check-cast v0, Ljava/lang/Object;",
+            "    if-nez p2, :done\n    return-void\n    :done")
+        changed, _ = hook.patch_text(source, ROOM)
+        helper = hook.method(changed, "classicLoftDjOriginalRow_" + hook.SCENE_BIND).group()
+        self.assertEqual(helper.count("return-void"), 2)
+        self.assertEqual(changed.count("->bindSceneRow("), 1)
+
     def test_private_abi_drift_fails_without_mutation(self):
         cases=[
             (SCENE.replace("SceneRecyclerViewAdapter;","OtherAdapter;"),ROOM),

@@ -62,6 +62,17 @@ class OriginalCursorIntegrationTests(unittest.TestCase):
                 hook.patch_text(changed, GROUP) if symbol == "wrapDevices" else hook.patch_text(DEVICE,changed)
         self.assertEqual(d.count("->" + hook.DEVICE_INIT),1)
 
+    def test_reused_cursor_parameter_registers_are_isolated(self):
+        source = DEVICE.replace("    :exit\n    return-void",
+                                "    :exit\n    const/4 p2, 0x1\n    return-void")
+        changed, _ = hook.patch_text(source, GROUP)
+        helper = hook.method(changed, "classicLoftDjOriginalRow_" + hook.ROW_METHOD).group()
+        wrapper = hook.method(changed, hook.ROW_METHOD).group()
+        self.assertIn("const/4 p2, 0x1", helper)
+        self.assertNotIn(hook.BIND, helper)
+        self.assertIn(".locals 0", wrapper)
+        self.assertLess(wrapper.index("invoke-direct/range"), wrapper.index(hook.BIND))
+
     def test_constructor_register_shapes_no_two_local_limit(self):
         for device in (False, True):
             signature = hook.DEVICE_INIT if device else hook.INIT

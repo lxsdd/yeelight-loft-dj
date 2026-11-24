@@ -9,6 +9,7 @@ Never publish OEM bytecode, read/write original databases or control a bulb.
 from pathlib import Path
 import re
 from classic_first import GateFailure
+from clone_original_row_wrapper import wrap_row_method
 
 SCENE = Path("smali_classes2/com/yeelight/cherry/ui/fragment/SceneRecyclerViewAdapter.smali")
 ROOM = Path("smali_classes2/com/yeelight/cherry/ui/adapter/RoomRecyclerViewAdapter.smali")
@@ -63,12 +64,8 @@ def patch_single(source, owner, bind_signature, wrap_name, bind_name):
     if not 1 <= len(returns) <= 3:
         raise GateFailure("CLASSIC_ORIGINAL_MODEL_ADAPTER_ROW_EXITS_DRIFT")
     hook=BRIDGE+"->"+bind_name+"(Ljava/lang/Object;Ljava/lang/Object;I)V"
-    for exit in reversed(returns):
-        binder_text=(binder_text[:exit.start()]+exit.group("indent")+
-                     "invoke-static/range {p0 .. p2}, "+hook+"\n"+
-                     binder_text[exit.start():])
-    changed=(changed[:binder.start()]+binder_text+changed[binder.end():])
-    if changed.count("->"+wrap_name+"(")!=1 or changed.count(hook)!=len(returns):
+    changed = wrap_row_method(changed, binder, owner, bind_signature, hook)
+    if changed.count("->"+wrap_name+"(")!=1 or changed.count(hook)!=1:
         raise GateFailure("CLASSIC_ORIGINAL_MODEL_ADAPTER_RECHECK")
     return changed
 

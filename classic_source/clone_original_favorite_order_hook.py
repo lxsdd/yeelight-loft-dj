@@ -8,6 +8,7 @@ fails closed before touching the staged clone.
 from pathlib import Path
 import re
 from classic_first import GateFailure
+from clone_original_row_wrapper import wrap_row_method
 
 FAVORITE = Path("smali_classes2/com/yeelight/yeelib/ui/adapter/FavoriteSceneAdapter.smali")
 OWNER = "Lcom/yeelight/yeelib/ui/adapter/FavoriteSceneAdapter;"
@@ -69,11 +70,8 @@ def patch_text(source):
     returns = list(re.finditer(r"(?m)^(?P<indent>[ \t]*)return-void[ \t]*$", body))
     if not 1 <= len(returns) <= 3:
         raise GateFailure("CLASSIC_FAVORITE_BIND_EXIT_DRIFT")
-    for ret in reversed(returns):
-        body = body[:ret.start()] + ret.group("indent") + \
-               "invoke-static/range {p0 .. p2}, " + BIND + "\n" + body[ret.start():]
-    source = source[:binder.start()] + body + source[binder.end():]
-    if source.count(REGISTER) != 1 or source.count(WRAP) != 1 or source.count(BIND) != len(returns):
+    source = wrap_row_method(source, binder, OWNER, BINDER, BIND)
+    if source.count(REGISTER) != 1 or source.count(WRAP) != 1 or source.count(BIND) != 1:
         raise GateFailure("CLASSIC_FAVORITE_FINAL_RECHECK")
     return source
 
