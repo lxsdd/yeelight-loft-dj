@@ -90,6 +90,25 @@ class OriginalLightAdmissionTest(unittest.TestCase):
             self.assertEqual(run.returncode,0,run.stderr)
             self.assertIn("CLASSIC_ORIGINAL_LIGHT_ADMISSION_PASS",run.stdout)
 
+    def test_scene_and_favorite_selection_check_owner_before_output_config(self):
+        text=INLINE.read_text(encoding="utf-8")
+        for declaration,next_marker in (
+            ("private void selectScene(int index) {",
+             "/** Load a full clone-local DJ profile"),
+            ("private void selectFavorite(int slot) {",
+             "/** The original Classic SceneFragment"),
+        ):
+            section=text.split(declaration,1)[1].split(next_marker,1)[0]
+            self.assertIn("redraw();",section)
+            self.assertNotIn("applyLightSettings();",section,
+                "rejected mode must not receive a configuration frame first")
+        # A user-chosen effect is admitted before any output reconfiguration.
+        redraw=text.split("private void redraw() {",1)[1].split(
+            "private final Runnable refresh",1)[0]
+        self.assertLess(redraw.index("!modeStillAllowed(lightMode)"),
+                        redraw.index("applyLightSettings();"))
+        self.assertIn("stopLightOutput(reasonForCurrentOutput());",redraw)
+
     def test_gate_is_in_real_original_music_control_lifecycle(self):
         text=INLINE.read_text(encoding="utf-8")
         self.assertIn("ClassicOriginalLightOutputGate.tryAcquire()",text)

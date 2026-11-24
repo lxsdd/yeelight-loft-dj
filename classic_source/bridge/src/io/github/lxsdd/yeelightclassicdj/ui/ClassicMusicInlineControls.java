@@ -279,7 +279,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         // fabricated OEM scene record, remote effect or secondary database.
         if (!effectSettings.selectScene(index)) return;
         boolean saved = effectSettings.saveExplicit(ClassicSceneUiState.snapshot());
-        applyLightSettings();
+        // Only redraw may reconfigure an existing Music output: it first
+        // revalidates the live source/mode and participant lease.
         redraw();
         if (!saved) stateNotice.setText(
             "DJ-Effekt gewählt, aber lokale Speicherung fehlgeschlagen.");
@@ -291,7 +292,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private void selectFavorite(int slot) {
         if (!attached || !effectSettings.selectFavorite(slot)) return;
         boolean saved = effectSettings.saveExplicit(ClassicSceneUiState.snapshot());
-        applyLightSettings();
+        // Only redraw may reconfigure an existing Music output: it first
+        // revalidates the live source/mode and participant lease.
         redraw();
         if (!saved) stateNotice.setText(
             "DJ-Favorit geladen, aber lokale Speicherung fehlgeschlagen.");
