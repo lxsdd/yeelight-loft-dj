@@ -62,14 +62,15 @@ public final class ClassicOriginalGroupMemberOrder {
             return;
         }
         String scope = ClassicOriginalMusicSelection.originalGroupDisplayScope();
-        if (!ClassicOrderPolicy.validStableId(scope)) {
+        long session = ClassicOriginalMusicSelection.originalGroupSession();
+        if (!ClassicOrderPolicy.validStableId(scope) || session == 0L) {
             list.setAdapter(original);
             return;
         }
         OrderedGroupAdapter replacement = null;
         try {
             replacement = new OrderedGroupAdapter(list, original,
-                new ClassicLocalOrderStore(list.getContext()), scope);
+                new ClassicLocalOrderStore(list.getContext()), scope, session);
             list.setAdapter(replacement);
         } catch (RuntimeException invalid) {
             // Failed setAdapter must not leak a registered OEM observer.
@@ -83,6 +84,7 @@ public final class ClassicOriginalGroupMemberOrder {
         final ListView originalList;
         final ClassicLocalOrderStore store;
         final String scope;
+        final long groupSession;
         private List<String> sourceIds = Collections.emptyList();
         private List<String> shownIds = Collections.emptyList();
         private boolean verified;
@@ -95,6 +97,8 @@ public final class ClassicOriginalGroupMemberOrder {
          */
         private boolean ownsCurrentAdapter() {
             return !revoked && originalList.getAdapter() == this &&
+                groupSession != 0L &&
+                groupSession == ClassicOriginalMusicSelection.originalGroupSession() &&
                 scope.equals(ClassicOriginalMusicSelection.originalGroupDisplayScope());
         }
         private boolean acceptsGesture() {
@@ -146,8 +150,9 @@ public final class ClassicOriginalGroupMemberOrder {
         };
 
         OrderedGroupAdapter(ListView list, ListAdapter original,
-                            ClassicLocalOrderStore store, String scope) {
-            this.original=original; this.originalList=list; this.store=store; this.scope=scope;
+                            ClassicLocalOrderStore store, String scope, long session) {
+            this.original=original; this.originalList=list; this.store=store;
+            this.scope=scope; this.groupSession=session;
             original.registerDataSetObserver(observer);
             observerRegistered = true;
             list.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {

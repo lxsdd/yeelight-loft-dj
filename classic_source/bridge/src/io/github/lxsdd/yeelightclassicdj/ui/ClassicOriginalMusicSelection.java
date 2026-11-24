@@ -14,6 +14,11 @@ public final class ClassicOriginalMusicSelection {
     private static long observedAtMs = Long.MIN_VALUE;
     // This is a read-only OEM group-list witness, NEVER a selected/online cohort.
     private static boolean groupEntryObserved;
+    // Each actual original GroupMusic entry owns a unique UI session, even when
+    // the group identity and saved display-order preference remain unchanged.
+    // A retired ListView must never regain gesture authority on same-room Back.
+    private static long groupSessionSerial;
+    private static long activeGroupSession;
     private static int observedGroupCount = -1;
     private static long groupObservedAtMs = Long.MIN_VALUE;
     private static ClassicOriginalGroupMemberWitness.Snapshot originalMemberKeys =
@@ -128,7 +133,16 @@ public final class ClassicOriginalMusicSelection {
         resetGroup();
         // An untrusted or unrelated Activity cannot claim the earlier OEM click.
         groupEntryObserved = matchesAt(originalId, nowMs);
-        if (groupEntryObserved) groupObservedAtMs = nowMs;
+        if (groupEntryObserved) {
+            // Never reuse a session generation. An exhausted counter refuses
+            // new UI gestures instead of re-authorizing a very old adapter.
+            if (groupSessionSerial == Long.MAX_VALUE) {
+                groupEntryObserved = false;
+                return;
+            }
+            activeGroupSession = ++groupSessionSerial;
+            groupObservedAtMs = nowMs;
+        }
     }
 
     /** Counts a real OEM J1() list. Does not enumerate/retain OEM device objects. */
@@ -184,6 +198,11 @@ public final class ClassicOriginalMusicSelection {
     static synchronized String originalGroupDisplayScope() {
         return groupEntryFreshAt(monotonicMs()) && selectedId != null
             ? "classic-original-group-members-" + selectedId : null;
+    }
+
+    /** Ephemeral host lifetime, separate from the persistent display-order scope. */
+    static synchronized long originalGroupSession() {
+        return groupEntryFreshAt(monotonicMs()) ? activeGroupSession : 0L;
     }
 
     /** Compare the live OEM ListAdapter identities against the last pinned
@@ -427,6 +446,14 @@ public final class ClassicOriginalMusicSelection {
      */
     public static synchronized void originalGroupClosed() {
         groupEntryObserved = false;
+        activeGroupSession = 0L;
+        // A MusicActivity may still display the brief original group count,
+        // but leaving GroupMusic is NOT continuing authorization to send
+        // frames. The running ConsentGuard observes this exact revision and
+        // performs OWNED-only shutdown rather than taking over another peer.
+        ++outputRevision;
+        outputChangeReason = CHANGE_CONTEXT;
+        revokeLan();
         // The count is safe to show briefly after Back; private OEM keys are not.
         originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
     }
@@ -438,6 +465,7 @@ public final class ClassicOriginalMusicSelection {
         originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
         djIntentKeys.clear();
         groupEntryObserved = false;
+        activeGroupSession = 0L;
         observedGroupCount = -1;
         groupObservedAtMs = Long.MIN_VALUE;
     }

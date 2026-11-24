@@ -473,6 +473,77 @@ public final class GroupMemberOrderHarness {
         activeOEM.observerCount()==0,"unknown OEM adapter falls back cleanly");
     check(!active.markDjGroup(true,active.revision()),
         "former wrapper cannot authorize a DJ group after unknown rebind");
+    // A completed original GroupMusic screen can keep a read-only count on
+    // MusicActivity, but cannot keep its previous LAN/owned-output consent.
+    // The same group reopening must never reactivate an older attached view.
+    owner("room-lifecycle");
+    ListView closedView=new ListView(context);
+    g closedOEM=new g(context,lamp);
+    ClassicOriginalGroupMemberOrder.installGroupAdapter(closedView,closedOEM);
+    ClassicOriginalGroupMemberOrder.OrderedGroupAdapter closed=installed(closedView);
+    ClassicOriginalMusicSelection.observedOriginalGroupMembers(closedOEM.items);
+    check(closed.getItem(0)!=null,"first original lifecycle witness pinned");
+    check(closed.markDjMember(lamp,true,closed.revision()),
+        "lifecycle user explicitly selects an original member");
+    check(ClassicOriginalMusicSelection.acceptLanProof(justLamp,justLamp,
+        witness.resolveAll(justLamp,observed)),
+        "lifecycle source establishes positive verified LAN grant");
+    ClassicOriginalMusicSelection.OutputLease closedLease=
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(closedLease!=null && ClassicOriginalMusicSelection.isOutputLeaseCurrent(closedLease),
+        "original group has valid owned output before Back");
+    long closedGeneration=closed.revision();
+    final int[] expiredClicks={0};
+    closedView.setOnItemClickListener((parent,row,pos,id)->{expiredClicks[0]++;});
+    View closedRow=closed.getView(0,null,closedView);
+    ClassicOriginalMusicSelection.originalGroupClosed();
+    check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(closedLease),
+        "Back revokes live Music output lease without any LAN command");
+    check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0 &&
+        ClassicOriginalMusicSelection.leaseForOriginalOutput()==null,
+        "Back clears original LAN targets and cannot create a new lease");
+    check(ClassicOriginalMusicSelection.djIntentCount()==1 &&
+        ClassicOriginalMusicSelection.originalGroupMemberCount()==1,
+        "Music return retains only a bounded read-only group/count witness");
+    check(!closed.markDjMember(lamp,false,closedGeneration),
+        "closed original UI cannot mutate the displayed DJ selection");
+    closedRow.performClick();
+    check(expiredClicks[0]==0,"closed original row cannot dispatch an OEM click");
+    // A new Activity for THE SAME original group reuses the display-order
+    // preference scope, but has a different immutable session generation.
+    owner("room-lifecycle");
+    ListView reopenedView=new ListView(context);
+    g reopenedOEM=new g(context,lamp);
+    ClassicOriginalGroupMemberOrder.installGroupAdapter(reopenedView,reopenedOEM);
+    ClassicOriginalGroupMemberOrder.OrderedGroupAdapter reopened=installed(reopenedView);
+    ClassicOriginalMusicSelection.observedOriginalGroupMembers(reopenedOEM.items);
+    check(reopened.getItem(0)!=null,"same-room original UI can rebind");
+    check(ClassicOriginalMusicSelection.djIntentCount()==0 &&
+        ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
+        "new group session does not inherit a previous DJ/IP authorization");
+    check(!closed.markDjMember(lamp,true,closedGeneration) &&
+        !closed.markDjGroup(true,closedGeneration) &&
+        !closed.requestLanCheck(closedGeneration),
+        "older still-attached host cannot authorize new selection or LAN scan");
+    closedRow.performClick();
+    check(expiredClicks[0]==0,"same-room reopen cannot revive a stale OEM row");
+    check(reopened.markDjMember(lamp,true,reopened.revision()),
+        "current original host can explicitly opt in");
+    check(ClassicOriginalMusicSelection.acceptLanProof(justLamp,justLamp,
+        witness.resolveAll(justLamp,observed)),
+        "current original host can establish a new verified grant");
+    ClassicOriginalMusicSelection.OutputLease reopenedLease=
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(reopenedLease!=null && ClassicOriginalMusicSelection.isOutputLeaseCurrent(reopenedLease),
+        "current host has distinct current output lease");
+    closedOEM.notifyDataSetChanged();
+    check(ClassicOriginalMusicSelection.isOutputLeaseCurrent(reopenedLease) &&
+        !ClassicOriginalMusicSelection.isOutputLeaseCurrent(closedLease),
+        "late OEM refresh from old host cannot invalidate or revive a new grant");
+    ClassicOriginalMusicSelection.originalGroupClosed();
+    check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(reopenedLease),
+        "second Back revokes second owned output grant");
+
     // Real original app / unknown adapter ownership must always fall back.
     ListView originalPackage=new ListView(new OriginalContext());
     g unowned=new g(context,"x","y");
