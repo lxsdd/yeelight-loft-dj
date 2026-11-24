@@ -413,6 +413,50 @@ fun main() {
         Thread.sleep(40L)
         check(renderedIds.size == priorFrames)
     }
+    // Full Original-Classic Music progress on real coordinator/engine runtime.
+    // Test transport is in-memory only, never contacts a LAN peer or device.
+    for (total in listOf(14,32)) {
+        val ids=(1..total).map { "192.168.82.${it+20}" }
+        val connected=linkedSetOf<String>()
+        val stopped=linkedSetOf<String>()
+        val fleet=CheckpointRuntime()
+        fleet.wifiAddress={ "192.168.82.10" }
+        fleet.clock={ System.nanoTime()/1_000_000L }
+        fleet.idle={ Thread.sleep(5L) }
+        check(fleet.configure(1.0,"SCANNER"))
+        fleet.transportFactory={ _, selected ->
+            check(selected==ids.toSet())
+            object : loftdj.classic.ClassicMusicCoordinator.Transport {
+                override fun readMusic(id: String): Boolean?=id in connected
+                override fun requestStart(id: String): Boolean {
+                    check(connected.add(id)); return true
+                }
+                override fun reverseConnected(id: String): Boolean=id in connected
+                override fun requestStop(id: String): Boolean {
+                    check(stopped.add(id)); connected.remove(id); return true
+                }
+                override fun closeReverse(id: String) {}
+                override fun sendReverseFrame(id: String, generation: Long,
+                                              rgb: Int, brightness: Int)=true
+            }
+        }
+        val listener=Listener()
+        fleet.startOriginalTimedScene(ids,listener,
+            object : DjRuntime.ConsentGuard { override fun isStillAuthorized()=true })
+        val events=synchronized(listener.states) { listener.states.toList() }
+        check(events.size==total+1)
+        for (index in 1..total) {
+            check(events[index-1]=="ORIGINAL_CONNECTING_${index}_OF_${total}_LAMPS") {
+                "Incorrect reverse confirmation at $index of $total"
+            }
+        }
+        check(events.last()=="SCENE_TIMED_${total}_LAMPS") {
+            "Full cohort is not confirmed until all reverse sockets are OWNED"
+        }
+        fleet.stop()
+        check(stopped==ids.toSet() && connected.isEmpty())
+    }
+
     // The genuine original Classic callback now has a production output path
     // through the SAME owned reverse transport, but NO SECOND AudioRecord.
     val original = CheckpointRuntime()
@@ -632,8 +676,12 @@ fun main() {
               requested.drop(7).all { remote[it] == false }) {
             "$kind affected a foreign or later unselected Music session"
         }
-        check(writes.isEmpty() && output.states.isEmpty()) {
-            "$kind emitted a frame or reported success before all peers were confirmed"
+        val reports=synchronized(output.states) { output.states.toList() }
+        val expectedProgress=if (kind=="ORIGINAL_TIMED")
+            (1..6).map { "ORIGINAL_CONNECTING_${it}_OF_14_LAMPS" }
+            else emptyList()
+        check(writes.isEmpty() && reports==expectedProgress) {
+            "$kind emitted a frame or incorrectly reported full 14-lamp output: $reports"
         }
         check(input.closed == (kind == "MICROPHONE")) {
             "$kind opened/failed to close an unrelated audio source"

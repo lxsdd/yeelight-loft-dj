@@ -146,18 +146,33 @@ class ClassicMusicCoordinator(private val transport: Transport) {
      * A stop may arrive during a previous reverse-channel handshake.
      * Already confirmed OWNED members remain visible to the caller for cleanup.
      */
-    @Synchronized fun startGroup(ids: List<String>, allowNextStart: () -> Boolean = { true }): Map<String, State> {
+    @Synchronized fun startGroup(
+        ids: List<String>, allowNextStart: () -> Boolean = { true },
+        onConfirmed: (Int, Int) -> Unit = { _, _ -> }
+    ): Map<String, State> {
         require(ids.distinct().size == ids.size)
         ids.forEach { device(it) }
         val states = linkedMapOf<String, State>()
+        var confirmed = 0
         for (id in ids) {
-            if (!allowNextStart()) break
+            // Revocation or a failed original-host callback must NOT discard
+            // the receipt for already OWNED peers; caller rolls those back.
+            val allowed = try { allowNextStart() }
+                catch (_: RuntimeException) { false }
+                catch (_: LinkageError) { false }
+            if (!allowed) break
             val state = start(id)
             states[id] = state
             // A foreign owner, missing ACK or uncertain session revokes the
             // proposed show. Never needlessly open Music on later lamps.
             // Caller rolls back independently confirmed OWNED predecessors.
             if (state != State.OWNED) break
+            // Increment only after the reverse socket, never just set_music ACK.
+            ++confirmed
+            // Progress cannot endanger already-owned physical Music sessions.
+            try { onConfirmed(confirmed, ids.size) }
+            catch (_: RuntimeException) { }
+            catch (_: LinkageError) { }
         }
         return states
     }

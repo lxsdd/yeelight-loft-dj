@@ -66,6 +66,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private volatile long originalObserverEpoch;
     private volatile String lightStatus = "";
     private volatile boolean lightConfirmed; // Kotlin OWNED group ACK, not a proposed selection
+    private volatile int lightConnectedCount; // Partial reverse ACK, never an active group
     private volatile int lastStopReason = ClassicOriginalLightReport.NONE;
     private final ClassicDjPatternPreviewView preview;
     private final TextView[] choices = new TextView[NAMES.length];
@@ -400,6 +401,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             lightLease = consent;
             epoch = ++lightEpoch;
             lightConfirmed = false;
+            lightConnectedCount = 0;
             lastStopReason = ClassicOriginalLightReport.NONE;
             lightStatus = ClassicOriginalLightReport.starting(targets.size());
         }
@@ -422,12 +424,22 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                                         "SCENE_TIMED_" : "ORIGINAL_AUDIO_") +
                                     targets.size() + "_LAMPS");
                                 if (verified) {
+                                    lightConnectedCount = targets.size();
                                     lightConfirmed = true;
                                     lightStatus = ClassicOriginalLightReport.active(
                                         targets.size(), mode == ClassicOriginalLightMode.TIMED);
                                 } else if ("STOP_UNCONFIRMED".equals(state)) {
                                     lightConfirmed = false;
+                                    lightConnectedCount = 0;
                                     lightStatus = ClassicOriginalLightReport.uncertain();
+                                } else {
+                                    int progress = ClassicOriginalLightReport.confirmedProgress(
+                                        state, targets.size());
+                                    if (!lightConfirmed && progress > lightConnectedCount) {
+                                        lightConnectedCount = progress;
+                                        lightStatus = ClassicOriginalLightReport.connecting(
+                                            progress, targets.size());
+                                    }
                                 }
                             }
                             if (attached) redraw();
@@ -465,6 +477,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                         lightMode = ClassicOriginalLightMode.DENY;
                         lightSessionToken = 0L;
                         lightConfirmed = false;
+                        lightConnectedCount = 0;
                         ++lightEpoch;
                         lightStatus = "Lampenverbindung verweigert oder nicht bestätigt";
                     }
@@ -549,6 +562,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             lightMode = ClassicOriginalLightMode.DENY;
             lightSessionToken = 0L;
             lightConfirmed = false;
+            lightConnectedCount = 0;
             lastStopReason = reason;
             lightStatus = ClassicOriginalLightReport.stopping(reason);
         }
@@ -683,7 +697,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         final boolean outputUncertain = ClassicOriginalLightOutputGate.isQuarantined();
         final int availableMode = ClassicOriginalLightMode.choose(
             ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse, audio.fresh);
-        lightControl.setText(running ? "DJ-Lichtausgabe beenden" :
+        lightControl.setText(running ? (lightConfirmed ?
+            "DJ-Lichtausgabe beenden" : "DJ-Start abbrechen") :
             outputUncertain ? "DJ-Lichtausgabe gesperrt · Sitzungszustand unklar" :
             outputBusy ? "Vorherige DJ-Lichtsession wird beendet" :
             (endpoints>0 && availableMode == ClassicOriginalLightMode.TIMED
@@ -703,7 +718,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         // Visible with collapsed effects sheet, without covering original OEM player.
         header.setText(ClassicOriginalLightReport.header(lightStatus,
             running && live != null ? live.size() : 0,
-            running && lightConfirmed));
+            running && lightConfirmed, running ? lightConnectedCount : 0));
         header.setContentDescription((running || !lightStatus.isEmpty() ?
             lightStatus : "Licht-Effekte") + " · Details öffnen");
         if (inlineSheet.getVisibility() == View.VISIBLE) preview.invalidate();

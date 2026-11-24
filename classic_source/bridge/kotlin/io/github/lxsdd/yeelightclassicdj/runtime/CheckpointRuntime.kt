@@ -318,10 +318,19 @@ class CheckpointRuntime : DjRuntime {
             // A STOP during a previous device handshake must not start more lamps.
             // The staged engine still cleans up any confirmed OWNED socket on abort.
             val states = if (selectedLampIps.isEmpty()) emptyMap() else
-                newEngine.select(selectedLampIps) {
-                    synchronized(lock) { state == State.STARTING } &&
-                        (originalAuthorization?.isStillAuthorized() ?: true)
-                }
+                newEngine.select(selectedLampIps,
+                    allowNextStart = {
+                        synchronized(lock) { state == State.STARTING } &&
+                            (originalAuthorization?.isStillAuthorized() ?: true)
+                    },
+                    onConfirmed = { confirmed, total ->
+                        // Read-only UI progress for the real Original-Music lane.
+                        // No success claim until the COMPLETE cohort is owned.
+                        // Do not send peer IPs, OEM IDs or private exception text.
+                        if (originalAuthorization != null &&
+                            synchronized(lock) { state == State.STARTING })
+                            listener.onState("ORIGINAL_CONNECTING_${confirmed}_OF_${total}_LAMPS")
+                    })
             if (states.values.any { it == ClassicMusicCoordinator.State.QUARANTINED })
                 synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
             val owned = states.filterValues { it == ClassicMusicCoordinator.State.OWNED }.keys

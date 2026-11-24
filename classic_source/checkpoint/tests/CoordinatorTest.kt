@@ -47,7 +47,78 @@ fun main() {
     reverseExceptionScenario()
     groupStopScenario()
     cleanupRecoveryScenario()
+    groupProgressSafetyScenario()
     println("PASS coordinator synthetic safety scenarios")
+}
+
+/** Production coordinator reports only confirmed reverse sockets. An optional
+ * UI observer cannot orphan a Music session if it throws during callback.
+ */
+fun groupProgressSafetyScenario() {
+    for (total in listOf(14,32)) {
+        val ids=(1..total).map { "lamp$it" }
+        val wire=Fake()
+        val group=ClassicMusicCoordinator(wire)
+        for (id in ids) {
+            group.register(id,true); wire.active[id]=false; wire.connected[id]=true
+        }
+        val progress=mutableListOf<Int>()
+        val states=group.startGroup(ids,onConfirmed={ count, expected ->
+            check(expected==total); progress.add(count)
+        })
+        check(states.size==total && states.values.all { it==ClassicMusicCoordinator.State.OWNED })
+        check(progress==(1..total).toList()) { "Only reverse-connected peers count" }
+        check(group.stopGroup(ids).values.all { it==ClassicMusicCoordinator.State.IDLE })
+        check(wire.writes.count { it.startsWith("stop:") }==total)
+    }
+    val ids=(1..14).map { "lamp$it" }
+    val wire=Fake(); val group=ClassicMusicCoordinator(wire)
+    for (id in ids) {
+        group.register(id,true)
+        wire.active[id]=(id==ids[6]); wire.connected[id]=true
+    }
+    val progress=mutableListOf<Int>()
+    val partial=group.startGroup(ids,onConfirmed={ count, expected ->
+        check(expected==14); progress.add(count)
+    })
+    check(progress==(1..6).toList())
+    check(partial.size==7 &&
+          partial[ids[6]]==ClassicMusicCoordinator.State.UNKNOWN_OWNER)
+    check(wire.writes.none { it=="start:" + ids[6] || it=="start:" + ids[7] })
+    check(group.stopGroup(ids).getValue(ids[6])==ClassicMusicCoordinator.State.UNKNOWN_OWNER)
+    check(wire.writes.none { it=="stop:" + ids[6] })
+    check(wire.writes.count { it.startsWith("stop:") }==6)
+
+    for (error in listOf(0,1)) {
+        val bad=Fake(); val c=ClassicMusicCoordinator(bad)
+        for (id in ids) { c.register(id,true); bad.active[id]=false; bad.connected[id]=true }
+        val states=c.startGroup(ids,onConfirmed={ count,_ ->
+            if (count==3) {
+                if (error==0) throw IllegalStateException("UI closed")
+                else throw NoSuchMethodError("Optional status changed")
+            }
+        })
+        check(states.size==14 && states.values.all { it==ClassicMusicCoordinator.State.OWNED })
+        check(c.stopGroup(ids).values.all { it==ClassicMusicCoordinator.State.IDLE })
+        check(bad.writes.count { it.startsWith("stop:") }==14)
+    }
+    for (error in listOf(0,1)) {
+        val bad=Fake(); val c=ClassicMusicCoordinator(bad)
+        for (id in ids) { c.register(id,true); bad.active[id]=false; bad.connected[id]=true }
+        var tries=0
+        val states=c.startGroup(ids,allowNextStart={
+            ++tries
+            if (tries==4) {
+                if (error==0) throw IllegalStateException("Original owner disappeared")
+                else throw NoSuchFieldError("OEM callback changed")
+            }
+            true
+        })
+        check(states.keys==ids.take(3).toSet())
+        check(bad.writes.count { it.startsWith("start:") }==3)
+        check(c.stopGroup(ids).values.all { it==ClassicMusicCoordinator.State.IDLE })
+        check(bad.writes.count { it.startsWith("stop:") }==3)
+    }
 }
 
 class FaultTransport : ClassicMusicCoordinator.Transport {

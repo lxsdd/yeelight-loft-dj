@@ -32,6 +32,32 @@ public class OriginalLightReportHarness {
         return out;
     }
     public static void main(String[] args) {
+        for (int size : new int[]{1, 4, 14, 32, 128, 512}) {
+            ok(ClassicOriginalLightReport.confirmedProgress(
+                 "ORIGINAL_CONNECTING_1_OF_" + size + "_LAMPS",size)==1,
+                 "exact first confirmed reverse channel");
+            ok(ClassicOriginalLightReport.confirmedProgress(
+                 "ORIGINAL_CONNECTING_" + size + "_OF_" + size + "_LAMPS",size)==size,
+                 "complete progress is not complete cohort ACK");
+            ok(ClassicOriginalLightReport.connecting(size,size).contains(
+                 size + " von " + size + " Music-Verbindungen bestätigt"),
+                 "bounded progress for dynamic fleets");
+            ok(ClassicOriginalLightReport.header(
+                 ClassicOriginalLightReport.connecting(1,size),size,false,1)
+                 .contains("1/" + size + " Verbindungen"),
+                 "collapsed original music view must reveal real progress");
+            for (String bad : new String[]{
+                "ORIGINAL_CONNECTING_0_OF_" + size + "_LAMPS",
+                "ORIGINAL_CONNECTING_" + (size+1) + "_OF_" + size + "_LAMPS",
+                "ORIGINAL_CONNECTING_01_OF_" + size + "_LAMPS",
+                "ORIGINAL_CONNECTING_-1_OF_" + size + "_LAMPS",
+                "ORIGINAL_CONNECTING_1_OF_" + (size+1) + "_LAMPS",
+                "ORIGINAL_CONNECTING_1_OF_" + size + "_LAMPS_192.168.1.2",
+                "DJ_ACTIVE_" + size + "_LAMPS"}) {
+                ok(ClassicOriginalLightReport.confirmedProgress(bad,size)==-1,
+                   "invalid or foreign progress must be ignored");
+            }
+        }
         ok(ClassicOriginalLightReport.active(14,false).contains("14 bestätigte Lampen"),
            "full 14-lamp readout, not four");
         ok(ClassicOriginalLightReport.active(32,true).contains("32 bestätigte Lampen"),
@@ -119,6 +145,17 @@ class OriginalLightReportTest(unittest.TestCase):
         group=GROUP.read_text(encoding="utf-8")
         self.assertIn("ClassicOriginalLightReport.starting(targets.size())",ui)
         self.assertIn("ClassicOriginalLightReport.active(",ui)
+        self.assertIn("ClassicOriginalLightReport.confirmedProgress(",ui)
+        self.assertIn("lightConnectedCount = progress;",ui)
+        self.assertIn("running && lightConfirmed, running ? lightConnectedCount : 0",ui)
+        self.assertIn("DJ-Start abbrechen",ui)
+        runtime=(ROOT/"bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.kt").read_text()
+        coordinator=(ROOT/"checkpoint/src/ClassicMusicCoordinator.kt").read_text()
+        engine=(ROOT/"checkpoint/src/ClassicDjEngine.kt").read_text()
+        self.assertIn("onConfirmed = { confirmed, total ->",runtime)
+        self.assertIn("ORIGINAL_CONNECTING_",runtime)
+        self.assertIn("onConfirmed(confirmed, ids.size)",coordinator)
+        self.assertIn("coordinator.startGroup(ids, allowNextStart, onConfirmed)",engine)
         self.assertIn("ClassicOriginalLightReport.uncertain()",ui)
         self.assertIn("outputLeaseChangeReason(lease)",ui)
         self.assertIn("shownLightRunning != runningOutput",ui)

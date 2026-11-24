@@ -30,6 +30,29 @@ public final class ClassicOriginalLightReport {
     static String starting(int count) {
         return "DJ-Start · "+Math.max(0,count)+" ausgewählte Lampen werden geprüft";
     }
+    /** A progress packet is counted only for the exact requested cohort.
+     * No arbitrary OEM text, IP, id, firmware or partial output approval.
+     */
+    static int confirmedProgress(String state, int total) {
+        if (state == null || total < 1) return -1;
+        String prefix = "ORIGINAL_CONNECTING_";
+        String suffix = "_OF_" + total + "_LAMPS";
+        if (!state.startsWith(prefix) || !state.endsWith(suffix)) return -1;
+        String count = state.substring(prefix.length(), state.length() - suffix.length());
+        if (count.isEmpty() || count.length() > 9 ||
+            (count.length() > 1 && count.charAt(0) == '0')) return -1;
+        for (int i = 0; i < count.length(); i++)
+            if (count.charAt(i) < '0' || count.charAt(i) > '9') return -1;
+        try {
+            int n = Integer.parseInt(count);
+            return n >= 1 && n <= total ? n : -1;
+        } catch (NumberFormatException invalid) { return -1; }
+    }
+    static String connecting(int confirmed, int total) {
+        if (total < 1 || confirmed < 1 || confirmed > total) return "";
+        return "DJ-Start · " + confirmed + " von " + total +
+            " Music-Verbindungen bestätigt · vollständige Gruppe wird geprüft";
+    }
     /** Only after original Kotlin runtime confirms every OWNED Music participant. */
     static String active(int count, boolean timed) {
         return "DJ aktiv · "+Math.max(0,count)+" bestätigte Lampen · "+
@@ -46,7 +69,13 @@ public final class ClassicOriginalLightReport {
         return "DJ-Ausgabe gesperrt · Music-Sitzungsabschluss nicht bestätigt";
     }
     static String header(String status,int count,boolean confirmed) {
+        return header(status,count,confirmed,0);
+    }
+    static String header(String status,int count,boolean confirmed,int partial) {
         if (confirmed) return "DJ aktiv · "+Math.max(0,count)+" Lampen  ﹀";
+        if (status != null && status.startsWith("DJ-Start") &&
+            count > 0 && partial > 0 && partial <= count)
+            return "DJ-Start · " + partial + "/" + count + " Verbindungen  ﹀";
         if (status != null && !status.isEmpty()) {
             if (status.startsWith("DJ-Start")) return "DJ-Start · "+Math.max(0,count)+" Lampen  ﹀";
             if (status.startsWith("DJ wird beendet")) return "DJ wird beendet  ﹀";
