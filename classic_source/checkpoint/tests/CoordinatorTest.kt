@@ -49,6 +49,7 @@ fun main() {
     cleanupRecoveryScenario()
     groupProgressSafetyScenario()
     linkageFailureSafetyScenario()
+    quotaFailureFleetScenarios()
     println("PASS coordinator synthetic safety scenarios")
 }
 
@@ -405,4 +406,68 @@ fun frameScenarios() {
     checkState(e.snapshot().single().state, ClassicMusicCoordinator.State.QUARANTINED)
     check(!e.frame("reject", gen, 0xffffff, 100))
     check(f.writes.count { it == "close" } == 1)
+}
+
+/** Real production budget + coordinator; deterministic 14/32 device cases. */
+fun quotaFailureFleetScenarios() {
+    val budget=ClassicLanRpcBudget()
+    for(size in listOf(14,32)) {
+        val ids=(1..size).map { "fleet-$size-peer-$it" }
+        ids.forEach { id ->
+            repeat(8) { check(budget.admit(id,1000)) }
+            check(!budget.admit(id,1000) && !budget.admit(id,60999))
+            check(budget.admit(id,61000))
+            check(!budget.admit(id,5))
+        }
+        check(!budget.admit("",1) && !budget.admit("bad",-1))
+        check(ClassicYeelightMusicTransport.classifyMatchedRpcError(
+          """{"id":4,"error":{"code":-1,"message":"client quota exceeded"}}""") ==
+          ClassicLanFailure.Kind.DEVICE_QUOTA)
+        check(ClassicYeelightMusicTransport.classifyMatchedRpcError(
+          """{"id":4,"error":{"code":-1,"message":"busy"}}""") ==
+          ClassicLanFailure.Kind.DEVICE_REJECTED)
+        check(ClassicYeelightMusicTransport.classifyMatchedRpcError(
+          """{"id":4,"result":["client quota exceeded"]}""")==null)
+        val faults=listOf<Exception>(
+          ClassicLanFailure(ClassicLanFailure.Kind.LOCAL_BUDGET),
+          ClassicLanFailure(ClassicLanFailure.Kind.DEVICE_QUOTA),
+          ClassicLanFailure(ClassicLanFailure.Kind.DEVICE_REJECTED),
+          java.net.SocketTimeoutException("injected"),
+          java.io.IOException("injected"))
+        val kinds=listOf(ClassicMusicCoordinator.Failure.LOCAL_BUDGET,
+          ClassicMusicCoordinator.Failure.DEVICE_QUOTA,
+          ClassicMusicCoordinator.Failure.DEVICE_REJECTED,
+          ClassicMusicCoordinator.Failure.TIMEOUT,
+          ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN)
+        for ((fault,kind) in faults.zip(kinds)) {
+            val active=mutableMapOf<String,Boolean>()
+            val writes=mutableListOf<String>()
+            val failed=ids[6]
+            val wire=object:ClassicMusicCoordinator.Transport {
+                override fun readMusic(id:String):Boolean?=active[id]?:false
+                override fun requestStart(id:String):Boolean {
+                    writes.add("start:$id")
+                    if(id==failed) throw fault
+                    active[id]=true;return true
+                }
+                override fun reverseConnected(id:String)=true
+                override fun requestStop(id:String):Boolean {
+                    writes.add("stop:$id");active[id]=false;return true
+                }
+                override fun closeReverse(id:String) { writes.add("close:$id") }
+                override fun sendReverseFrame(id:String,generation:Long,rgb:Int,brightness:Int)=true
+            }
+            val c=ClassicMusicCoordinator(wire)
+            ids.forEach { c.register(it,true) }
+            val started=c.startGroup(ids)
+            check(started.size==7 && started[failed]==ClassicMusicCoordinator.State.QUARANTINED)
+            check(c.snapshot()[6].failure==kind)
+            check(ids.drop(7).none { "start:$it" in writes })
+            check(c.stopGroup(ids).values.count { it==ClassicMusicCoordinator.State.IDLE }==size-1)
+            check(ids.take(6).all { "stop:$it" in writes })
+            check("stop:$failed" !in writes)
+            check(c.confirmRecovery(failed,false)==ClassicMusicCoordinator.State.QUARANTINED)
+            check(c.snapshot()[6].failure==kind)
+        }
+    }
 }

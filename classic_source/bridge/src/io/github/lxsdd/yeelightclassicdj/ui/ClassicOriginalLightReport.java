@@ -68,6 +68,32 @@ public final class ClassicOriginalLightReport {
     static String uncertain() {
         return "DJ-Ausgabe gesperrt · Music-Sitzungsabschluss nicht bestätigt";
     }
+    /** Fixed status vocabulary: no raw user, OEM or LAN messages. */
+    static String failureDetail(String code) {
+        if (code == null) return null;
+        switch (code) {
+            case "LOCAL_BUDGET": return "lokales Befehlslimit erreicht · kein Retry";
+            case "DEVICE_QUOTA": return "Gerät meldet LAN-Quota · kein Retry";
+            case "DEVICE_REJECTED": return "Gerät hat Befehl abgelehnt";
+            case "TIMEOUT": return "Zeitüberschreitung · Ausgang unklar";
+            case "NETWORK_UNCERTAIN": return "LAN-Verbindungszustand unklar";
+            case "OEM_ABI": return "Android/OEM-Schnittstelle nicht verfügbar";
+            case "MUSIC_UNKNOWN": return "Music-Zustand nicht sicher lesbar";
+            case "FOREIGN_OWNER": return "andere Music-Sitzung bereits aktiv";
+            case "REVERSE_UNCERTAIN": return "Music-Rückkanal nicht bestätigt";
+            case "CLEANUP_UNCERTAIN": return "lokaler Sitzungsabschluss unklar";
+            default: return null;
+        }
+    }
+    static String startFailure(String code) {
+        String detail = failureDetail(code);
+        return detail == null ? "Lampenverbindung verweigert oder nicht bestätigt" :
+            "DJ-Start gesperrt · " + detail;
+    }
+    static String uncertain(String code) {
+        String detail = failureDetail(code);
+        return detail == null ? uncertain() : uncertain() + " · " + detail;
+    }
     static String header(String status,int count,boolean confirmed) {
         return header(status,count,confirmed,0);
     }

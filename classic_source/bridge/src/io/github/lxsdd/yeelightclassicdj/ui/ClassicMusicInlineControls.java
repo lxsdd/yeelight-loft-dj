@@ -431,7 +431,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                                 } else if ("STOP_UNCONFIRMED".equals(state)) {
                                     lightConfirmed = false;
                                     lightConnectedCount = 0;
-                                    lightStatus = ClassicOriginalLightReport.uncertain();
+                                    lightStatus = ClassicOriginalLightReport.uncertain(runtime.lanFailureCode());
                                 } else {
                                     int progress = ClassicOriginalLightReport.confirmedProgress(
                                         state, targets.size());
@@ -479,7 +479,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                         lightConfirmed = false;
                         lightConnectedCount = 0;
                         ++lightEpoch;
-                        lightStatus = "Lampenverbindung verweigert oder nicht bestätigt";
+                        lightStatus = ClassicOriginalLightReport.startFailure(runtime.lanFailureCode());
                     }
                 }
                 finishLightSession(runtime, token, -1);
@@ -506,7 +506,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                             lightRuntime == null) {
                             lightStatus = finished ?
                                 ClassicOriginalLightReport.stopped(lastStopReason) :
-                                ClassicOriginalLightReport.uncertain();
+                                ClassicOriginalLightReport.uncertain(runtime.lanFailureCode());
                         }
                     }
                     if (attached) redraw();

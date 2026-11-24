@@ -10,7 +10,6 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
-import java.util.ArrayDeque
 
 /**
  * Real opt-in Yeelight Music TCP reverse transport. Never broadcasts, never retries a command,
@@ -112,12 +111,8 @@ class ClassicYeelightMusicTransport(
         // Extremely conservative budget independent of firmware's unknown global quota.
         // Shared for the whole Android process: stop/restart cannot reset the firmware quota.
         // Even failed/uncertain writes consume a slot, never automatically replay them.
-        synchronized(commandBudget) {
-            val events = commandBudget.getOrPut(id) { ArrayDeque<Long>() }
-            while (events.isNotEmpty() && now - events.first >= 60_000L) events.removeFirst()
-            if (events.size >= 8) throw IOException("Normal LAN command budget exhausted; no automatic retry")
-            events.addLast(now)
-        }
+        if (!commandBudget.admit(id, now))
+            throw ClassicLanFailure(ClassicLanFailure.Kind.LOCAL_BUDGET)
         val requestId = peer.nextId++
         Socket().use { socket ->
             socket.connect(InetSocketAddress(id, tcpPort), 1_500)
@@ -131,7 +126,7 @@ class ClassicYeelightMusicTransport(
                 val line = readBoundedLine(reader) ?: throw IOException("Connection closed before matching reply")
                 val match = idPattern.find(line) ?: return@repeat
                 if (match.groupValues[1].toIntOrNull() != requestId) return@repeat
-                if (errorPattern.containsMatchIn(line)) throw IOException("Yeelight RPC rejected")
+                classifyMatchedRpcError(line)?.let { throw ClassicLanFailure(it) }
                 if (isRead) return line
                 if (okPattern.containsMatchIn(line)) return "ok"
                 throw IOException("Yeelight RPC returned no explicit OK")
@@ -152,12 +147,20 @@ class ClassicYeelightMusicTransport(
     }
 
     companion object {
-        private val commandBudget = mutableMapOf<String, ArrayDeque<Long>>()
+        private val commandBudget = ClassicLanRpcBudget()
         private val idPattern = Regex("\"id\"\\s*:\\s*(\\d+)")
         private val okPattern = Regex("\"result\"\\s*:\\s*\\[\\s*\"ok\"\\s*]")
         private val musicProp0 = Regex(".*\"result\"\\s*:\\s*\\[\\s*\"0\"\\s*].*")
         private val musicProp1 = Regex(".*\"result\"\\s*:\\s*\\[\\s*\"1\"\\s*].*")
         private val errorPattern = Regex("\"error\"\\s*:")
+        private val quotaMessage = Regex(
+            "\"error\"\\s*:\\s*\\{[^{}]{0,320}\"message\"\\s*:\\s*\"client quota exceeded\"",
+            RegexOption.IGNORE_CASE)
+        /** Only after this receive path has correlated the response request ID. */
+        internal fun classifyMatchedRpcError(line: String): ClassicLanFailure.Kind? =
+            if (!errorPattern.containsMatchIn(line)) null
+            else if (quotaMessage.containsMatchIn(line)) ClassicLanFailure.Kind.DEVICE_QUOTA
+            else ClassicLanFailure.Kind.DEVICE_REJECTED
 
         @JvmStatic fun validLanIp(address: String): Boolean {
             val octets = address.split('.')

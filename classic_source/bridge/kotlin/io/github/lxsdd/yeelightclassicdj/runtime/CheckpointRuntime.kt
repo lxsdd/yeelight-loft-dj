@@ -46,6 +46,13 @@ class CheckpointRuntime : DjRuntime {
     // releasing the process-wide UI output admission fence.
     private var remoteUncertain = false
     private var shutdownConfirmed = true
+    private var lastLanFailure = ClassicMusicCoordinator.Failure.NONE
+    fun lanFailureCode(): String = synchronized(lock) { lastLanFailure.name }
+    private fun rememberFailure(code: ClassicMusicCoordinator.Failure) {
+        if (code != ClassicMusicCoordinator.Failure.NONE) synchronized(lock) {
+            if (lastLanFailure == ClassicMusicCoordinator.Failure.NONE) lastLanFailure = code
+        }
+    }
     private data class OriginalFrame(
         val timestampMs: Long, val bands: DoubleArray, val beat: Boolean,
         val bpm: Double, val confidence: Double
@@ -284,6 +291,7 @@ class CheckpointRuntime : DjRuntime {
             startFinished = thisStart
             startThread = Thread.currentThread()
             this.listener = listener
+            lastLanFailure = ClassicMusicCoordinator.Failure.NONE
         }
         var createdInput: ClassicPcmCaptureSession.Input? = null
         var stagedEngine: ClassicDjEngine? = null
@@ -331,6 +339,7 @@ class CheckpointRuntime : DjRuntime {
                             synchronized(lock) { state == State.STARTING })
                             listener.onState("ORIGINAL_CONNECTING_${confirmed}_OF_${total}_LAMPS")
                     })
+            rememberFailure(newEngine.failureCode())
             if (states.values.any { it == ClassicMusicCoordinator.State.QUARANTINED })
                 synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
             val owned = states.filterValues { it == ClassicMusicCoordinator.State.OWNED }.keys
@@ -358,6 +367,7 @@ class CheckpointRuntime : DjRuntime {
                 // The engine has already stopped confirmed surviving peers.
                 // Closing this worker also closes PCM and reports the failure.
                 if (output.failed.isNotEmpty()) {
+                    rememberFailure(newEngine.failureCode())
                     synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
                     error("Owned music output lost")
                 }
@@ -456,6 +466,7 @@ class CheckpointRuntime : DjRuntime {
                         original.bands, original.beat, original.bpm, original.confidence)
                     if (output != null) {
                         if (output.failed.isNotEmpty()) {
+                            current?.failureCode()?.let(::rememberFailure)
                             synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
                             error("Owned original music output lost")
                         }
@@ -477,6 +488,7 @@ class CheckpointRuntime : DjRuntime {
                     }
                     val tick = current?.clockTick(clock())
                     if (tick?.failed?.isNotEmpty() == true) {
+                        current?.failureCode()?.let(::rememberFailure)
                         synchronized(lock) { remoteUncertain = true; shutdownConfirmed = false }
                         error("Owned timed music output lost")
                     }
@@ -547,6 +559,7 @@ class CheckpointRuntime : DjRuntime {
                     else closeError.addSuppressed(failure)
                     null
                 }
+                localEngine?.failureCode()?.let(::rememberFailure)
                 if (localEngine?.uncertainOutput() == true ||
                     states?.values?.any { it != ClassicMusicCoordinator.State.IDLE } == true)
                     synchronized(lock) { remoteUncertain = true }

@@ -15,6 +15,12 @@ class ClassicDjEngine(
     // survive engine.stop(), even after every surviving owned peer was stopped.
     private var outputUncertain = false
     @Synchronized fun uncertainOutput(): Boolean = outputUncertain
+    /** Exact production coordinator only; never expose a target identifier. */
+    @Synchronized fun failureCode(): ClassicMusicCoordinator.Failure =
+        coordinator.snapshot().firstOrNull {
+            it.failure != ClassicMusicCoordinator.Failure.NONE &&
+            it.state != ClassicMusicCoordinator.State.IDLE
+        }?.failure ?: ClassicMusicCoordinator.Failure.NONE
     private var lastAudioMs = -1L
     // Both PCM and synthetic clock frames share one monotonic output clock.
     // A stale audio callback must not reset or overtake an already emitted tick.
