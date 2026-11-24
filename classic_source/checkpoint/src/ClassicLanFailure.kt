@@ -17,12 +17,18 @@ internal class ClassicLanRpcBudget(
     init { require(maxAttempts in 1..60 && windowMs in 1L..600_000L) }
     private val events = mutableMapOf<String, ArrayDeque<Long>>()
     @Synchronized fun admit(device: String, nowMs: Long): Boolean {
-        if (device.isBlank() || nowMs < 0L) return false
+        // System.nanoTime() has a valid signed, arbitrary time origin.
+        if (device.isBlank()) return false
         val history = events.getOrPut(device) { ArrayDeque<Long>() }
         val previous = history.peekLast()
         if (previous != null && nowMs < previous) return false
-        while (history.isNotEmpty() && nowMs - history.peekFirst() >= windowMs)
-            history.removeFirst()
+        while (history.isNotEmpty()) {
+            val oldest = history.peekFirst()
+            val elapsed = nowMs - oldest
+            // With now >= oldest, a negative difference is signed overflow,
+            // not a reason to retain obsolete quota events forever.
+            if (elapsed < 0L || elapsed >= windowMs) history.removeFirst() else break
+        }
         if (history.size >= maxAttempts) return false
         history.addLast(nowMs)
         return true

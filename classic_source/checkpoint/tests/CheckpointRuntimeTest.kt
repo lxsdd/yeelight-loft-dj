@@ -559,6 +559,7 @@ fun main() {
             })
     }.isFailure)
     check(foreignStarts == 0)
+    check(foreign.lanFailureCode() == "FOREIGN_OWNER")
     foreign.stop()
     // Absent/revoked OEM consent must fail before even looking up the Wi-Fi
     // interface, creating a transport or negotiating any bulb.
@@ -577,6 +578,35 @@ fun main() {
     }.isFailure)
     check(!deniedTouchedNetwork)
     consentDenied.stop()
+
+
+    // In-memory transport fault -> actual production runtime -> fixed UI code.
+    val quotaFailure = CheckpointRuntime()
+    quotaFailure.wifiAddress = { "192.168.1.10" }
+    var quotaAttemptCount = 0
+    quotaFailure.transportFactory = { _, _ ->
+        object : loftdj.classic.ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? = false
+            override fun requestStart(id: String): Boolean {
+                quotaAttemptCount++
+                throw loftdj.classic.ClassicLanFailure(
+                    loftdj.classic.ClassicLanFailure.Kind.DEVICE_QUOTA)
+            }
+            override fun reverseConnected(id: String) = false
+            override fun requestStop(id: String): Boolean =
+                error("must never stop unknown Music owner")
+            override fun closeReverse(id: String) {}
+            override fun sendReverseFrame(id: String, generation: Long,
+                                          rgb: Int, brightness: Int) = false
+        }
+    }
+    check(runCatching {
+        quotaFailure.startOriginalAudio(listOf("192.168.1.21"), Listener(),
+            object : DjRuntime.ConsentGuard {
+                override fun isStillAuthorized() = true
+            })
+    }.isFailure)
+    check(quotaAttemptCount == 1 && quotaFailure.lanFailureCode() == "DEVICE_QUOTA")
 
     // The positive consent is for the complete chosen cohort, not a hidden
     // subset. If B is already foreign-owned, A must be stopped again.
@@ -615,6 +645,7 @@ fun main() {
           partialActive["192.168.1.22"] == true) {
         "Partial original cohort failure changed a foreign session or leaked owned A"
     }
+    check(partial.lanFailureCode() == "FOREIGN_OWNER")
     partial.stop()
 
 

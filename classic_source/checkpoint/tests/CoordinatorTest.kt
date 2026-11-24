@@ -419,7 +419,15 @@ fun quotaFailureFleetScenarios() {
             check(budget.admit(id,61000))
             check(!budget.admit(id,5))
         }
-        check(!budget.admit("",1) && !budget.admit("bad",-1))
+        check(!budget.admit("",1))
+        val signed=ClassicLanRpcBudget()
+        check(signed.admit("signed", -120_000L))
+        check(signed.admit("signed", -119_000L))
+        check(!signed.admit("signed", -120_001L))
+        val wrap=ClassicLanRpcBudget()
+        repeat(8) { check(wrap.admit("wrap",Long.MIN_VALUE+5L)) }
+        check(!wrap.admit("wrap",Long.MIN_VALUE+5L))
+        check(wrap.admit("wrap",Long.MAX_VALUE-5L))
         check(ClassicYeelightMusicTransport.classifyMatchedRpcError(
           """{"id":4,"error":{"code":-1,"message":"client quota exceeded"}}""") ==
           ClassicLanFailure.Kind.DEVICE_QUOTA)

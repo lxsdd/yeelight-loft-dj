@@ -98,6 +98,8 @@ public final class ClassicOriginalLightReport {
         return header(status,count,confirmed,0);
     }
     static String header(String status,int count,boolean confirmed,int partial) {
+        if (!confirmed && status != null && status.startsWith("DJ-Start gesperrt"))
+            return "DJ-Start gesperrt  ﹀";
         if (confirmed) return "DJ aktiv · "+Math.max(0,count)+" Lampen  ﹀";
         if (status != null && status.startsWith("DJ-Start") &&
             count > 0 && partial > 0 && partial <= count)

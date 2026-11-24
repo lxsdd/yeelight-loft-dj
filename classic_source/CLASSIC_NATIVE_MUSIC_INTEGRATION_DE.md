@@ -153,3 +153,30 @@ mehr der reguläre private Clone-Akzeptanzpfad.
 Diese Korrektur beseitigt den wiederholten **falschen erwarteten
 Home-Button**, nicht den noch erforderlichen realen Classic-Erststart,
 MiOT-Init/Account-State oder den 4-KiB- und Pixel-6a-Akzeptanztest.
+
+## 24.11.2026 — LAN-/Quota-Diagnosen im nativen Original-Music-Pfad
+
+Bestehender Music-Reverse-Transport unverändert der einzige Echtzeit-DJ-Pfad.
+Normale LAN-RPC-Reads und -Writes zählen in einem prozessweiten, je Lampe
+isolierten konservativen Sicherheitsbudget von 8 Versuchen je 60 Sekunden.
+Reconnect, Fehlversuche oder unsichere Antworten setzen den Zähler nicht
+zurück. Die monotone Zeitbasis unterstützt den gültigen signierten Ursprung
+von `System.nanoTime()` und verhindert Fehler beim 64-bit-Überlauf.
+Kein Timer, kein versteckter Replay oder automatischer Retry.
+
+Nur ein zur aktuellen RPC-ID passender ausdrücklicher Gerätefehler
+`client quota exceeded` wird als bestätigte Geräte-Quota behandelt.
+Lokaler Limitstopp, andere Ablehnung, Timeout, Netzwerk-/OEM-Fehler,
+unbekannter Music-Zustand, fremde Sitzung und unsicherer Cleanup bleiben
+getrennte Ursachen und werden durch einen festen, privaten Daten gegenüber
+sicheren Statusvorrat in der Original-Classic-UI angezeigt. Ein gesperrter
+Start trägt keinen irreführenden laufenden Verbindungsstatus mehr.
+
+Die vorhandenen Eigentümer-/Sitzungsgrenzen bleiben strikt: nur bestätigte
+eigene Music-Verbindungen stoppen, nie fremde übernehmen, keine Wiederholung
+nach unklarer Übertragung und keine scheinbare Hardware- oder Firmware-
+Heilung. Regres­sionen prüfen echte Produktionsklassen (Transport/Coordinator,
+Kotlin-Runtime, Java-UI) mit 14/32 virtuellen Teilnehmern, Quota, Timeout,
+Fremdbesitz, negativen monotonic Zeiten, Überlauf und gesperrtem Start.
+Öffentliche CI qualifiziert nur Quelle/SDK und kein Pixel-6a-/OEM- oder
+Color4-Geräteverhalten. Keine Chroma-/HA-/Firmware-/Geräteschreibaktion.

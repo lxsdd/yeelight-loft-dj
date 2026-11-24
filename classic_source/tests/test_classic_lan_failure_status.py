@@ -17,6 +17,9 @@ class LanFailureStatusCheck {
       yes(ClassicOriginalLightReport.uncertain(code).startsWith("DJ-Ausgabe gesperrt"));
     }
     yes(ClassicOriginalLightReport.startFailure("DEVICE_QUOTA").contains("Quota"));
+    yes(ClassicOriginalLightReport.header(
+      ClassicOriginalLightReport.startFailure("DEVICE_QUOTA"),14,false,3)
+      .startsWith("DJ-Start gesperrt"));
     yes(!ClassicOriginalLightReport.startFailure("TIMEOUT").contains("Quota"));
     yes(ClassicOriginalLightReport.startFailure("10.1.2.3").equals(
       "Lampenverbindung verweigert oder nicht bestätigt"));
