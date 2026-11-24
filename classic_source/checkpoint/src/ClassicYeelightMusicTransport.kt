@@ -183,13 +183,16 @@ class ClassicYeelightMusicTransport(
             else -> null
         }
         internal fun validatedOkReply(line: String): Boolean = okPattern.matches(line)
-        private val errorPattern = Regex("\"error\"\\s*:")
+        // A partial JSON object or an injected nested "error" is not a
+        // confirmed device response. Both field orders are accepted, but the
+        // complete top-level envelope and bounded standard code are mandatory.
+        private val errorEnvelope = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"error"\s*:\s*\{\s*(?:"code"\s*:\s*-?\d+\s*(?:,\s*"message"\s*:\s*"(?:\\.|[^"\\])*")?|"message"\s*:\s*"(?:\\.|[^"\\])*"\s*,\s*"code"\s*:\s*-?\d+)\s*}\s*}\s*$""")
         private val quotaMessage = Regex(
             "\"error\"\\s*:\\s*\\{[^{}]{0,320}\"message\"\\s*:\\s*\"client quota exceeded\"",
             RegexOption.IGNORE_CASE)
         /** Only after this receive path has correlated the response request ID. */
         internal fun classifyMatchedRpcError(line: String): ClassicLanFailure.Kind? =
-            if (!errorPattern.containsMatchIn(line)) null
+            if (!errorEnvelope.matches(line)) null
             else if (quotaMessage.containsMatchIn(line)) ClassicLanFailure.Kind.DEVICE_QUOTA
             else ClassicLanFailure.Kind.DEVICE_REJECTED
 

@@ -437,6 +437,23 @@ fun quotaFailureFleetScenarios() {
           ClassicLanFailure.Kind.DEVICE_REJECTED)
         check(ClassicYeelightMusicTransport.classifyMatchedRpcError(
           """{"id":4,"result":["client quota exceeded"]}""")==null)
+        // Quota/rejection is confirmed only by an entire, correlated
+        // device-error envelope; truncation or injected trailing fields
+        // remain an uncertain transport result, never a firmware diagnosis.
+        check(ClassicYeelightMusicTransport.classifyMatchedRpcError(
+          """{"id":4,"error":{"message":"client quota exceeded","code":-1}}""") ==
+          ClassicLanFailure.Kind.DEVICE_QUOTA)
+        check(ClassicYeelightMusicTransport.classifyMatchedRpcError(
+          """{"id":4,"error":{"code":-1}}""") ==
+          ClassicLanFailure.Kind.DEVICE_REJECTED)
+        for (bad in listOf(
+          """{"id":4,"error":{"code":-1,"message":"client quota exceeded"}""",
+          """{"id":4,"error":{"code":-1,"message":"client quota exceeded"},"result":["0"]}""",
+          """{"id":4,"params":{"error":{"code":-1,"message":"client quota exceeded"}}}""",
+          """{"id":4,"error":{"code":-1,"message":"client quota exceeded","extra":1}}"""
+        )) check(ClassicYeelightMusicTransport.classifyMatchedRpcError(bad)==null) {
+          "Unverified quota/rejection falsely confirmed: $bad"
+        }
         val faults=listOf<Exception>(
           ClassicLanFailure(ClassicLanFailure.Kind.LOCAL_BUDGET),
           ClassicLanFailure(ClassicLanFailure.Kind.DEVICE_QUOTA),

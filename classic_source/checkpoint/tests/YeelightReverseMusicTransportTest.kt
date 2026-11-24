@@ -162,5 +162,26 @@ fun main() {
         check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN)
         check(bulb.commands.toList().none { it.contains("\"set_music\"") && it.contains("[0]") })
     }
+    // Differentiate a REAL complete device quota from a damaged error line
+    // through the same production socket and coordinator. Neither may START
+    // a Music group; only the full response earns DEVICE_QUOTA classification.
+    for ((index, truncated) in listOf(false,true).withIndex()) {
+        FakeBulb(host, rewriteResponse = { cmd, result ->
+            if (cmd.contains("\"get_prop\"")) {
+                val quota = """{"id":1,"error":{"code":-1,"message":"client quota exceeded"}}"""
+                if (truncated) quota.dropLast(1) else quota
+            } else result
+        }).use { bulb ->
+            val c=ClassicMusicCoordinator(ClassicYeelightMusicTransport(
+                host,setOf(host),tcpPort=bulb.listener.localPort,
+                clockMs={ 800_000L + index * 90_000L }))
+            c.register(host,true)
+            check(c.start(host)==ClassicMusicCoordinator.State.QUARANTINED)
+            check(c.snapshot().single().failure == if (truncated)
+                ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN
+                else ClassicMusicCoordinator.Failure.DEVICE_QUOTA)
+            check(bulb.commands.none { it.contains("\"set_music\"") })
+        }
+    }
     println("PASS Yeelight Color4 private reverse TCP music mode, selection, RGB+brightness, stop, foreign owner, reserved shutdown budget")
 }
