@@ -22,6 +22,58 @@ class CloneLauncherContract(unittest.TestCase):
         self.assertEqual(m.select_installed_launcher(GOOD + "\n" + OTHER, OTHER),
                          "com.yeelight.cherry.OtherLauncher")
 
+    def test_original_baseline_launcher_is_explicit_and_clone_mode_remains_strict(self):
+        original = m.ORIGINAL + "/com.yeelight.cherry.MainActivity"
+        m.verify_badging("package: name='com.yeelight.cherry' versionCode='35402'\n",
+                         package=m.ORIGINAL)
+        self.assertEqual(m.select_installed_launcher(original, original,
+                             package=m.ORIGINAL), "com.yeelight.cherry.MainActivity")
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.select_installed_launcher(original, original)
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.verify_badging(BADGING, package=m.ORIGINAL)
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.select_installed_launcher(original, original, package="foreign.app")
+
+    def test_android_component_short_form_only_for_pinned_original(self):
+        fully = m.ORIGINAL + "/com.yeelight.cherry.MainActivity"
+        short = m.ORIGINAL + "/.MainActivity"
+        activity = "com.yeelight.cherry.MainActivity"
+        self.assertEqual(m.canonical(short, package=m.ORIGINAL), activity)
+        self.assertEqual(m.select_installed_launcher(short, short,
+                         package=m.ORIGINAL), activity)
+        self.assertEqual(m.select_installed_launcher(short, fully,
+                         package=m.ORIGINAL), activity)
+        self.assertEqual(m.select_installed_launcher(fully, short,
+                         package=m.ORIGINAL), activity)
+        nested = m.ORIGINAL + "/.activities.MainActivity"
+        self.assertEqual(m.canonical(nested, package=m.ORIGINAL),
+                         "com.yeelight.cherry.activities.MainActivity")
+        # Both spellings must refer to one component, never two launchers.
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.select_installed_launcher(short + "\n" + fully, short,
+                                        package=m.ORIGINAL)
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.canonical(m.PACKAGE + "/.MainActivity")
+        with self.assertRaises(m.CloneLauncherBlocked):
+            m.select_installed_launcher(short, short)
+
+    def test_malformed_short_names_and_foreign_packages_remain_blocked(self):
+        for component in (
+            m.ORIGINAL + "/.",
+            m.ORIGINAL + "/..Hidden",
+            m.ORIGINAL + "/.Hidden..Part",
+            m.ORIGINAL + "/.Hidden.",
+            m.ORIGINAL + "/.Hidden;Private",
+            m.ORIGINAL + "/.Hidden/More",
+            m.ORIGINAL + "/.Hidden Other",
+            "com.other/.MainActivity",
+            m.ORIGINAL + "/io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity",
+        ):
+            with self.subTest(component=component), self.assertRaises(
+                    m.CloneLauncherBlocked):
+                m.canonical(component, package=m.ORIGINAL)
+
     def test_aapt_launchable_heuristics_not_required_for_clone(self):
         m.verify_badging(BADGING)
         self.assertEqual(m.select_installed_launcher(GOOD, GOOD),

@@ -1,0 +1,119 @@
+"""Concrete owner-fenced analysis feedback and explicit microphone permission tests.
+
+Pure JDK + static source wiring: no OEM binary, device, network or user data.
+"""
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+UI = ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj/ui"
+STATE = UI / "ClassicAnalysisStartResult.java"
+HARNESS = r'''
+package io.github.lxsdd.yeelightclassicdj.ui;
+public class ClassicAnalysisStartResultHarness {
+    static void need(boolean value) {
+        if (!value) throw new AssertionError("analysis start owner fence");
+    }
+    public static void main(String[] args) {
+        ClassicAnalysisStartResult result = new ClassicAnalysisStartResult();
+        need(result.failureFor("first") == null);
+        need(!result.fail("first", "no owner"));
+        result.begin("first");
+        need(!result.fail("foreign", "foreign status"));
+        need(result.fail("first", "microphone failed"));
+        need("microphone failed".equals(result.failureFor("first")));
+        need(result.failureFor("foreign") == null);
+        need(!result.clear("foreign"));
+        need("microphone failed".equals(result.failureFor("first")));
+        result.begin("second");
+        need(result.failureFor("first") == null);
+        need(result.failureFor("second") == null);
+        need(!result.fail("first", "late old failure"));
+        need(result.fail("second", "capture error"));
+        need(result.clear("second"));
+        need(result.failureFor("second") == null);
+        need(!result.clear("second"));
+        need(!result.fail(null, "null"));
+        result.begin(null);
+        need(result.failureFor("second") == null);
+        System.out.println("PASS Classic analysis exact-owner failure, retry and stale rejection");
+    }
+}
+'''
+
+
+class ClassicAnalysisStartResultTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("java") and shutil.which("javac"), "JDK unavailable")
+    def test_compiled_real_owner_status_has_positive_and_negative_cases(self):
+        with tempfile.TemporaryDirectory(prefix="classic-dj-analysis-") as tmp:
+            temp = Path(tmp)
+            source = temp / "ClassicAnalysisStartResultHarness.java"
+            source.write_text(HARNESS, encoding="utf-8")
+            output = temp / "classes"
+            compiled = subprocess.run(
+                ["javac", "--release", "8", "-d", str(output), str(STATE), str(source)],
+                capture_output=True, text=True, timeout=40)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            executed = subprocess.run(
+                ["java", "-cp", str(output),
+                 "io.github.lxsdd.yeelightclassicdj.ui.ClassicAnalysisStartResultHarness"],
+                capture_output=True, text=True, timeout=40)
+            self.assertEqual(executed.returncode, 0, executed.stderr)
+            self.assertIn("PASS Classic analysis", executed.stdout)
+
+    def test_owner_failures_are_fenced_in_private_service_not_original_music(self):
+        ui = (UI / "ClassicMusicInlineControls.java").read_text("utf-8")
+        service = (UI / "ClassicDjService.java").read_text("utf-8")
+        self.assertIn("Audioquelle und Start/Stopp: oben in Classic", ui)
+        for forbidden in ("startFailureForOwner(", "startForegroundService(",
+                          "host.startService(", "startAnalysisOnly(",
+                          "locallyStarted", "sessionOwner", "startButton"):
+            self.assertNotIn(forbidden, ui)
+        self.assertIn("startResults.begin(requestedOwner);", service)
+        self.assertIn("startResults.fail(completedOwner, finalState);", service)
+        self.assertIn("startResults.clear(completedOwner);", service)
+        self.assertIn("sessionFence.cancel();", service)
+
+    def test_original_player_audio_permission_not_duplicated(self):
+        ui = (UI / "ClassicMusicInlineControls.java").read_text("utf-8")
+        for forbidden in ("requestPermissions(", "MICROPHONE_PERMISSION_REQUEST",
+                          "onRequestPermissionsResult(", "new Intent(",
+                          "new String[0]", "set_power", "set_music"):
+            self.assertNotIn(forbidden, ui)
+
+    def test_mic_start_failure_is_classified_at_real_runtime_and_service_boundary(self):
+        interface = (ROOT / "bridge/src/io/github/lxsdd/yeelightclassicdj/runtime/DjRuntime.java").read_text("utf-8")
+        runtime = (ROOT / "bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.kt").read_text("utf-8")
+        service = (UI / "ClassicDjService.java").read_text("utf-8")
+        self.assertIn("enum CaptureFailureKind", interface)
+        self.assertIn("CaptureStartFailure extends Exception", interface)
+        self.assertIn("createdInput = try {", runtime)
+        self.assertIn("throw DjRuntime.CaptureStartFailure(kind, failure)", runtime)
+        self.assertIn("failure instanceof DjRuntime.CaptureStartFailure", service)
+        for code in ("MIC_PERMISSION", "MIC_FORMAT", "MIC_STATE", "MIC_ABI",
+                     "AUDIO_PERMISSION", "AUDIO_FORMAT", "AUDIO_STATE", "AUDIO_ABI"):
+            self.assertIn(code, service)
+        self.assertNotIn("failure.getMessage()", service)
+
+    def test_read_failures_use_the_same_source_specific_owner_fenced_status(self):
+        service = (UI / "ClassicDjService.java").read_text("utf-8")
+        runtime = (ROOT / "bridge/kotlin/io/github/lxsdd/yeelightclassicdj/runtime/CheckpointRuntime.kt").read_text("utf-8")
+        self.assertIn('"Mikrofonaufnahme beendet [MIC_READ]"', service)
+        self.assertIn('"Interne Audioaufnahme beendet [AUDIO_READ]"', service)
+        self.assertIn('stopSession(token, internal ?', service)
+        self.assertIn('if (sessionFence.owns(token))', service)
+        self.assertIn('if (state == State.RUNNING && mine == generation)', runtime)
+
+    def test_binary_incompatibility_does_not_crash_original_oem_music_ui(self):
+        service = (UI / "ClassicDjService.java").read_text("utf-8")
+        self.assertIn("catch (RuntimeException | LinkageError failure)", service)
+        self.assertIn("rejectStart(requestedOwner, \"DJ-Einstellungen nicht unterstützt\")", service)
+        self.assertIn('if (!ips.isEmpty())', service)
+        self.assertNotIn("get_prop", service)
+
+
+if __name__ == "__main__":
+    unittest.main()

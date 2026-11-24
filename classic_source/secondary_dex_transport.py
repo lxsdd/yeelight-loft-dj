@@ -90,6 +90,12 @@ def normalize_private_multidex(original: Path, candidate: Path):
                         raise DexTransportBlocked("MULTIDEX_ZIP_PAYLOAD_DRIFT")
                     if any(check.getinfo(n).compress_type != ZIP_STORED for n in CANDIDATE):
                         raise DexTransportBlocked("MULTIDEX_ZIP_NOT_STORED")
+                # On Windows os.replace refuses a destination whose ZipFile is
+                # still open for reading. Every copied payload and member hash
+                # has been verified above; release only the candidate read
+                # handle before the atomic replace. The stock OEM stays open
+                # and is never modified.
+                built.close()
                 os.replace(output_path, candidate)
             return report
     except (BadZipFile, OSError, RuntimeError, NotImplementedError) as exc:

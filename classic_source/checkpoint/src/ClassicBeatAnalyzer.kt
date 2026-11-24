@@ -39,7 +39,9 @@ class ClassicBeatAnalyzer(
         // triggering repeated beats. Beat detection is a rising-edge event.
         val flux = (normalized[0] * 0.65 + normalized[1] * 0.25 + normalized[2] * 0.10)
         baseline = if (baseline == 0.0) flux * 0.25 else baseline * 0.96 + flux * 0.04
-        val high = flux > max(0.09, baseline * 1.6) && flux > previousFlux * 1.12
+        // Low-volume PCM must not require near-full-scale bass to register an onset.
+        // Keep the adaptive floor and rising-edge guard to reject steady noise.
+        val high = flux > max(0.012, baseline * 1.6) && flux > previousFlux * 1.12
         val beat = high && !previousWasHigh && (lastBeat < 0 || timestampMs - lastBeat >= refractoryMs)
         previousWasHigh = high
         previousFlux = flux

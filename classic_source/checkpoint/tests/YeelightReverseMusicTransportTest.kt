@@ -25,7 +25,8 @@ private fun privateHost(): String? {
     return null
 }
 
-private class FakeBulb(private val host: String, private val musicAlreadyActive: Boolean = false) : AutoCloseable {
+private class FakeBulb(private val host: String, private val musicAlreadyActive: Boolean = false,
+                       private val rewriteResponse: ((String, String) -> String)? = null) : AutoCloseable {
     val listener = ServerSocket(0, 5, InetAddress.getByName(host))
     val commands = LinkedBlockingQueue<String>()
     val reverseFrames = LinkedBlockingQueue<String>()
@@ -63,7 +64,8 @@ private class FakeBulb(private val host: String, private val musicAlreadyActive:
                     val response = if (result=="ok") "{\"id\":$id,\"result\":[\"ok\"]}"
                        else if (result=="error") "{\"id\":$id,\"error\":{\"code\":-1}}"
                        else "{\"id\":$id,\"result\":[\"$result\"]}"
-                    s.getOutputStream().write((response+"\r\n").toByteArray(StandardCharsets.US_ASCII))
+                    val answer = rewriteResponse?.invoke(cmd, response) ?: response
+                    s.getOutputStream().write((answer+"\r\n").toByteArray(StandardCharsets.US_ASCII))
                 }
             } catch (_: Exception) { if (!live) return@thread }
         }
@@ -90,7 +92,7 @@ fun main() {
         return
     }
     FakeBulb(host).use { bulb ->
-        val transport = ClassicYeelightMusicTransport(host, setOf(host), tcpPort=bulb.listener.localPort)
+        val transport = ClassicYeelightMusicTransport(host, setOf(host), tcpPort=bulb.listener.localPort, clockMs={ 1_000L })
         val c = ClassicMusicCoordinator(transport)
         c.register(host,true)
         check(c.start(host)==ClassicMusicCoordinator.State.OWNED) { c.snapshot().toString() }
@@ -106,11 +108,80 @@ fun main() {
         check(actions.count { it.contains("get_prop") }==2) { actions }
     }
     FakeBulb(host,musicAlreadyActive=true).use { bulb ->
-        val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(host,setOf(host),tcpPort=bulb.listener.localPort))
+        val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(host,setOf(host),tcpPort=bulb.listener.localPort, clockMs={ 1_000L }))
         c.register(host,true)
         check(c.start(host)==ClassicMusicCoordinator.State.UNKNOWN_OWNER)
         check(bulb.commands.toList().none { it.contains("\"set_music\"") })
         check(c.stop(host)==ClassicMusicCoordinator.State.UNKNOWN_OWNER)
     }
-    println("PASS Yeelight Color4 private reverse TCP music mode, selection, RGB+brightness, stop, foreign owner, no quota-channel frames")
+    // The same production socket transport now rejects a new Music START if
+    // only one RPC slot remains, rather than orphaning its mandatory STOP.
+    // Prior exact-host fixtures spent 4 + 1 slots in this process.
+    FakeBulb(host).use { bulb ->
+        val transport = ClassicYeelightMusicTransport(host, setOf(host),
+            tcpPort=bulb.listener.localPort, clockMs={ 1_000L })
+        check(!transport.readMusic(host)!!)
+        val c = ClassicMusicCoordinator(transport)
+        c.register(host, true)
+        check(c.start(host) == ClassicMusicCoordinator.State.QUARANTINED)
+        check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.LOCAL_BUDGET)
+        check(bulb.commands.toList().none { it.contains("\"set_music\"") })
+    }
+    // Real production socket, private host-only fake bulb: a partial or
+    // nested status cannot be mistaken for music_on=0 and start a stranger's
+    // session. Fresh synthetic clock windows prevent cross-fixture budget noise.
+    for ((index, kind) in listOf("truncated", "nested", "foreign").withIndex()) {
+        FakeBulb(host, rewriteResponse = { cmd, result ->
+            if (!cmd.contains("\"get_prop\"")) result else when (kind) {
+                "truncated" -> result.dropLast(1)
+                "nested" -> """{"id":1,"params":{"result":["0"]}}"""
+                else -> """{"method":"props","params":{"id":1,"result":["0"]}}"""
+            }
+        }).use { bulb ->
+            val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(
+                host, setOf(host), tcpPort=bulb.listener.localPort,
+                clockMs={ 200_000L + index * 90_000L }))
+            c.register(host,true)
+            check(c.start(host) == ClassicMusicCoordinator.State.QUARANTINED)
+            check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN)
+            check(bulb.commands.toList().none { it.contains("\"set_music\"") }) {
+                "Unsafe Music START following $kind property reply"
+            }
+        }
+    }
+    // Even a successful physical set_music request is NOT an accepted START
+    // without a complete correlated OK. Never send speculative set_music(0).
+    FakeBulb(host, rewriteResponse = { cmd, result ->
+        if (cmd.contains("\"set_music\"") && cmd.contains("[1,")) result.dropLast(1)
+        else result
+    }).use { bulb ->
+        val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(
+            host,setOf(host),tcpPort=bulb.listener.localPort,clockMs={ 600_000L }))
+        c.register(host,true)
+        check(c.start(host) == ClassicMusicCoordinator.State.QUARANTINED)
+        check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN)
+        check(bulb.commands.toList().none { it.contains("\"set_music\"") && it.contains("[0]") })
+    }
+    // Differentiate a REAL complete device quota from a damaged error line
+    // through the same production socket and coordinator. Neither may START
+    // a Music group; only the full response earns DEVICE_QUOTA classification.
+    for ((index, truncated) in listOf(false,true).withIndex()) {
+        FakeBulb(host, rewriteResponse = { cmd, result ->
+            if (cmd.contains("\"get_prop\"")) {
+                val quota = """{"id":1,"error":{"code":-1,"message":"client quota exceeded"}}"""
+                if (truncated) quota.dropLast(1) else quota
+            } else result
+        }).use { bulb ->
+            val c=ClassicMusicCoordinator(ClassicYeelightMusicTransport(
+                host,setOf(host),tcpPort=bulb.listener.localPort,
+                clockMs={ 800_000L + index * 90_000L }))
+            c.register(host,true)
+            check(c.start(host)==ClassicMusicCoordinator.State.QUARANTINED)
+            check(c.snapshot().single().failure == if (truncated)
+                ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN
+                else ClassicMusicCoordinator.Failure.DEVICE_QUOTA)
+            check(bulb.commands.none { it.contains("\"set_music\"") })
+        }
+    }
+    println("PASS Yeelight Color4 private reverse TCP music mode, selection, RGB+brightness, stop, foreign owner, reserved shutdown budget")
 }

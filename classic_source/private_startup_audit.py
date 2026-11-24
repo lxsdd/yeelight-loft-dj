@@ -24,8 +24,14 @@ EXTRA={"application":("appComponentFactory","backupAgent","manageSpaceActivity",
 SYSTEM=("Ljava/","Ljavax/","Landroid/","Ldalvik/","Lorg/json/","Lorg/xmlpull/",
         "Lorg/w3c/dom/","Lorg/xml/sax/","Lorg/apache/http/","Lcom/android/")
 REMOVED=("com.google.firebase.provider.FirebaseInitProvider","com.yeelight.yeelib.data.DeviceInteractionProvider")
+# Mandatory original MusicActivity lifecycle provider is installed by classic_first.
+# A local diagnostic may no longer patch the component allowlist independently.
+NATIVE_MUSIC_PROVIDER=("provider","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjEntryProvider")
 ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity"),
-       ("service","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjService"))
+       ("service","io.github.lxsdd.yeelightclassicdj.ui.ClassicDjService"),
+       NATIVE_MUSIC_PROVIDER)
+CLONE_ONLY_ADDED=(("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicNearbyGateActivity"),
+                  ("activity","io.github.lxsdd.yeelightclassicdj.ui.ClassicInternalAudioConsentActivity"))
 
 FRAMEWORK_MANIFEST=("Landroid/","Lcom/android/")
 REQUIRED_MANIFEST_ROLES=("application","activity","service","receiver","provider",
@@ -390,12 +396,12 @@ def audit_pair(original,candidate):
     require(set(REMOVED)<=set(old_providers),"ORIGINAL_EXPECTED_PROVIDER_ABSENT")
     expected=o["components"].copy()
     for n in REMOVED:del expected[("provider",n)]
-    for entry in ADDED:expected[entry]+=1
+    for entry in ADDED + CLONE_ONLY_ADDED:expected[entry]+=1
     require(expected==c["components"],"CLONE_COMPONENT_DRIFT")
     # Only the two intentionally removed, non-executable provider entrypoints
     # may disappear from the clone. Reject any other manifest graph drift.
     removed={"L"+n.replace(".","/")+";" for n in REMOVED}
-    added={"L"+n.replace(".","/")+";" for _,n in ADDED}
+    added={"L"+n.replace(".","/")+";" for _,n in ADDED + CLONE_ONLY_ADDED}
     require(o["entrypoints"]-c["entrypoints"]==removed,"REMOVED_PROVIDER_ENTRYPOINT_DRIFT")
     require(c["entrypoints"]-o["entrypoints"]==added,"ADDED_BRIDGE_ENTRYPOINT_DRIFT")
     expected_roles=o["manifest_references"].copy()
@@ -403,7 +409,7 @@ def audit_pair(original,candidate):
         expected_roles[("provider","L"+name.replace(".","/")+";")]-=1
         if expected_roles[("provider","L"+name.replace(".","/")+";")]==0:
             del expected_roles[("provider","L"+name.replace(".","/")+";")]
-    for kind,name in ADDED:
+    for kind,name in ADDED + CLONE_ONLY_ADDED:
         expected_roles[(kind,"L"+name.replace(".","/")+";")]+=1
     require(expected_roles==c["manifest_references"],
             "CLONE_MANIFEST_REFERENCE_ROLE_DRIFT")

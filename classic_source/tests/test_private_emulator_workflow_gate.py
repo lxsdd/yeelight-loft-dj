@@ -47,7 +47,14 @@ def verify_private_shell(value):
         'install -r --no-streaming "$APK"', 'sha256sum "$APK"',
         'clone_launcher_selection.py', 'query-activities --components --user 0',
         'resolve-activity --components --user 0',
-        'android17_start_smoke.py', '--expected-installed-apk-sha256',
+        'android17_start_smoke.py', '--require-clone-music-ui',
+        'classloader_linkage_forensics.py',
+        'private_original_baseline.py',
+        'PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB',
+        'shell pm list packages --user 0 io.lxsdd.yeelightdj',
+        '[[ -z "$CLONE_INSTALLED_MATCH" ]] || fail',
+        '--explicit-owner-approved-private-emulator || fail',
+        '--expected-installed-apk-sha256',
         '--explicit-owner-approved-private-emulator',
         'PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS',
     )
@@ -60,6 +67,7 @@ def verify_private_shell(value):
     assert "echo 'y'" not in value and "yes |" not in value, "no license assent"
     assert value.index("ip -6 route flush table main") < value.index('install -r --no-streaming "$APK"')
     assert value.index('install -r --no-streaming "$APK"') < value.index("query-activities --components")
+    assert value.index("android17_start_smoke.py") < value.index("classloader_linkage_forensics.py") < value.index("private_original_baseline.py") < value.rfind("  fail\nfi")
     assert 'upload-artifact' not in value, "private APK never uploaded publicly"
     assert 'gh release' not in value, "emulator does not publish"
     assert 'adb -d ' not in value, "physical device route forbidden"
@@ -96,6 +104,12 @@ class PrivateEmulatorWorkflowContract(unittest.TestCase):
         result = subprocess.run(["bash", "-n", str(SHELL)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, "private shell syntax invalid")
 
+    def test_negative_obsolete_home_probe_flag_fails(self):
+        value = SHELL.read_text("utf-8")
+        with self.assertRaises(AssertionError):
+            verify_private_shell(value.replace(
+                "--require-clone-music-ui", "--old-home-shortcut"))
+
     def test_negative_shell_no_network_check_fails(self):
         text = SHELL.read_text("utf-8")
         with self.assertRaises(AssertionError):
@@ -115,6 +129,45 @@ class PrivateEmulatorWorkflowContract(unittest.TestCase):
                 verify_private_shell(text.replace(removed, "unsafe"))
         with self.assertRaises(AssertionError):
             verify_private_shell(text.replace("install -r --no-streaming", "install -r"))
+
+    def test_original_baseline_only_after_failed_clone_and_forensics(self):
+        text = SHELL.read_text("utf-8")
+        self.assertEqual(text.count("private_original_baseline.py"), 1)
+        self.assertIn("private_original_baseline.py", text)
+        self.assertIn("--explicit-owner-approved-private-emulator || fail", text)
+        self.assertTrue(
+            text.index("android17_start_smoke.py") <
+            text.index("classloader_linkage_forensics.py") <
+            text.index("private_original_baseline.py") <
+            text.rfind("  fail\nfi")
+        )
+        self.assertIn('if python3 classic_source/private_ci/android17_start_smoke.py', text)
+        self.assertIn('PRIVATE_ANDROID17_CLASSIC_NATIVE_UI_SMOKE_PASS', text)
+        with self.assertRaises(AssertionError):
+            verify_private_shell(text.replace("private_original_baseline.py", "unsafe"))
+        with self.assertRaises(AssertionError):
+            verify_private_shell(text.replace(
+                "--explicit-owner-approved-private-emulator || fail",
+                "--skip-guard || fail"))
+
+    def test_nonfatal_ui_failure_does_not_start_invalid_identity_control(self):
+        value = SHELL.read_text("utf-8")
+        self.assertIn('shell pm list packages --user 0 io.lxsdd.yeelightdj', value)
+        self.assertIn('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB', value)
+        self.assertLess(value.index('private_original_baseline.py'),
+                        value.index('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB'))
+        self.assertLess(value.index('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB'),
+                        value.index('private_identity_control.py'))
+        self.assertIn('[[ -z "$CLONE_INSTALLED_MATCH" ]] || fail', value)
+
+    def test_removing_nonfatal_ui_identity_boundary_is_rejected(self):
+        value = SHELL.read_text("utf-8")
+        for bad in (
+            value.replace('PRIVATE_CLASSIC_NONFATAL_UI_UNOBSERVABLE_NO_IDENTITY_AB', 'UNSAFE'),
+            value.replace('shell pm list packages --user 0 io.lxsdd.yeelightdj', 'shell pm path com.other'),
+        ):
+            with self.subTest(bad=bad[:100]), self.assertRaises(AssertionError):
+                verify_private_shell(bad)
 
     def test_probe_never_directly_exports_private_dj_activity(self):
         value = PROBE.read_text("utf-8")

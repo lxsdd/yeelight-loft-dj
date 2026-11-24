@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "private_ci"))
 from android17_start_smoke import (
     PACKAGE, DJ_ACTIVITY, SmokeBlocked, classify_crash, classify_visible_ui,
     entry_button_coordinates, evaluate_launch_window, evaluate_navigation_window,
-    probe_private_emulator
+    probe_private_emulator, PRIVATE_UI_SNAPSHOT, capture_private_ui_hierarchy
 )
 
 LAUNCHER = PACKAGE + "/com.yeelight.cherry.MainActivity"
@@ -15,12 +15,12 @@ DJ = PACKAGE + "/" + DJ_ACTIVITY
 PIN = "a" * 64
 APK = "/data/app/~~valid/io.lxsdd.yeelightdj-abc==/base.apk"
 ENTRY = ('<?xml version="1.0"?><hierarchy>'
-         '<node text="Loft DJ" clickable="true" bounds="[10,20][210,100]"/>'
+         '<node package="' + PACKAGE + '" text="Loft DJ" clickable="true" enabled="true" bounds="[10,20][210,100]"/>'
          '</hierarchy>')
 DJ_UI = ('<?xml version="1.0"?><hierarchy>'
-         '<node text="Loft DJ · Yeelight Classic" clickable="false"/>'
-         '<node text="Mikrofon starten" clickable="true"/>'
-         '<node text="DJ stoppen" clickable="true"/>'
+         '<node package="' + PACKAGE + '" text="Loft DJ · Yeelight Classic" clickable="false" enabled="true"/>'
+         '<node package="' + PACKAGE + '" text="Mikrofon starten" clickable="true" enabled="true"/>'
+         '<node package="' + PACKAGE + '" text="DJ stoppen" clickable="true" enabled="true"/>'
          '</hierarchy>')
 ACTIVITY = "ResumedActivity: ActivityRecord{123 u0 %s t1}"
 
@@ -30,6 +30,7 @@ class FakeADB:
     def __init__(self):
         self.calls = []
         self.ui_count = 0
+        self._dump_pending = None
         self.overrides = {}
 
     def __call__(self, args, *, serial):
@@ -51,6 +52,9 @@ class FakeADB:
         if key in (("shell", "ip", "-4", "route", "show"),
                    ("shell", "ip", "-6", "route", "show")):
             return ""
+        if key in (("shell", "dumpsys", "window", "displays"),
+                   ("shell", "dumpsys", "window", "windows")):
+            return ""
         if key == ("shell", "pm", "path", PACKAGE):
             return "package:" + APK
         if key == ("shell", "sha256sum", APK):
@@ -59,9 +63,15 @@ class FakeADB:
             return "Status: ok\nActivity: " + LAUNCHER + "\nComplete\n"
         if key == ("shell", "dumpsys", "activity", "activities"):
             return ACTIVITY % (DJ if self.ui_count else LAUNCHER)
-        if key == ("shell", "uiautomator", "dump", "/dev/tty"):
+        if key == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT):
+            self._dump_pending = None
+            return ""
+        if key == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
             self.ui_count += 1
-            return ENTRY if self.ui_count == 1 else DJ_UI
+            self._dump_pending = ENTRY if self.ui_count == 1 else DJ_UI
+            return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+        if key == ("shell", "cat", PRIVATE_UI_SNAPSHOT):
+            return self._dump_pending or ""
         if key == ("shell", "wm", "size"):
             return "Physical size: 1080x2400"
         if key in (("logcat", "-b", "crash", "-c"),
@@ -97,6 +107,55 @@ class Android17StartupTest(unittest.TestCase):
         self.assertEqual(sum(c[:3] == ("shell", "am", "start") for c in a.calls), 1)
         self.assertFalse(result["physical_device_tested"])
         self.assertFalse(result["app_functionally_accepted"])
+
+    def test_private_capture_reads_file_contents_not_dump_stdout(self):
+        a = FakeADB()
+        result = a.run()
+        self.assertEqual(result["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        self.assertEqual(sum(x == ("shell", "cat", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 4)
+        self.assertFalse(any("/dev/tty" in x for x in a.calls))
+
+    def test_private_capture_empty_xml_fails_closed_and_cleans_up(self):
+        a = FakeADB()
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = "UI hierarchy dumped to a file"
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_XML_MISSING"):
+            a.run()
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
+        self.assertFalse(any(x[:3] == ("shell", "input", "tap") for x in a.calls))
+
+    def test_private_capture_rejects_stale_hierarchy_file(self):
+        a = FakeADB()
+        a._dump_pending = ENTRY
+        a.overrides[("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT)] = "no new UI"
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_XML_MISSING"):
+            a.run()
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
+
+    def test_private_capture_cleanup_failure_is_an_explicit_block(self):
+        a = FakeADB()
+        n = [0]
+        def run(args):
+            if args == ["shell", "rm", "-f", PRIVATE_UI_SNAPSHOT]:
+                n[0] += 1
+                if n[0] == 2:
+                    raise SmokeBlocked("SMOKE_ADB_COMMAND_FAILED")
+                return ""
+            if args == ["shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT]:
+                return "UI hierarchy dumped"
+            if args == ["shell", "cat", PRIVATE_UI_SNAPSHOT]:
+                return ENTRY
+            raise AssertionError("unexpected command")
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_TEMP_CLEANUP_FAILED"):
+            capture_private_ui_hierarchy(run)
+        self.assertEqual(n[0], 2)
+
+    def test_private_capture_preserves_unsafe_xml_rejection(self):
+        a = FakeADB()
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = '<!DOCTYPE test>' + ENTRY
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UNSAFE_UI_XML"):
+            a.run()
+        self.assertEqual(sum(x == ("shell", "rm", "-f", PRIVATE_UI_SNAPSHOT) for x in a.calls), 2)
 
     def test_absent_explicit_owner_approval_blocks_before_adb(self):
         a = FakeADB()
@@ -143,10 +202,340 @@ class Android17StartupTest(unittest.TestCase):
 
     def test_fail_closed_for_missing_clickable_native_entry(self):
         a = FakeADB()
-        a.overrides[("shell", "uiautomator", "dump", "/dev/tty")] = DJ_UI
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = DJ_UI
         result = a.run()
         self.assertEqual(result["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
         self.assertFalse(result["native_entry_navigation_tested"])
+
+    def test_explicit_original_identity_control_is_allowed_but_not_a_clone(self):
+        original = "com.yeelight.cherry"
+        identity_entry = ENTRY.replace('package="' + PACKAGE + '"',
+                                       'package="' + original + '"')
+        self.assertFalse(classify_visible_ui(
+            identity_entry, stage="classic_entry")["expected_native_ui_observed"])
+        self.assertTrue(classify_visible_ui(
+            identity_entry, stage="classic_entry",
+            expected_package=original)["expected_native_ui_observed"])
+        self.assertEqual(entry_button_coordinates(
+            identity_entry, "Physical size: 1080x2400",
+            expected_package=original), (110, 60))
+        self.assertFalse(classify_visible_ui(
+            ENTRY, stage="classic_entry",
+            expected_package=original)["expected_native_ui_observed"])
+        identity_dj = DJ_UI.replace('package="' + PACKAGE + '"',
+                                    'package="' + original + '"')
+        self.assertTrue(classify_visible_ui(
+            identity_dj, stage="native_dj",
+            expected_package=original)["expected_native_ui_observed"])
+
+    def test_ui_expected_package_rejects_foreign_or_malformed_identity(self):
+        for value in ("com.other.app", "", None, 42, "com.yeelight.cherry.evil"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_PACKAGE_NOT_AUTHORIZED"):
+                    classify_visible_ui(ENTRY, stage="classic_entry",
+                                        expected_package=value)
+                with self.assertRaisesRegex(SmokeBlocked, "SMOKE_UI_PACKAGE_NOT_AUTHORIZED"):
+                    entry_button_coordinates(ENTRY, "Physical size: 1080x2400",
+                                              expected_package=value)
+
+    def test_known_16k_warning_only_acknowledged_inside_exact_clone_focus(self):
+        from page_size_warning import CLONE
+        class WarningADB(FakeADB):
+            def __init__(self, *, focused=CLONE, page_size="16384",
+                         warning_text="Synthetic 16 KB ELF alignment warning. Run using page size compatible mode.",
+                         warn_on_dj=False, flip_focus_after_read=False):
+                super().__init__()
+                self.focused = focused
+                self.page_size = page_size
+                self.warning_text = warning_text
+                self.warn_on_dj = warn_on_dj
+                self.flip_focus_after_read = flip_focus_after_read
+                self.focus_reads = 0
+                self.launched = False
+                self.taps = []
+                self.stage = 0
+                self.focus_changed = False
+            def __call__(self, args, *, serial):
+                key = tuple(args)
+                if key == ("shell", "dumpsys", "activity", "activities"):
+                    return ACTIVITY % (DJ if self.stage >= 2 else LAUNCHER)
+                if key == ("shell", "am", "start", "-W", "-n", LAUNCHER):
+                    self.launched = True
+                if key == ("shell", "dumpsys", "window", "displays"):
+                    # The new PRIVATE prelaunch baseline must not consume a
+                    # simulated *postlaunch* focus-race observation.
+                    if self.launched:
+                        self.focus_reads += 1
+                    changed = self.focus_changed or (
+                        self.flip_focus_after_read and self.focus_reads >= 2)
+                    current = ("Window{a2 u0 Other warning}" if changed
+                               else "Window{a1 u0 Synthetic warning}")
+                    return ("mCurrentFocus=" + current + "\n" +
+                            "mFocusedApp=ActivityRecord{c1 u0 " + self.focused +
+                            "/com.yeelight.cherry.MainActivity t7}\n")
+                if key == ("shell", "dumpsys", "window", "windows"):
+                    return ('Window #0 Window{a1 u0 Synthetic warning}:\n'
+                            'mOwnerUid=1000 showForAllUsers=false package=android\n'
+                            'mAttrs={(0,0)(wrapxwrap) ty=PHONE fmt=TRANSLUCENT}\n')
+                if key == ("shell", "getconf", "PAGE_SIZE"): return self.page_size
+                if args[:4] == ["shell", "cmd", "overlay", "lookup"]:
+                    resource = args[-1].rsplit('/', 1)[-1]
+                    return {"page_size_compat_elf_warning":
+                              "Synthetic 16 KB ELF alignment warning. Run using page size compatible mode.",
+                            "page_size_compat_apk_warning":
+                              "Synthetic 16 KB APK alignment warning. Compatible mode applies.",
+                            "page_size_compat_apk_and_elf_warning":
+                              "Synthetic 16 KB APK and ELF alignment warning. Compatible mode applies.",
+                            "ok": "OK"}[resource]
+                if key == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
+                    self.ui_count += 1
+                    if self.stage == 0 or (self.stage == 2 and self.warn_on_dj):
+                        self._dump_pending = ('<?xml version="1.0"?><hierarchy>'
+                          '<node package="android"/>'
+                          '<node package="android" resource-id="android:id/message" text="' +
+                          self.warning_text + '"/>'
+                          '<node package="android" resource-id="android:id/button1" '
+                          'text="OK" class="android.widget.Button" clickable="true" '
+                          'enabled="true" bounds="[50,100][150,140]"/></hierarchy>')
+                    else:
+                        self._dump_pending = ENTRY if self.stage == 1 else DJ_UI
+                    return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+                if args[:3] == ["shell", "input", "tap"]:
+                    self.taps.append(tuple(args))
+                    self.stage += 1
+                    return ""
+                return super().__call__(args, serial=serial)
+        good = WarningADB()
+        result = good.run()
+        self.assertEqual(result["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        self.assertEqual(result["entrypoint_observations"][0]["system_warning"]["status"],
+                         "EXACT_AOSP_PAGE_SIZE_WARNING_ACKNOWLEDGED")
+        self.assertEqual(good.taps, [
+            ("shell", "input", "tap", "100", "120"),
+            ("shell", "input", "tap", "110", "60")])
+        self.assertFalse(result["app_functionally_accepted"])
+        double = WarningADB(warn_on_dj=True)
+        double_result = double.run()
+        self.assertEqual(double_result["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        self.assertEqual(double_result["entrypoint_observations"][1]["system_warning"]["status"],
+                         "EXACT_AOSP_PAGE_SIZE_WARNING_ACKNOWLEDGED")
+        self.assertEqual(double.taps, [
+            ("shell", "input", "tap", "100", "120"),
+            ("shell", "input", "tap", "110", "60"),
+            ("shell", "input", "tap", "100", "120")])
+        for kwargs in ({"focused": "com.other.app"}, {"page_size": "4096"},
+                       {"warning_text": "Allow access to your private files?"}):
+            with self.subTest(kwargs=kwargs):
+                blocked = WarningADB(**kwargs)
+                report = blocked.run()
+                self.assertEqual(report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+                self.assertFalse(blocked.taps)
+                self.assertFalse(report["native_entry_navigation_tested"])
+        # In a real window-focus race, no stale verified compatibility tap.
+        changed = WarningADB()
+        changed.focus_changed = True
+        report = changed.run()
+        self.assertEqual(report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertFalse(changed.taps)
+        raced = WarningADB(flip_focus_after_read=True)
+        raced_report = raced.run()
+        self.assertEqual(raced_report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertFalse(raced.taps)
+        self.assertEqual(
+            raced_report["entrypoint_observations"][0]["system_warning"]["status"],
+            "WARNING_FOCUS_CHANGED_NO_ACTION")
+
+    def test_first_run_oem_surface_does_not_imply_failed_app_or_login(self):
+        a = FakeADB()
+        welcome = ('<?xml version="1.0"?><hierarchy>'
+                   '<node package="' + PACKAGE +
+                   '" text="SensitiveOEMWelcome" enabled="true"/>'
+                   '</hierarchy>')
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = welcome
+        result = a.run()
+        home = result["entrypoint_observations"][0]
+        self.assertEqual(home["status"], "BLOCKED_REQUIRED_UI_NOT_VISIBLE")
+        self.assertEqual(home["ui"]["ui_node_origin_category"], "CLONE_ONLY")
+        self.assertEqual(home["oem_main_initialization"], "NOT_ATTESTED")
+        self.assertEqual(home["miot_binding"], "NOT_ATTESTED")
+        self.assertEqual(home["cloud_login"], "NOT_TESTED")
+        self.assertFalse(home["crash"]["target_crash"])
+        self.assertFalse(result["native_entry_navigation_tested"])
+        self.assertNotIn("SensitiveOEMWelcome", str(result))
+        self.assertFalse(any(c[:3] == ("shell", "input", "tap") for c in a.calls))
+
+    def test_android_system_only_and_unattributed_first_run_are_not_native(self):
+        for pkg in ("android", "com.android.systemui", "com.other.app", None):
+            with self.subTest(pkg=pkg):
+                a = FakeADB()
+                package = (' package="' + pkg + '"' if pkg else "")
+                a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = (
+                    '<?xml version="1.0"?><hierarchy><node' + package +
+                    ' text="Loft DJ" clickable="true" enabled="true" '
+                    'bounds="[10,20][210,100]"/></hierarchy>')
+                result = a.run()
+                home = result["entrypoint_observations"][0]
+                expected = ("ANDROID_SYSTEM_ONLY" if pkg in ("android", "com.android.systemui")
+                            else "OTHER_OR_UNVERIFIED" if pkg else "UNATTRIBUTED")
+                self.assertEqual(home["ui"]["ui_node_origin_category"], expected)
+                self.assertFalse(home["ui"]["expected_native_ui_observed"])
+                self.assertFalse(result["native_entry_navigation_tested"])
+                self.assertFalse(any(c[:3] == ("shell", "input", "tap") for c in a.calls))
+
+    def test_transient_system_first_frame_rechecks_without_system_interaction(self):
+        system = ('<?xml version="1.0"?><hierarchy>'
+                  '<node package="android" text="Private system dialog data"/>'
+                  '</hierarchy>')
+        class DelayedADB(FakeADB):
+            def __init__(self, *, stays_system=False):
+                super().__init__()
+                self.stays_system = stays_system
+                self.native_clicked = False
+            def __call__(self, args, *, serial):
+                if tuple(args) == ("shell", "dumpsys", "activity", "activities"):
+                    return ACTIVITY % (DJ if self.native_clicked else LAUNCHER)
+                if tuple(args) == ("shell", "input", "tap", "110", "60"):
+                    self.native_clicked = True
+                if tuple(args) == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
+                    self.calls.append(tuple(args))
+                    self.ui_count += 1
+                    self._dump_pending = (system if self.ui_count == 1 or self.stays_system
+                                          else ENTRY if self.ui_count == 2 else DJ_UI)
+                    return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+                return super().__call__(args, serial=serial)
+        delayed = DelayedADB()
+        pauses = []
+        report = probe_private_emulator(
+            "emulator-5554", owner_approved=True, launcher_component=LAUNCHER,
+            expected_installed_apk_sha256=PIN, adb=delayed, pause=pauses.append)
+        self.assertEqual(report["status"], "PRIVATE_EMULATOR_NATIVE_NAVIGATION_OBSERVED")
+        home = report["entrypoint_observations"][0]
+        self.assertEqual(home["passive_system_ui_recheck"]["status"],
+                         "NATIVE_CONTROLS_BECAME_VISIBLE")
+        self.assertEqual(pauses, [3.0, 8, 3.0])
+        self.assertEqual(
+            [x for x in delayed.calls if x[:3] == ("shell", "input", "tap")],
+            [("shell", "input", "tap", "110", "60")])
+        self.assertNotIn("Private system dialog data", str(report))
+        blocked = DelayedADB(stays_system=True)
+        blocked_report = blocked.run()
+        self.assertEqual(blocked_report["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertEqual(
+            blocked_report["entrypoint_observations"][0]
+            ["passive_system_ui_recheck"]["status"], "SYSTEM_UI_PERSISTED_NO_ACTION")
+        self.assertEqual(blocked.ui_count, 2)
+        self.assertFalse(any(x[:3] == ("shell", "input", "tap") for x in blocked.calls))
+        self.assertFalse(blocked_report["native_entry_navigation_tested"])
+        self.assertNotIn("Private system dialog data", str(blocked_report))
+
+    def test_persistent_android_overlay_prelaunch_and_runtime_source_classified(self):
+        from page_size_warning import CLONE
+        known = "Synthetic 16 KB compatibility warning known to AOSP resources."
+        unknown = "Private unknown Android overlay text not an official warning."
+        system_ui = lambda text: (
+            '<?xml version="1.0"?><hierarchy>'
+            '<node package="android"/>'
+            '<node package="android" resource-id="android:id/message" text="' +
+            text + '"/>'
+            '<node package="android" resource-id="android:id/button1" '
+            'text="OK" clickable="true" class="android.widget.Button" '
+            'enabled="true" bounds="[50,100][150,140]"/>'
+            '</hierarchy>')
+        class OverlayADB(FakeADB):
+            def __init__(self, message=known, preexisting=False):
+                super().__init__()
+                self.launched = False
+                self.preexisting = preexisting
+                self.message = message
+            def __call__(self, args, *, serial):
+                key = tuple(args)
+                window = ("Window{a1 u0 android app overlay}" if
+                          self.preexisting or self.launched else
+                          "Window{b1 u0 platform launcher}")
+                if key == ("shell", "dumpsys", "window", "displays"):
+                    target = (CLONE + "/com.yeelight.cherry.MainActivity" if
+                              self.launched else
+                              "com.android.launcher3/.Launcher")
+                    return ("mCurrentFocus=" + window + "\n"
+                            "mFocusedApp=ActivityRecord{c1 u0 " + target + " t1}\n")
+                if key == ("shell", "dumpsys", "window", "windows"):
+                    return ("Window #0 " + window + ":\n"
+                            "mOwnerUid=1000 showForAllUsers=false package=android\n"
+                            "mAttrs={(0,0)(wrapxwrap) ty=APPLICATION_OVERLAY}\n")
+                if key == ("shell", "am", "start", "-W", "-n", LAUNCHER):
+                    self.launched = True
+                if key == ("shell", "getconf", "PAGE_SIZE"):
+                    return "16384"
+                if args[:4] == ["shell", "cmd", "overlay", "lookup"]:
+                    label = args[-1].split("/")[-1]
+                    return {
+                        'page_size_compat_apk_warning': known,
+                        'page_size_compat_elf_warning': "Different synthetic ELF compatibility message.",
+                        'page_size_compat_apk_and_elf_warning':
+                            "Different synthetic combined compatibility message.",
+                        'ok': 'OK'}[label]
+                if key == ("shell", "uiautomator", "dump", PRIVATE_UI_SNAPSHOT):
+                    self.calls.append(key)
+                    self.ui_count += 1
+                    self._dump_pending = system_ui(self.message)
+                    return "UI hierarchy dumped to: " + PRIVATE_UI_SNAPSHOT
+                return super().__call__(args, serial=serial)
+        for message, preexisting, expected, relation in (
+            (known, False, 'FRAMEWORK_PAGE_SIZE_MESSAGE_MATCH_NO_ACTION',
+             'DIFFERENT_FOCUS_TOKEN'),
+            (unknown, True, 'NOT_AOSP_PAGE_SIZE_MESSAGE',
+             'SAME_FOCUS_TOKEN'),
+        ):
+            with self.subTest(expected=expected):
+                fake = OverlayADB(message, preexisting)
+                report = fake.run()
+                self.assertEqual(report['status'], 'PRIVATE_EMULATOR_LAUNCH_BLOCKED')
+                home = report['entrypoint_observations'][0]
+                self.assertEqual(home['system_warning']['page_size_probe']
+                                 ['window_type_detail'], 'APP_OVERLAY')
+                self.assertEqual(home['system_warning']['prelaunch_focus_relation'],
+                                 relation)
+                self.assertEqual(home['system_warning']['system_overlay_inspection']
+                                 ['status'], expected)
+                self.assertEqual(home['passive_system_ui_recheck']
+                                 ['window_focus_relation'], 'SAME_FOCUS_TOKEN')
+                self.assertEqual(home['passive_system_ui_recheck']
+                                 ['status'], 'SYSTEM_UI_PERSISTED_NO_ACTION')
+                self.assertFalse(home['system_warning']['acknowledged'])
+                self.assertFalse(report['native_entry_navigation_tested'])
+                self.assertFalse(any(c[:3] == ("shell", "input", "tap")
+                                     for c in fake.calls))
+                self.assertNotIn(message, str(report))
+
+    def test_spoofed_foreign_button_cannot_create_native_entry_or_coordinates(self):
+        foreign = ENTRY.replace('package="' + PACKAGE + '"',
+                                'package="com.android.systemui"')
+        self.assertFalse(classify_visible_ui(foreign, stage="classic_entry")
+                         ["expected_native_ui_observed"])
+        with self.assertRaisesRegex(SmokeBlocked, "SMOKE_CLASSIC_ENTRY_NOT_VISIBLE"):
+            entry_button_coordinates(foreign, "Physical size: 1080x2400")
+
+    def test_mixed_ui_keeps_origin_category_but_requires_real_app_controls(self):
+        mixed = ENTRY.replace(
+            '</hierarchy>',
+            '<node package="android" text="OEM-secret"/>'
+            '</hierarchy>')
+        result = classify_visible_ui(mixed, stage="classic_entry")
+        self.assertEqual(result["ui_node_origin_category"], "CLONE_AND_OTHER")
+        self.assertTrue(result["expected_native_ui_observed"])
+        self.assertNotIn("OEM-secret", str(result))
+        self.assertFalse(classify_visible_ui(
+            DJ_UI.replace('package="' + PACKAGE + '"',
+                          'package="com.android.systemui"'),
+            stage="native_dj")["expected_native_ui_observed"])
+
+    def test_disabled_entry_is_not_clickable_or_tapped(self):
+        a = FakeADB()
+        a.overrides[("shell", "cat", PRIVATE_UI_SNAPSHOT)] = (
+            ENTRY.replace('enabled="true"', 'enabled="false"'))
+        result = a.run()
+        self.assertEqual(result["status"], "PRIVATE_EMULATOR_LAUNCH_BLOCKED")
+        self.assertFalse(any(c[:3] == ("shell", "input", "tap") for c in a.calls))
 
     def test_ui_metadata_is_not_implicitly_a_real_click(self):
         self.assertTrue(classify_visible_ui(ENTRY, stage="classic_entry")["expected_native_ui_observed"])
@@ -369,6 +758,86 @@ class Android17StartupTest(unittest.TestCase):
         self.assertEqual(result["exception_depth"], "TOP_LEVEL")
         self.assertTrue(result["target_crash"])
 
+
+    def test_null_dereference_origin_with_obfuscated_oem_class_and_activity_resume(self):
+        prefix = "11-13 09:03:30.000  2200  2200 E AndroidRuntime: "
+        private = "PrivateMethodNameNeverPublish"
+        log = (
+            prefix + "FATAL EXCEPTION: main\n" +
+            prefix + "Process: " + PACKAGE + ", PID: 2200\n" +
+            prefix + "java.lang.NullPointerException: Attempt to invoke virtual method "
+            "'void vendor.Private."+private+"()' on a null object reference\n" +
+            prefix + "    at a.b.c.d(Unknown Source:12)\n" +
+            prefix + "    at android.app.ActivityThread.performResumeActivity(Unknown Source:77)\n"
+        )
+        candidate = {"definitions": frozenset({"La/b/c;"}),
+                     "dex_origin": {"La/b/c;": "SECONDARY_OEM_DEX"}}
+        found = classify_crash(log, candidate_graph=candidate)
+        self.assertEqual(found["exception_category"], "NULL_DEREFERENCE")
+        self.assertEqual(found["exception_depth"], "TOP_LEVEL")
+        self.assertEqual(found["null_operation_bucket"], "NULL_METHOD_INVOKE")
+        self.assertEqual(found["null_top_frame_origin"], "SECONDARY_OEM_DEX")
+        self.assertEqual(found["null_first_owned_frame_origin"], "SECONDARY_OEM_DEX")
+        self.assertEqual(found["null_activity_lifecycle_hint"], "ACTIVITY_RESUME_STACK")
+        self.assertEqual(found["null_crash_thread"], "MAIN_THREAD")
+        self.assertEqual(found["null_frame_evidence"], "STACK_FRAMES_SEEN")
+        self.assertTrue(found["null_origin_attribution_is_diagnostic_only"])
+        for token in ("a.b.c", private, "Private", "Unknown Source", "vendor"):
+            self.assertNotIn(token, str(found))
+
+    def test_null_dereference_non_oem_and_field_or_array_crashes(self):
+        for description, operation in (
+            ("Attempt to read from field 'int vendor.Secret.code' on a null object reference",
+             "NULL_FIELD_READ"),
+            ("Attempt to write to field 'int vendor.Secret.code' on a null object reference",
+             "NULL_FIELD_WRITE"),
+            ("Attempt to get length of null array", "NULL_ARRAY_LENGTH"),
+            ("secret payload", "NULL_OTHER"),
+        ):
+            with self.subTest(operation=operation):
+                log = ("FATAL EXCEPTION: worker\nProcess: " + PACKAGE +
+                       ", PID: 123\njava.lang.NullPointerException: " + description +
+                       "\n    at android.widget.FrameLayout.measure(Unknown Source:4)\n")
+                report = classify_crash(log)
+                self.assertEqual(report["null_operation_bucket"], operation)
+                self.assertEqual(report["null_top_frame_origin"], "PLATFORM_CLASS")
+                self.assertEqual(report["null_first_owned_frame_origin"], "NONE")
+                self.assertEqual(report["null_crash_thread"], "NON_MAIN_THREAD")
+                self.assertNotIn("Secret", str(report))
+
+    def test_null_dereference_foreign_log_and_foreign_process_cannot_set_origin(self):
+        foreign_prefix = "11-13 09:03:30.001  123  123 E WrongTag: "
+        log = ("FATAL EXCEPTION: main\nProcess: com.other.foreign, PID: 77\n"
+               "java.lang.NullPointerException: unrelated\n"
+               "    at io.github.lxsdd.yeelightclassicdj.ui.ClassicDjActivity.run(Source:2)\n"
+               "FATAL EXCEPTION: main\nProcess: " + PACKAGE + ", PID: 12\n"
+               "java.lang.NullPointerException: bounded\n" +
+               foreign_prefix + "    at fake.Other.stage(Unknown Source:1)\n")
+        found = classify_crash(log)
+        self.assertTrue(found["target_crash"])
+        self.assertEqual(found["null_top_frame_origin"], "NO_FRAME")
+        self.assertEqual(found["null_first_owned_frame_origin"], "NONE")
+        self.assertEqual(found["null_frame_evidence"], "NO_PARSED_FRAMES")
+        self.assertNotIn("fake", str(found))
+        self.assertNotIn("ClassicDjActivity", str(found))
+        old = classify_crash("FATAL EXCEPTION: main\nProcess: "+PACKAGE+
+                             ", PID: 4\njava.lang.ClassNotFoundException: absent\n")
+        self.assertNotIn("null_top_frame_origin", old)
+
+    def test_null_dereference_native_bridge_first_frame_and_framework_recovery(self):
+        bridge = DJ_ACTIVITY
+        frame = ("FATAL EXCEPTION: main\nProcess: " + PACKAGE +
+                 ", PID: 29\njava.lang.NullPointerException: secret\n" +
+                 " at " + bridge + ".onCreate(Unknown Source:22)\n" +
+                 " at android.app.Instrumentation.callActivityOnCreate(Unknown Source:99)\n")
+        descriptor = "L" + bridge.replace(".", "/") + ";"
+        result = classify_crash(frame, candidate_graph={
+            "dex_origin": {descriptor: "NATIVE_BRIDGE_DEX"},
+        })
+        self.assertEqual(result["null_top_frame_origin"], "NATIVE_BRIDGE_DEX")
+        self.assertEqual(result["null_first_owned_frame_origin"], "NATIVE_BRIDGE_DEX")
+        self.assertEqual(result["null_activity_lifecycle_hint"], "ACTIVITY_CREATE_STACK")
+        self.assertNotIn(bridge, str(result))
 
     def test_private_provider_class_missing_distinguished_from_transitive_dependency(self):
         provider = "hidden.vendor.PrivateProvider"

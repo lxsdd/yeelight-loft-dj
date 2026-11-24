@@ -20,16 +20,44 @@ class ClassicAndroidAudioRecordInput private constructor(
             val minimum = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
             check(minimum > 0) { "Unsupported microphone configuration" }
             val bytes = maxOf(minimum, 4096)
-            val record = AudioRecord(source, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bytes)
-            try {
-                check(record.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord initialization failed" }
-                record.startRecording()
-                check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AudioRecord did not start" }
-                return ClassicAndroidAudioRecordInput(record)
-            } catch (failure: Throwable) {
-                record.release()
-                throw failure
+            // A device may reject one valid source while allowing the other.
+            // Recover only from AudioRecord *state* failure, never from a denied
+            // RECORD_AUDIO permission, invalid format or incompatible ABI.
+            // This is a bounded one-time startup fallback, not a retry loop.
+            val candidates = if (source == MediaRecorder.AudioSource.MIC) {
+                intArrayOf(source, MediaRecorder.AudioSource.UNPROCESSED)
+            } else intArrayOf(source)
+            var primaryFailure: IllegalStateException? = null
+            for (candidate in candidates) {
+                var allocated: AudioRecord? = null
+                try {
+                    val record = AudioRecord(candidate, sampleRate,
+                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bytes)
+                    allocated = record
+                    check(record.state == AudioRecord.STATE_INITIALIZED) {
+                        "AudioRecord initialization failed"
+                    }
+                    record.startRecording()
+                    check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        "AudioRecord did not start"
+                    }
+                    return ClassicAndroidAudioRecordInput(record)
+                } catch (failure: Throwable) {
+                    // Release the failed instance before trying a new source.
+                    // Preserve the actual failure if cleanup itself fails.
+                    try { allocated?.release() }
+                    catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+                    if (candidate == MediaRecorder.AudioSource.MIC &&
+                        source == MediaRecorder.AudioSource.MIC &&
+                        failure is IllegalStateException) {
+                        primaryFailure = failure
+                        continue
+                    }
+                    primaryFailure?.let { failure.addSuppressed(it) }
+                    throw failure
+                }
             }
+            error("No microphone capture source accepted")
         }
     }
 

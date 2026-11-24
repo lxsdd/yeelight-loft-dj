@@ -44,8 +44,43 @@ def run(args, *, env=None):
     subprocess.run([str(x) for x in args],env=env,check=True,timeout=90,
                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
-def sign(source: Path, preflight: Path, output: Path, sdk: Path):
-    if source.name != INPUT_NAME or output.name != OUTPUT_NAME or output.exists():
+def sign(source: Path, preflight: Path, output: Path, sdk: Path,
+         *, identity_control=False, package_only_control=False):
+    if type(identity_control) is not bool or type(package_only_control) is not bool or (identity_control and package_only_control):
+        raise Refused('IDENTITY_ABLATION_BAD_MODE')
+    if package_only_control:
+        root = os.environ.get('RUNNER_TEMP', '')
+        allowed = (bool(root) and
+                   source == Path(root)/'private-output'/'classic-loft-dj-PACKAGE-UNSIGNED.apk' and
+                   output == Path(root)/'private-output'/'classic-loft-dj-PACKAGE-TEST-SIGNED.apk' and
+                   preflight == source.with_suffix(source.suffix+'.preflight.json') and
+                   os.environ.get('GITHUB_REPOSITORY') == 'lxsdd/yeelight-loft-dj' and
+                   os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch' and
+                   os.environ.get('GITHUB_ACTOR') == 'lxsdd' and
+                   os.environ.get('GITHUB_REF') == 'refs/heads/main' and
+                   os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted' and
+                   not os.environ.get('GH_TOKEN') and
+                   not os.environ.get('CLASSIC_VAULT_TOKEN'))
+        if not allowed:
+            raise Refused('PACKAGE_ONLY_OWNER_OFFLINE_SCOPE_REQUIRED')
+    elif identity_control:
+        root = os.environ.get('RUNNER_TEMP', '')
+        allowed = (bool(root) and
+                   source == Path(root)/'private-output'/'classic-loft-dj-IDENTITY-UNSIGNED.apk' and
+                   output == Path(root)/'private-output'/'classic-loft-dj-IDENTITY-TEST-SIGNED.apk' and
+                   preflight == source.with_suffix(source.suffix+'.preflight.json') and
+                   os.environ.get('GITHUB_REPOSITORY') == 'lxsdd/yeelight-loft-dj' and
+                   os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch' and
+                   os.environ.get('GITHUB_ACTOR') == 'lxsdd' and
+                   os.environ.get('GITHUB_REF') == 'refs/heads/main' and
+                   os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted' and
+                   not os.environ.get('GH_TOKEN') and
+                   not os.environ.get('CLASSIC_VAULT_TOKEN'))
+        if not allowed:
+            raise Refused('IDENTITY_ABLATION_OWNER_OFFLINE_SCOPE_REQUIRED')
+    elif source.name != INPUT_NAME or output.name != OUTPUT_NAME:
+        raise Refused('ONLY_EXACT_PRIVATE_CLASSIC_TEST_APK_ALLOWED')
+    if output.exists():
         raise Refused('ONLY_EXACT_PRIVATE_CLASSIC_TEST_APK_ALLOWED')
     if not source.is_file() or not preflight.is_file() or not sdk.is_dir():
         raise Refused('PRIVATE_SOURCE_OR_SDK_MISSING')
@@ -53,8 +88,23 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path):
         raise Refused('BAD_PRIVATE_INPUT')
     try: d=json.loads(preflight.read_text(encoding='utf-8'))
     except (ValueError,OSError): raise Refused('BAD_PREFLIGHT_REPORT')
-    if d.get('status')!='UNSIGNED_PRIVATE_APK_STRUCTURAL_PREFLIGHT_PASS_NOT_INSTALLED' or d.get('signed') is not False or d.get('installed') is not False or d.get('package')!=PACKAGE:
+    package = 'com.yeelight.cherry' if identity_control else PACKAGE
+    if (d.get('status')!='UNSIGNED_PRIVATE_APK_STRUCTURAL_PREFLIGHT_PASS_NOT_INSTALLED'
+            or d.get('signed') is not False or d.get('installed') is not False
+            or d.get('package')!=package):
         raise Refused('NO_QUALIFIED_CLASSIC_UNSIGNED_APK')
+    if identity_control and (d.get('identity_control_offline_only') is not True or
+            d.get('dex_reassembly_mode') != 'raw' or
+            any(x != 0 for x in d.get('controlled_authority_string_remaps',{}).values()) or
+            d.get('original_oem_dex_intentionally_changed') is not False):
+        raise Refused('IDENTITY_CONTROL_OEM_BYTES_OR_SCOPE_NOT_PRESERVED')
+    if package_only_control and (d.get('identity_control_offline_only') is not False or
+            d.get('package_only_control_offline_only') is not True or
+            d.get('only_binary_manifest_package_changed') is not True or
+            d.get('dex_reassembly_mode') != 'raw' or
+            any(x != 0 for x in d.get('controlled_authority_string_remaps',{}).values()) or
+            d.get('original_oem_dex_intentionally_changed') is not False):
+        raise Refused('PACKAGE_ONLY_CONTROL_OEM_BYTES_OR_SCOPE_NOT_PRESERVED')
     unsigned_sha=sha256(source)
     if d.get('apk_sha256')!=unsigned_sha: raise Refused('UNSIGNED_SHA256_MISMATCH')
     keytool=shutil.which('keytool')
@@ -76,13 +126,20 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path):
                  '-dname','CN=Yeelight Classic Loft DJ PRIVATE TEST,O=Local Test',
                  '-storepass:env','CLASSIC_EPHEMERAL_SIGN_PASS',
                  '-keypass:env','CLASSIC_EPHEMERAL_SIGN_PASS'],env=env)
-            run([zipalign,'-f','-p','4',source,aligned],env=env)
+            # The qualified API37 image uses 16 KiB pages. Legacy -p only
+            # aligns stored native libraries to 4 KiB and can itself trigger
+            # Android's page-size compatibility dialog. This changes ZIP
+            # padding only; it does not repair/rewrite OEM ELF load segments.
+            run([zipalign,'-f','-P','16','4',source,aligned],env=env)
             run([apksigner,'sign','--ks',key,'--ks-type','PKCS12',
                  '--ks-key-alias','classic-test-only',
                  '--ks-pass','env:CLASSIC_EPHEMERAL_SIGN_PASS',
                  '--key-pass','env:CLASSIC_EPHEMERAL_SIGN_PASS',
                  '--out',temp_signed,aligned],env=env)
             run([apksigner,'verify','--verbose','--min-sdk-version','23',temp_signed],env=env)
+            # Check the actual signed bytes, before exposing the output or
+            # its receipt. A failed alignment check is never a signed PASS.
+            run([zipalign,'-c','-P','16','4',temp_signed],env=env)
             if temp_signed.stat().st_size < 1000: raise Refused('SIGNED_OUTPUT_INVALID')
             # Signature is tied only to this test build; no vendor key or stable app identity is claimed.
             shutil.copyfile(temp_signed,output)
@@ -90,7 +147,9 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path):
             env.pop('CLASSIC_EPHEMERAL_SIGN_PASS',None)
     report={
         'status':'PRIVATE_CLASSIC_TEST_APK_SIGNED_NOT_INSTALLED_NOT_HARDWARE_TESTED',
-        'package':PACKAGE,
+        'package':package,
+        'identity_control_offline_only':identity_control,
+        'package_only_control_offline_only':package_only_control,
         'signed':True,
         'installed':False,
         'signature':'EPHEMERAL_UNIQUE_TEST_KEY_NOT_SUITABLE_FOR_APP_UPDATES',
@@ -99,6 +158,9 @@ def sign(source: Path, preflight: Path, output: Path, sdk: Path):
         'hardware':'NOT_TESTED',
         'yeelight_classic_compatibility':'NOT_TESTED',
         'source_build_report_sha256':sha256(preflight),
+        'native_zip_alignment_bytes':16384,
+        'signed_zip_alignment_verified':True,
+        'native_elf_16k_compatibility':'NOT_PROVEN_BY_ZIP_ALIGNMENT',
     }
     output.with_name(output.name+'.test-signing.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
     return report
@@ -109,9 +171,15 @@ def main():
     p.add_argument('--preflight',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--android-sdk',type=Path,required=True)
+    p.add_argument('--identity-control',action='store_true',
+                   help='isolated emulator-only original package probe')
+    p.add_argument('--package-only-control',action='store_true',
+                   help='isolated emulator-only manifest-package-only probe')
     a=p.parse_args()
     try:
-        print(json.dumps(sign(a.unsigned,a.preflight,a.output,a.android_sdk)))
+        print(json.dumps(sign(a.unsigned,a.preflight,a.output,a.android_sdk,
+                              identity_control=a.identity_control,
+                              package_only_control=a.package_only_control)))
         return 0
     except (Refused,subprocess.SubprocessError,OSError) as e:
         print('PRIVATE_TEST_SIGN_BLOCKED_'+type(e).__name__,file=sys.stderr)

@@ -10,7 +10,6 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
-import java.util.ArrayDeque
 
 /**
  * Real opt-in Yeelight Music TCP reverse transport. Never broadcasts, never retries a command,
@@ -29,22 +28,27 @@ class ClassicYeelightMusicTransport(
         var listener: ServerSocket? = null,
         var stream: Socket? = null,
         var nextId: Int = 1,
+        var awaitingVerification: Boolean = false,
     )
     private val sessions = peers.associateWith { Session() }
     init {
         require(localIp.isNotEmpty() && validLanIp(localIp)) { "Need an active private Wi-Fi IPv4 address" }
-        require(peers.isNotEmpty() && peers.size <= 4 && peers.all(::validLanIp) && peers.size == sessions.size)
+        // One reverse session per explicitly selected IP. The Yeelight TCP-client
+        // quota applies PER LAMP, not to the number of lamps in a group.
+        // Keep every participant's own state/budget; no fixed fleet ceiling.
+        require(peers.isNotEmpty() && peers.all(::validLanIp) && peers.size == sessions.size)
         require(tcpPort in 1..65535)
         require(peers.none { it == localIp } || tcpPort != 55443)
     }
 
     override fun readMusic(id: String): Boolean? = withPeer(id) { peer ->
-        val value = rpc(id, peer, "get_prop", "[\"music_on\"]", isRead = true)
-        when {
-            musicProp0.matches(value) -> false
-            musicProp1.matches(value) -> true
-            else -> null // unsupported/unknown is NEVER treated as music=off
-        }
+        // Only the verified post-STOP read may use the reserved final slot.
+        val phase = if (peer.awaitingVerification) ClassicLanRpcBudget.Phase.VERIFY_STOP
+                    else ClassicLanRpcBudget.Phase.READ
+        peer.awaitingVerification = false
+        val value = rpc(id, peer, "get_prop", "[\"music_on\"]", isRead = true, phase = phase)
+        // An incomplete or forged property reply is NOT evidence that Music is off.
+        parseMusicReply(value)
     }
 
     override fun requestStart(id: String): Boolean = withPeer(id) { peer ->
@@ -54,7 +58,8 @@ class ClassicYeelightMusicTransport(
         server.soTimeout = 3_500
         peer.listener = server
         // If the ACK is lost, the coordinator quarantines this peer: NO speculative retry.
-        rpc(id, peer, "set_music", "[1,\"$localIp\",${server.localPort}]", isRead = false) == "ok"
+        rpc(id, peer, "set_music", "[1,\"$localIp\",${server.localPort}]", isRead = false,
+            phase = ClassicLanRpcBudget.Phase.START) == "ok"
     }
 
     override fun reverseConnected(id: String): Boolean = withPeer(id) { peer ->
@@ -77,13 +82,24 @@ class ClassicYeelightMusicTransport(
 
     override fun requestStop(id: String): Boolean = withPeer(id) { peer ->
         // Only invoked by coordinator.stop for a session it has confirmed as OWNED.
-        rpc(id, peer, "set_music", "[0]", isRead = false) == "ok"
+        val accepted = rpc(id, peer, "set_music", "[0]", isRead = false,
+            phase = ClassicLanRpcBudget.Phase.STOP) == "ok"
+        if (accepted) peer.awaitingVerification = true
+        accepted
     }
 
     override fun closeReverse(id: String) = withPeer(id) { peer ->
-        try { peer.stream?.close() } finally {
-            peer.stream = null
-            try { peer.listener?.close() } finally { peer.listener = null }
+        var closed = false
+        try {
+            try { peer.stream?.close() } finally {
+                peer.stream = null
+                try { peer.listener?.close() } finally { peer.listener = null }
+            }
+            closed = true
+        } finally {
+            // STOP's confirmed ACK is not proof of music_off. Keep the reserved
+            // verification slot across local reverse-socket close.
+            if (closed && !peer.awaitingVerification) commandBudget.retire(id, peer)
         }
         Unit
     }
@@ -104,17 +120,14 @@ class ClassicYeelightMusicTransport(
         synchronized(peer) { return fn(peer) }
     }
 
-    private fun rpc(id: String, peer: Session, method: String, params: String, isRead: Boolean): String {
+    private fun rpc(id: String, peer: Session, method: String, params: String,
+                    isRead: Boolean, phase: ClassicLanRpcBudget.Phase = ClassicLanRpcBudget.Phase.READ): String {
         val now = clockMs()
         // Extremely conservative budget independent of firmware's unknown global quota.
         // Shared for the whole Android process: stop/restart cannot reset the firmware quota.
         // Even failed/uncertain writes consume a slot, never automatically replay them.
-        synchronized(commandBudget) {
-            val events = commandBudget.getOrPut(id) { ArrayDeque<Long>() }
-            while (events.isNotEmpty() && now - events.first >= 60_000L) events.removeFirst()
-            if (events.size >= 8) throw IOException("Normal LAN command budget exhausted; no automatic retry")
-            events.addLast(now)
-        }
+        if (!commandBudget.admit(id, now, phase, peer))
+            throw ClassicLanFailure(ClassicLanFailure.Kind.LOCAL_BUDGET)
         val requestId = peer.nextId++
         Socket().use { socket ->
             socket.connect(InetSocketAddress(id, tcpPort), 1_500)
@@ -126,12 +139,16 @@ class ClassicYeelightMusicTransport(
             // Bound asynchronous property events and response length. Never retry a write.
             repeat(6) {
                 val line = readBoundedLine(reader) ?: throw IOException("Connection closed before matching reply")
-                val match = idPattern.find(line) ?: return@repeat
-                if (match.groupValues[1].toIntOrNull() != requestId) return@repeat
-                if (errorPattern.containsMatchIn(line)) throw IOException("Yeelight RPC rejected")
-                if (isRead) return line
-                if (okPattern.containsMatchIn(line)) return "ok"
-                throw IOException("Yeelight RPC returned no explicit OK")
+                // Accept an ID only in the top-level response envelope,
+                // never an "id" embedded in a property notification or message.
+                if (correlatedReplyId(line) != requestId) return@repeat
+                classifyMatchedRpcError(line)?.let { throw ClassicLanFailure(it) }
+                if (isRead) {
+                    if (parseMusicReply(line) != null) return line
+                    throw IOException("Unverified Music state reply")
+                }
+                if (validatedOkReply(line)) return "ok"
+                throw IOException("Unverified Yeelight command acknowledgement")
             }
             throw IOException("No matching Yeelight RPC response")
         }
@@ -149,12 +166,35 @@ class ClassicYeelightMusicTransport(
     }
 
     companion object {
-        private val commandBudget = mutableMapOf<String, ArrayDeque<Long>>()
-        private val idPattern = Regex("\"id\"\\s*:\\s*(\\d+)")
-        private val okPattern = Regex("\"result\"\\s*:\\s*\\[\\s*\"ok\"\\s*]")
-        private val musicProp0 = Regex(".*\"result\"\\s*:\\s*\\[\\s*\"0\"\\s*].*")
-        private val musicProp1 = Regex(".*\"result\"\\s*:\\s*\\[\\s*\"1\"\\s*].*")
-        private val errorPattern = Regex("\"error\"\\s*:")
+        private val commandBudget = ClassicLanRpcBudget()
+        // Deliberately narrow protocol acceptance for the one supported
+        // Yeelight Classic RPC response: complete top-level id + result.
+        // Reject partial JSON, duplicate/trailing fields and nested spoofing.
+        // OEM responses with unknown shapes remain uncertain, never OFF/OK.
+        private val idPattern = Regex("""^\s*\{\s*"id"\s*:\s*(\d+)\s*,""")
+        private val okPattern = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"result"\s*:\s*\[\s*"ok"\s*]\s*}\s*$""")
+        private val musicProp0 = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"result"\s*:\s*\[\s*"0"\s*]\s*}\s*$""")
+        private val musicProp1 = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"result"\s*:\s*\[\s*"1"\s*]\s*}\s*$""")
+        internal fun correlatedReplyId(line: String): Int? =
+            idPattern.find(line)?.groupValues?.get(1)?.toIntOrNull()
+        internal fun parseMusicReply(line: String): Boolean? = when {
+            musicProp0.matches(line) -> false
+            musicProp1.matches(line) -> true
+            else -> null
+        }
+        internal fun validatedOkReply(line: String): Boolean = okPattern.matches(line)
+        // A partial JSON object or an injected nested "error" is not a
+        // confirmed device response. Both field orders are accepted, but the
+        // complete top-level envelope and bounded standard code are mandatory.
+        private val errorEnvelope = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"error"\s*:\s*\{\s*(?:"code"\s*:\s*-?\d+\s*(?:,\s*"message"\s*:\s*"(?:\\.|[^"\\])*")?|"message"\s*:\s*"(?:\\.|[^"\\])*"\s*,\s*"code"\s*:\s*-?\d+)\s*}\s*}\s*$""")
+        private val quotaMessage = Regex(
+            "\"error\"\\s*:\\s*\\{[^{}]{0,320}\"message\"\\s*:\\s*\"client quota exceeded\"",
+            RegexOption.IGNORE_CASE)
+        /** Only after this receive path has correlated the response request ID. */
+        internal fun classifyMatchedRpcError(line: String): ClassicLanFailure.Kind? =
+            if (!errorEnvelope.matches(line)) null
+            else if (quotaMessage.containsMatchIn(line)) ClassicLanFailure.Kind.DEVICE_QUOTA
+            else ClassicLanFailure.Kind.DEVICE_REJECTED
 
         @JvmStatic fun validLanIp(address: String): Boolean {
             val octets = address.split('.')

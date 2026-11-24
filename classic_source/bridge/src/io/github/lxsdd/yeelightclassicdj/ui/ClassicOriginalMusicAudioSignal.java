@@ -1,0 +1,280 @@
+package io.github.lxsdd.yeelightclassicdj.ui;
+
+import android.media.AudioRecord;
+
+/**
+ * Read-only, generation-fenced observer of ORIGINAL Classic AudioRecord/Visualizer.
+ * Does not create a source, modify the OEM player, retain PCM/FFT, or address lamps.
+ * The resumed original MusicActivity installs the already-tested Kotlin DSP owner.
+ */
+public final class ClassicOriginalMusicAudioSignal {
+    static final long FRESH_MS = 1250L;
+    private static final int MAX_PCM = 131072;
+
+    public interface Analyzer {
+        Frame onPcm(short[] pcm, int valid, int rateHz, long timestampMs);
+        Frame onFft(byte[] fft, int rateMilliHz, long timestampMs);
+        /** Pure DSP reset only. An OEM stop cannot close another capture owner. */
+        default void onCaptureClosed() {}
+        /** Only an accepted source/timestamp receipt may enter Original Music output. */
+        default void onAcceptedFrame(Frame frame, long timestampMs) {}
+    }
+
+    /** A nonblocking observer only. Its callbacks MUST NOT do LAN I/O. */
+    public interface FrameObserver {
+        void onFrame(Frame frame, long timestampMs);
+        void onCaptureClosed();
+    }
+
+    public static final class Frame {
+        public final float level, bpm, confidence;
+        public final boolean beat;
+        public final float[] bands;
+        public Frame(float level, float[] bands, boolean beat, float bpm, float confidence) {
+            this.level = level;
+            this.bands = bands == null ? null : bands.clone();
+            this.beat = beat;
+            this.bpm = bpm;
+            this.confidence = confidence;
+        }
+    }
+
+    public static final class Snapshot {
+        public final boolean fresh, beat;
+        public final String source;
+        public final float level, bpm, confidence;
+        public final float[] bands;
+        Snapshot(boolean fresh, boolean beat, String source, float level,
+                 float bpm, float confidence, float[] bands) {
+            this.fresh = fresh;
+            this.beat = beat;
+            this.source = source;
+            this.level = level;
+            this.bpm = bpm;
+            this.confidence = confidence;
+            this.bands = bands.clone();
+        }
+    }
+
+    private static Analyzer owner;
+    private static String source = "";
+    private static float energy, bpm, confidence;
+    private static final float[] bands = new float[4];
+    private static long observedAtMs = Long.MIN_VALUE;
+    private static long lastBeatAtMs = Long.MIN_VALUE;
+    // Capture-stop epochs fence DSP work already running on an OEM worker
+    // when AudioRecord.stop or Visualizer.release was observed.
+    // Separate lanes: an older MIC stop must not revoke a live FFT.
+    private static long micCaptureEpoch, fftCaptureEpoch;
+    private static long advanceEpoch(long epoch) {
+        return epoch == Long.MAX_VALUE ? -1L : epoch < 0 ? -1L : epoch + 1L;
+    }
+
+    private ClassicOriginalMusicAudioSignal() {}
+
+    public static synchronized void installAnalyzer(Analyzer next) {
+        if (next == null) throw new IllegalArgumentException("Missing original DSP owner");
+        // A repeated layout attach to this SAME OEM Music host must not
+        // erase still-fresh measured PCM, FFT bands, BPM or beat timing.
+        if (owner == next) return;
+        owner = next;
+        clearSignal();
+    }
+
+    /** A stale Activity cannot detach the newer resumed Activity. */
+    public static void clearAnalyzer(Analyzer expected) {
+        boolean detached = false;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if (expected != null && owner == expected) {
+                owner = null;
+                clearSignal();
+                detached = true;
+            }
+        }
+        if (detached) closeDspSafely(expected);
+    }
+
+    /** No exception from the optional read-only observer may escape into OEM. */
+    private static void closeDspSafely(Analyzer expected) {
+        if (expected == null) return;
+        try {
+            expected.onCaptureClosed();
+        } catch (RuntimeException | LinkageError ignored) {
+            // The original Classic capture and player lifecycle is authoritative.
+        }
+    }
+
+    private static void clearSignal() {
+        source = "";
+        energy = bpm = confidence = 0f;
+        observedAtMs = lastBeatAtMs = Long.MIN_VALUE;
+        java.util.Arrays.fill(bands, 0f);
+    }
+
+    /**
+     * Same OEM receiver, buffer, offset, requested count, blocking read and
+     * int result. The original call is outside the optional observer catch
+     * so its exception and result semantics are unchanged. No extra capture.
+     * Fence the owner/epoch BEFORE the read, which itself can block.
+     */
+    public static int readOriginalMicAndObserve(AudioRecord original, short[] buffer,
+                                                int offset, int requested) {
+        Analyzer current;
+        long receiptEpoch;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            current = owner;
+            receiptEpoch = micCaptureEpoch;
+        }
+        int count = original.read(buffer, offset, requested);
+        if (current == null || receiptEpoch < 0L || count <= 0 || count > MAX_PCM ||
+            buffer == null || offset < 0 || offset > buffer.length ||
+            count > requested || count > buffer.length - offset) return count;
+        try {
+            int rate = original.getSampleRate();
+            if (rate < 8000 || rate > 192000) return count;
+            long nowMs = clockMs();
+            // Never analyze stale samples preceding a nonzero offset.
+            short[] pcm = offset == 0 ? buffer :
+                java.util.Arrays.copyOfRange(buffer, offset, offset + count);
+            observePcmForOwner(current, receiptEpoch, pcm, count, rate, nowMs);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Optional analysis cannot change the OEM read result.
+        }
+        return count;
+    }
+
+    static void observedPcmAt(short[] pcm, int valid, int rate, long nowMs) {
+        Analyzer current;
+        long receiptEpoch;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            current = owner;
+            receiptEpoch = micCaptureEpoch;
+        }
+        observePcmForOwner(current, receiptEpoch, pcm, valid, rate, nowMs);
+    }
+
+    private static void observePcmForOwner(Analyzer current, long receiptEpoch,
+                                           short[] pcm, int valid, int rate, long nowMs) {
+        if (pcm == null || valid < 1 || valid > MAX_PCM || valid > pcm.length ||
+            rate < 8000 || rate > 192000 || nowMs < 0 ||
+            current == null || receiptEpoch < 0L) return;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if (owner != current || micCaptureEpoch != receiptEpoch) return;
+        }
+        try {
+            acceptFrame(current, "MIC", current.onPcm(pcm, valid, rate, nowMs),
+                        nowMs, receiptEpoch);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Observer failures must not interrupt the original OEM recorder.
+        }
+    }
+
+    public static void observedOriginalVisualizerFft(byte[] originalFft, int rateMilliHz) {
+        observedFftAt(originalFft, rateMilliHz, clockMs());
+    }
+
+    static void observedFftAt(byte[] fft, int rateMilliHz, long nowMs) {
+        if (fft == null || fft.length < 16 || fft.length > 32768 ||
+            (fft.length & 1) != 0 || rateMilliHz < 8000000 ||
+            rateMilliHz > 192000000 || nowMs < 0) return;
+        Analyzer current;
+        long receiptEpoch;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            current = owner;
+            receiptEpoch = fftCaptureEpoch;
+        }
+        if (current == null || receiptEpoch < 0L) return;
+        try {
+            acceptFrame(current, "FFT", current.onFft(fft, rateMilliHz, nowMs),
+                        nowMs, receiptEpoch);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Observer failures must not interrupt the original OEM callback.
+        }
+    }
+
+    private static void acceptFrame(Analyzer expected, String kind,
+                                    Frame frame, long nowMs, long receiptEpoch) {
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            // Across MIC and FFT alike: an old, duplicate or post-stop OEM
+            // callback cannot revoke newer evidence or reach the lamp worker.
+            if (owner != expected || frame == null || !validFrame(frame) ||
+                receiptEpoch < 0L ||
+                receiptEpoch != ("MIC".equals(kind) ? micCaptureEpoch : fftCaptureEpoch) ||
+                (observedAtMs != Long.MIN_VALUE && nowMs <= observedAtMs)) return;
+            if (!source.equals(kind)) clearSignal();
+            source = kind;
+            observedAtMs = nowMs;
+            energy = frame.level;
+            bpm = frame.bpm;
+            confidence = frame.confidence;
+            System.arraycopy(frame.bands, 0, bands, 0, 4);
+            if (frame.beat) lastBeatAtMs = nowMs;
+        }
+        // Never call the optional DSP observer under this global monitor.
+        // A newer Activity can revoke this owner while the OEM worker runs.
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if (owner != expected || observedAtMs != nowMs || !source.equals(kind) ||
+                receiptEpoch != ("MIC".equals(kind) ? micCaptureEpoch : fftCaptureEpoch))
+                return;
+        }
+        try { expected.onAcceptedFrame(frame, nowMs); }
+        catch (RuntimeException | LinkageError ignored) {
+            // Optional light output must never crash the original OEM player.
+        }
+    }
+
+    private static boolean validFrame(Frame f) {
+        if (!Float.isFinite(f.level) || f.level < 0f || f.level > 1f ||
+            !Float.isFinite(f.bpm) || f.bpm < 0f || f.bpm > 240f ||
+            !Float.isFinite(f.confidence) || f.confidence < 0f ||
+            f.confidence > 1f || f.bands == null || f.bands.length != 4) return false;
+        for (float b : f.bands)
+            if (!Float.isFinite(b) || b < 0f || b > 1f) return false;
+        return true;
+    }
+
+    public static synchronized Snapshot snapshot() { return snapshotAt(clockMs()); }
+
+    static synchronized Snapshot snapshotAt(long nowMs) {
+        if (owner == null || observedAtMs == Long.MIN_VALUE || nowMs < observedAtMs ||
+            nowMs - observedAtMs > FRESH_MS)
+            return new Snapshot(false, false, "", 0f, 0f, 0f, new float[4]);
+        boolean beat = lastBeatAtMs != Long.MIN_VALUE && nowMs >= lastBeatAtMs &&
+            nowMs - lastBeatAtMs <= 150L;
+        return new Snapshot(true, beat, source, energy, bpm, confidence, bands);
+    }
+
+    public static void observedOriginalMicStopped() {
+        Analyzer closing = null;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            micCaptureEpoch = advanceEpoch(micCaptureEpoch);
+            if ("MIC".equals(source)) {
+                closing = owner;
+                clearSignal();
+            }
+        }
+        // Never take the DSP monitor while holding this class monitor:
+        // an in-flight PCM worker acquires them in the opposite order.
+        closeDspSafely(closing);
+    }
+
+    public static void observedOriginalVisualizerStopped() {
+        Analyzer closing = null;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            fftCaptureEpoch = advanceEpoch(fftCaptureEpoch);
+            if ("FFT".equals(source)) {
+                closing = owner;
+                clearSignal();
+            }
+        }
+        closeDspSafely(closing);
+    }
+
+    static synchronized void resetForTest() {
+        owner = null;
+        clearSignal();
+        micCaptureEpoch = fftCaptureEpoch = 0L;
+    }
+
+    private static long clockMs() { return System.nanoTime() / 1_000_000L; }
+}
