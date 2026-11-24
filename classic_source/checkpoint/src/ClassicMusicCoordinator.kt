@@ -116,6 +116,11 @@ class ClassicMusicCoordinator(private val transport: Transport) {
         val active = try { transport.readMusic(id) } catch (e: Exception) {
             quarantine(d, "transport error during recovery read: ${e.javaClass.simpleName}")
             return d.state
+        } catch (e: LinkageError) {
+            // OEM/API ABI drift is an uncertain transport outcome, not a
+            // reason to clear quarantine or send any automatic command.
+            quarantine(d, "transport ABI error during recovery read")
+            return d.state
         }
         if (active != false) {
             d.reason = "firmware is active or unknown; no automatic takeover"
@@ -185,12 +190,23 @@ class ClassicMusicCoordinator(private val transport: Transport) {
     private fun <T> safe(d: Device, operation: String, call: () -> T): T? = try { call() } catch (e: Exception) {
         quarantine(d, "transport error during $operation: ${e.javaClass.simpleName}")
         null
+    } catch (_: LinkageError) {
+        // A vendor/Android linkage fault can occur AFTER set_music accepted
+        // a write. Preserve QUARANTINED ownership and continue ONLY local
+        // reverse-socket close. Never blind-stop, retry or take over a peer.
+        quarantine(d, "transport ABI error during $operation")
+        null
     }
     private fun closeTracked(d: Device): Boolean = try {
         transport.closeReverse(d.id)
         d.cleanupPending = false
         true
     } catch (_: Exception) {
+        d.cleanupPending = true
+        false
+    } catch (_: LinkageError) {
+        // Local socket resources may still be live after a failed OEM close.
+        // Recovery must explicitly retry cleanup and verify music_on=0.
         d.cleanupPending = true
         false
     }

@@ -1123,6 +1123,84 @@ fun main() {
         check(!reachedWifi) { "$unclockable attempted timer-driven output" }
     }
 
+    // Production runtime: a stale optional original Classic status callback
+    // must NOT convert completed physical Music cleanup into an unconfirmed
+    // stop, but a real remote STOP failure must still quarantine the cohort.
+    // Both 14/32 cohorts use only in-memory fakes; no device/network access.
+    for (size in listOf(14,32)) for (failRemoteStop in listOf(false,true)) {
+        val ids=(21 until 21+size).map { "192.168.71.$it" }
+        val remote=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
+        ids.forEach { remote[it]=false }
+        val startCalls=java.util.concurrent.atomic.AtomicInteger()
+        val stopCalls=java.util.concurrent.atomic.AtomicInteger()
+        val closeCalls=java.util.concurrent.atomic.AtomicInteger()
+        val failureId=ids[6]
+        val statuses=java.util.Collections.synchronizedList(mutableListOf<String>())
+        val sink=object : DjRuntime.Listener {
+            override fun onState(value: String) {
+                statuses.add(value)
+                if (value=="STOPPED" || value=="STOP_UNCONFIRMED")
+                    throw NoSuchMethodError("synthetic stale optional Classic UI")
+            }
+            override fun onBeat(bpm: Double, level: Float) {}
+            override fun onError(error: String) {}
+        }
+        val output=CheckpointRuntime()
+        check(output.configure(1.0,"WAVE"))
+        output.wifiAddress={ "192.168.71.10" }
+        output.transportFactory={ _, participants ->
+            check(participants==ids.toSet())
+            object : loftdj.classic.ClassicMusicCoordinator.Transport {
+                override fun readMusic(id: String): Boolean? = remote[id]
+                override fun requestStart(id: String): Boolean {
+                    check(id in ids)
+                    startCalls.incrementAndGet()
+                    remote[id]=true
+                    return true
+                }
+                override fun reverseConnected(id: String) = true
+                override fun requestStop(id: String): Boolean {
+                    stopCalls.incrementAndGet()
+                    if (failRemoteStop && id==failureId)
+                        throw NoSuchFieldError("synthetic ambiguous firmware stop")
+                    remote[id]=false
+                    return true
+                }
+                override fun closeReverse(id: String) { closeCalls.incrementAndGet() }
+                override fun sendReverseFrame(id: String, generation: Long,
+                                              rgb: Int, brightness: Int): Boolean =
+                    id in ids && generation>0 && brightness in 1..100
+            }
+        }
+        output.startOriginalTimedScene(ids,sink,object : DjRuntime.ConsentGuard {
+            override fun isStillAuthorized() = true
+        })
+        check(statuses.contains("SCENE_TIMED_${size}_LAMPS"))
+        check(startCalls.get()==size)
+        val result=runCatching { output.stop() }
+        if (failRemoteStop) {
+            check(result.isFailure) {
+                "uncertain original Music STOP reported success at size $size"
+            }
+            check(statuses.contains("STOP_UNCONFIRMED"))
+            check(remote[failureId]==true)
+            check(remote.entries.count { it.value }==1)
+            check(runCatching { output.stop() }.isFailure) {
+                "ambiguous STOP cannot be silently cleared by stale UI callback"
+            }
+        } else {
+            check(result.isSuccess) {
+                "stale status callback masked confirmed reverse shutdown at size $size"
+            }
+            check(statuses.contains("STOPPED") && remote.values.none { it })
+            output.stop() // confirmed idempotent; never another transport command
+        }
+        check(stopCalls.get()==size && closeCalls.get()==size &&
+              startCalls.get()==size) {
+            "not every originally OWNED reverse socket cleaned exactly once"
+        }
+    }
+
     println("PASS original Classic PCM/FFT -> production owned-only reverse frames; no second recorder, foreign-session takeover, or post-stop output")
     println("PASS dynamic 5/15/33/72 selected LAN peers through real timed runtime")
     println("PASS Classic independent timed scenes, shared owned engine, zero audio/FFT, live switching and stop")

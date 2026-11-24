@@ -487,11 +487,18 @@ class CheckpointRuntime : DjRuntime {
             val callback = synchronized(lock) {
                 if (state == State.RUNNING && mine == generation) listener else null
             }
-            try { callback?.onError("Audio/scene runtime stopped safely") }
-            finally {
+            try {
+                // The optional original UI callback cannot decide whether
+                // the actual reverse-output cleanup runs.
+                try { callback?.onError("Audio/scene runtime stopped safely") }
+                catch (_: RuntimeException) { }
+                catch (_: LinkageError) { }
+            } finally {
                 // A failed STOP remains observable by the foreground UI's
                 // subsequent stop call and permanently fences new output.
-                try { stop() } catch (_: RuntimeException) { }
+                try { stop() }
+                catch (_: RuntimeException) { }
+                catch (_: LinkageError) { }
             }
         }
     }
@@ -564,7 +571,13 @@ class CheckpointRuntime : DjRuntime {
                     state = State.CLOSED
                     shutdownConfirmed = confirmed
                 }
-                callback?.onState(if (confirmed) "STOPPED" else "STOP_UNCONFIRMED")
+                // Remote socket ownership was already established by the
+                // transport result, not by this optional status observer.
+                // A stale Android/Classic listener must never turn a genuinely
+                // confirmed STOP into a false quarantine or fake success.
+                try { callback?.onState(if (confirmed) "STOPPED" else "STOP_UNCONFIRMED") }
+                catch (_: RuntimeException) { }
+                catch (_: LinkageError) { }
             }
         }
     }

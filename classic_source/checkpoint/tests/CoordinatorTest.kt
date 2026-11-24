@@ -48,6 +48,7 @@ fun main() {
     groupStopScenario()
     cleanupRecoveryScenario()
     groupProgressSafetyScenario()
+    linkageFailureSafetyScenario()
     println("PASS coordinator synthetic safety scenarios")
 }
 
@@ -119,6 +120,151 @@ fun groupProgressSafetyScenario() {
         check(c.stopGroup(ids).values.all { it==ClassicMusicCoordinator.State.IDLE })
         check(bad.writes.count { it.startsWith("stop:") }==3)
     }
+}
+
+/** OEM/Android LinkageError is not an Exception. Simulate it *after* a
+ * physical Music start or reverse listener allocation, where propagation
+ * without quarantine and cleanup could strand one or more real lamps.
+ * Entirely in memory; no private OEM files or LAN requests.
+ */
+fun linkageFailureSafetyScenario() {
+    for (total in listOf(14, 32)) for (phase in listOf("READ", "START", "HANDSHAKE", "CLOSE")) {
+        val ids=(1..total).map { "bulb$it" }
+        val failure=ids[6]
+        val remote=ids.associateWith { false }.toMutableMap()
+        val actions=mutableListOf<String>()
+        var closeFault=phase=="CLOSE"
+        val transport=object : ClassicMusicCoordinator.Transport {
+            override fun readMusic(id: String): Boolean? {
+                actions.add("read:$id")
+                if (id==failure && phase=="READ") throw NoSuchMethodError("private fixture")
+                return remote[id]
+            }
+            override fun requestStart(id: String): Boolean {
+                actions.add("start:$id")
+                remote[id]=true // Even a thrown ABI error may follow a remote side effect.
+                if (id==failure && phase=="START") throw NoSuchFieldError("private fixture")
+                return true
+            }
+            override fun reverseConnected(id: String): Boolean {
+                actions.add("connect:$id")
+                if (id==failure && phase=="HANDSHAKE") throw NoSuchMethodError("private fixture")
+                if (id==failure && phase=="CLOSE") return false
+                return true
+            }
+            override fun requestStop(id: String): Boolean {
+                actions.add("stop:$id")
+                remote[id]=false
+                return true
+            }
+            override fun closeReverse(id: String) {
+                actions.add("close:$id")
+                if (id==failure && closeFault) throw NoSuchFieldError("private close")
+            }
+            override fun sendReverseFrame(id: String, generation: Long,
+                                          rgb: Int, brightness: Int): Boolean {
+                actions.add("frame:$id")
+                return true
+            }
+        }
+        val coordinator=ClassicMusicCoordinator(transport)
+        ids.forEach { coordinator.register(it,true) }
+        val progress=mutableListOf<Int>()
+        val reached=coordinator.startGroup(ids,onConfirmed={ n, expected ->
+            check(expected==total)
+            progress.add(n)
+        })
+        check(reached.size==7 && reached[failure]==ClassicMusicCoordinator.State.QUARANTINED) {
+            "ABI failure escaped or false all-owned acknowledgement: $phase/$total"
+        }
+        check(progress==(1..6).toList())
+        check(ids.take(6).all { reached[it]==ClassicMusicCoordinator.State.OWNED })
+        check(actions.none { action -> ids.drop(7).any { action.endsWith(":$it") } }) {
+            "started unselected later member after linkage failure $phase"
+        }
+        check(actions.none { it=="stop:$failure" })
+        check(remote[failure]==(phase!="READ"))
+        val after=coordinator.stopGroup(ids)
+        check(ids.take(6).all { after[it]==ClassicMusicCoordinator.State.IDLE })
+        check(after[failure]==ClassicMusicCoordinator.State.QUARANTINED)
+        check(actions.count { it.startsWith("stop:") }==6)
+        check(actions.none { it.startsWith("frame:") })
+        check(coordinator.start(failure)==ClassicMusicCoordinator.State.QUARANTINED)
+        check(coordinator.confirmRecovery(failure,false)==ClassicMusicCoordinator.State.QUARANTINED)
+        if (phase=="CLOSE") {
+            check(coordinator.snapshot()[6].cleanupPending)
+            closeFault=false
+            remote[failure]=false // External read-only evidence, not an automatic command.
+            check(coordinator.confirmRecovery(failure,true)==ClassicMusicCoordinator.State.IDLE)
+            check(!coordinator.snapshot()[6].cleanupPending)
+        } else if (phase!="READ") {
+            check(coordinator.confirmRecovery(failure,true)==ClassicMusicCoordinator.State.QUARANTINED)
+        }
+    }
+    // Linkage during OWNED reverse frame never provokes a speculative STOP.
+    run {
+        val wire=Fake()
+        wire.active["frame"]=false; wire.connected["frame"]=true
+        val failing=object : ClassicMusicCoordinator.Transport by wire {
+            override fun sendReverseFrame(id: String, generation: Long,
+                                          rgb: Int, brightness: Int): Boolean {
+                throw NoSuchMethodError("stale reverse ABI")
+            }
+        }
+        val c=ClassicMusicCoordinator(failing)
+        c.register("frame",true)
+        check(c.start("frame")==ClassicMusicCoordinator.State.OWNED)
+        val token=c.snapshot().single().generation
+        check(!c.frame("frame",token,0x224466,60))
+        check(c.snapshot().single().state==ClassicMusicCoordinator.State.QUARANTINED)
+        check(wire.writes.count { it=="close:frame" }==1)
+        check(c.stop("frame")==ClassicMusicCoordinator.State.QUARANTINED)
+        check(wire.writes.none { it=="stop:frame" })
+        check(!c.frame("frame",token,0x224466,60))
+    }
+    // STOP itself may fail after being sent, so close the local listener but
+    // never assert IDLE, re-issue STOP or clear an unknown remote Music owner.
+    run {
+        val wire=Fake()
+        wire.active["stop"]=false; wire.connected["stop"]=true
+        val failing=object : ClassicMusicCoordinator.Transport by wire {
+            override fun requestStop(id: String): Boolean {
+                wire.writes.add("stop:$id")
+                throw NoSuchFieldError("remote state uncertain")
+            }
+        }
+        val c=ClassicMusicCoordinator(failing)
+        c.register("stop",true)
+        check(c.start("stop")==ClassicMusicCoordinator.State.OWNED)
+        check(c.stop("stop")==ClassicMusicCoordinator.State.QUARANTINED)
+        check(wire.writes.count { it=="close:stop" }==1)
+        check(wire.writes.count { it=="stop:stop" }==1)
+        check(c.stop("stop")==ClassicMusicCoordinator.State.QUARANTINED)
+        check(wire.writes.count { it=="stop:stop" }==1)
+    }
+    // Explicit recovery cannot consider a failing get_prop proof as music=off.
+    run {
+        val wire=Fake()
+        wire.active["recover"]=true
+        var badRead=false
+        val failing=object : ClassicMusicCoordinator.Transport by wire {
+            override fun readMusic(id: String): Boolean? {
+                if (badRead) throw NoSuchMethodError("original read ABI drift")
+                return wire.readMusic(id)
+            }
+        }
+        val c=ClassicMusicCoordinator(failing)
+        c.register("recover",true)
+        check(c.start("recover")==ClassicMusicCoordinator.State.UNKNOWN_OWNER)
+        wire.active["recover"]=false
+        badRead=true
+        check(c.confirmRecovery("recover",true)==ClassicMusicCoordinator.State.QUARANTINED)
+        check(wire.writes.none { it.startsWith("start:") || it.startsWith("stop:") })
+        check(c.confirmRecovery("recover",false)==ClassicMusicCoordinator.State.QUARANTINED)
+        badRead=false
+        check(c.confirmRecovery("recover",true)==ClassicMusicCoordinator.State.IDLE)
+    }
+    println("PASS 14/32 reverse Music ABI faults, OWNED rollback, stop quarantine, explicit recovery")
 }
 
 class FaultTransport : ClassicMusicCoordinator.Transport {
