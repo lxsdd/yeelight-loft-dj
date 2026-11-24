@@ -163,3 +163,31 @@ Geräte-/User-App-Daten dürfen geändert werden.
 
 **Keine CI als Geräte-/Music-/Drag-UX-Abnahme ausgeben.** Je Kandidat
 Original-OEM-3/6-Graph-Lücken und private Abnahmegrenzen separat führen.
+
+
+## 24.11.2026 – Original SceneFragment: gültige Gesten statt später Fremdänderungen
+
+Produktionsklasse `ClassicSceneGestureFence`: eine explizite UI-Aktion trägt
+genau den ursprünglichen Fragment-Lease, die gemeinsame DJ-Szenenrevision und
+die nachgelesene clone-lokale DJ-Effekt-Reihenfolge. Drag-and-drop wird bei
+Fragment-Recreation, Detach, veränderter MusicActivity-Szene oder durch einen
+zweiten Original-Host geänderter Reihenfolge verworfen. Die neue Prüfung
+erzeugt keine Geräte- oder Netzwerkaktion und bleibt auf die sieben eigenen
+DJ-Effektkarten beschränkt (keine fingierten OEM-Szenen-IDs).
+
+Favoriten-Speichern/-Löschen aus einem offenen Dialog darf nach einer
+Kontextänderung oder zwischenzeitlichem Edit desselben Slots nicht mehr
+ausgeführt werden. Gespeichert wird ausschließlich das beim echten Long-Press
+gewählte DJ-Profil; eine später angezeigte andere Szene wird nicht nachträglich
+übernommen. Auch die Farbauswahl aus einem noch offenen Dialog ist
+revisionsgebunden. Sämtliche originalen Yeelight-Szenen und Favoriten bleiben
+unangetastet. Im Original MusicActivity-Panel wird eine verspätete
+Szenenwahl nach Pause abgewiesen.
+
+Positive und negative JDK8-Originalklassen-Regressionsfälle:
+`test_classic_scene_gesture_fence.py` (11 Profilfelder, alte/neue Hosts,
+Szenenwechsel, andere gespeicherte Reihenfolge, doppelte/fremde IDs,
+spätes Favoriten-Löschen, ersetzte Favoriten und erneuter gültiger Host).
+Das öffentliche SDK/Bridge-CI muss die tatsächlichen vier betroffenen
+Produktions-Java-Dateien mitkompilieren. **Kein echter OEM-/Pixel-/Lampentest
+und keine Freigabe zum Schreiben vorhandener Yeelight-Szenen.**

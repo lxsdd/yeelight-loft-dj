@@ -286,7 +286,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     private void selectScene(int index) {
-        if (index < 0 || index >= NAMES.length) return;
+        if (!attached || index < 0 || index >= NAMES.length) return;
         // Atomic revisioned shared scene UI (same original SceneFragment); no
         // fabricated OEM scene record, remote effect or secondary database.
         if (!effectSettings.selectScene(index)) return;

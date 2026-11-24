@@ -39,6 +39,12 @@ final class ClassicEffectOrder implements ClassicDragDropController.VerifiedList
 
     List<String> order() { return new ArrayList<>(shown); }
 
+    /** Read-only current clone preference, not a cached adapter order. */
+    List<String> persistedOrder() {
+        return ClassicOrderPolicy.project(ORIGINAL,
+            store.read(ClassicOrderPolicy.Surface.SCENE_LIST, SCOPE));
+    }
+
     /** Called only from SceneFragment's explicit drag or accessible buttons. */
     boolean move(String id, int finalIndex) {
         return controller.onUserMove(this, id, finalIndex);

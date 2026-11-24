@@ -41,6 +41,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final ClassicEffectSettingsStore effectSettings;
     private final LinearLayout[] sceneRows = new LinearLayout[4];
     private Button dragSource;
+    private ClassicSceneGestureFence.Receipt dragReceipt;
     private final Button moveUp, moveDown, undoOrder;
     private final Button speed, direction, trail, brightness, sceneColor, paletteStyle;
     private final LinearLayout spatialEditor, pulseEditor;
@@ -85,6 +86,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             reserved = height;
         }
         void detach() {
+            panel.dragSource = null;
+            panel.dragReceipt = null;
             panel.lease = null;
             if (original.getParent() == root &&
                 original.getLayoutParams() instanceof FrameLayout.LayoutParams) {
@@ -153,6 +156,22 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         }
     }
 
+    private boolean ownsHost() {
+        Lease active=lease;
+        return active!=null && active.panel==this &&
+            getParent()==active.root && active.original.getParent()==active.root;
+    }
+    private ClassicSceneGestureFence.Receipt captureAction(
+            ClassicSceneUiState.Selection favorite) {
+        return !ownsHost()?null:ClassicSceneGestureFence.capture(
+            lease,ClassicSceneUiState.revision(),effectOrder.persistedOrder(),favorite);
+    }
+    private boolean currentAction(ClassicSceneGestureFence.Receipt receipt) {
+        return receipt!=null && ownsHost() &&
+            receipt.current(lease,ClassicSceneUiState.revision(),
+                effectOrder.persistedOrder());
+    }
+
     private ClassicSceneGalleryPanel(Context context) {
         super(context);
         effectOrder = new ClassicEffectOrder(context);
@@ -178,6 +197,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         details.setVisibility(View.GONE);
         addView(details, new LinearLayout.LayoutParams(-1, detailPx, 0f));
         header.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             details.setVisibility(details.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
             if (lease != null) lease.resize(collapsedPx +
                 (details.getVisibility() == View.VISIBLE ? detailPx : 0));
@@ -198,13 +218,17 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
             Button choice = new Button(context);
             choice.setAllCaps(false);
             choice.setOnClickListener(v -> {
-                if (lease == null) return; // Detached original SceneFragment.
+                if (!ownsHost()) return; // Detached original SceneFragment.
                 if (effectSettings.selectFavorite(slot)) onSceneEdited();
                 else note.setText("Favorit " + (slot + 1) + " ist noch nicht belegt");
             });
             choice.setOnLongClickListener(v -> {
-                if (lease == null) return false;
-                final boolean occupied = effectSettings.readFavorite(slot) != null;
+                if (!ownsHost()) return false;
+                final ClassicSceneUiState.Selection previous = effectSettings.readFavorite(slot);
+                final ClassicSceneUiState.Selection selected = ClassicSceneUiState.snapshot();
+                final ClassicSceneGestureFence.Receipt receipt = captureAction(previous);
+                if (receipt == null) return false;
+                final boolean occupied = previous != null;
                 AlertDialog.Builder confirm = new AlertDialog.Builder(getContext())
                     .setTitle("DJ-Favorit " + (slot + 1))
                     .setMessage(occupied ?
@@ -212,14 +236,15 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
                         "Aktuelles DJ-Effektprofil als Favorit speichern?")
                     .setNegativeButton("Abbrechen", null)
                     .setPositiveButton("Speichern", (dialog, which) -> {
-                        if (lease == null) return;
-                        boolean saved = effectSettings.saveFavorite(
-                            slot, ClassicSceneUiState.snapshot());
+                        if (!currentAction(receipt) ||
+                            !receipt.sameFavorite(effectSettings.readFavorite(slot))) return;
+                        boolean saved = effectSettings.saveFavorite(slot, selected);
                         redraw();
                         if (!saved) note.setText("Favorit konnte nicht gespeichert werden");
                     });
                 if (occupied) confirm.setNeutralButton("Löschen", (dialog, which) -> {
-                    if (lease == null) return;
+                    if (!currentAction(receipt) ||
+                        !receipt.sameFavorite(effectSettings.readFavorite(slot))) return;
                     boolean cleared = effectSettings.clearFavorite(slot);
                     redraw();
                     if (!cleared) note.setText("Favorit konnte nicht gelöscht werden");
@@ -241,6 +266,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
                 Button card = new Button(context);
                 card.setAllCaps(false);
                 card.setOnClickListener(v -> {
+                    if (!ownsHost()) return;
                     if (effectSettings.selectScene(index)) onSceneEdited();
                 });
                 card.setOnLongClickListener(v -> startEffectDrag(card));
@@ -272,6 +298,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         undoOrder.setText("Sortierung zurück");
         undoOrder.setContentDescription("Letzte eigene DJ-Lichteffekt-Sortierung rückgängig");
         undoOrder.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             if (effectOrder.undo()) {
                 renderEffectCards();
                 redraw();
@@ -286,6 +313,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         speed = new Button(context);
         speed.setAllCaps(false);
         speed.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, (s.speedIndex + 1) %
                 ClassicSceneUiState.SPEEDS.length, s.reverse, s.trailIndex, s.rangeIndex);
@@ -295,6 +323,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         direction = new Button(context);
         direction.setAllCaps(false);
         direction.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, s.speedIndex, !s.reverse,
                 s.trailIndex, s.rangeIndex);
@@ -307,6 +336,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         trail = new Button(context);
         trail.setAllCaps(false);
         trail.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, s.speedIndex, s.reverse,
                 (s.trailIndex + 1) % ClassicSceneUiState.TRAILS.length, s.rangeIndex);
@@ -316,6 +346,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         brightness = new Button(context);
         brightness.setAllCaps(false);
         brightness.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             ClassicSceneUiState.update(s.scene, s.speedIndex, s.reverse,
                 s.trailIndex, (s.rangeIndex + 1) % ClassicSceneUiState.RANGES.length);
@@ -330,20 +361,25 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         sceneColor = new Button(context);
         sceneColor.setAllCaps(false);
         sceneColor.setContentDescription("DJ-Lichtfarbe für Puls, Scanner, Meteor oder Welle wählen");
-        sceneColor.setOnClickListener(v ->
+        sceneColor.setOnClickListener(v -> {
+            ClassicSceneGestureFence.Receipt receipt=captureAction(null);
+            if(receipt==null)return;
             new AlertDialog.Builder(getContext())
                 .setTitle("DJ-Lichtfarbe")
                 .setItems(ClassicSceneUiState.COLOR_NAMES, (dialog, index) -> {
+                    if(!currentAction(receipt))return;
                     if (ClassicSceneUiState.updateColor(index)) onSceneEdited();
                 })
                 .setNegativeButton("Abbrechen", null)
-                .show());
+                .show();
+        });
         content.addView(sceneColor);
         // Original SceneFragment owns this explicit effect-profile edit.
         paletteStyle = new Button(context);
         paletteStyle.setAllCaps(false);
         paletteStyle.setContentDescription("Farbstil für Scanner, Meteor und Welle wählen");
         paletteStyle.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection current = ClassicSceneUiState.snapshot();
             if (current.scene >= 4 && ClassicSceneUiState.updatePalette(
                     (current.paletteIndex + 1) % ClassicSceneUiState.PALETTE_NAMES.length))
@@ -359,6 +395,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         pulseMode.setAllCaps(false);
         pulseMode.setContentDescription("Puls zwischen Beat und Timer umschalten");
         pulseMode.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             if (ClassicSceneUiState.updateAudio(s.gainIndex, !s.beatPulse,
                     s.pulseTempoIndex, s.pulseShapeIndex)) onSceneEdited();
@@ -368,6 +405,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         pulseTempo.setAllCaps(false);
         pulseTempo.setContentDescription("Zeitgesteuertes Puls-Tempo einstellen");
         pulseTempo.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             if (ClassicSceneUiState.updateAudio(s.gainIndex, s.beatPulse,
                     (s.pulseTempoIndex + 1) % 5, s.pulseShapeIndex)) onSceneEdited();
@@ -378,6 +416,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         pulseShape.setAllCaps(false);
         pulseShape.setContentDescription("Pulsform wechseln");
         pulseShape.setOnClickListener(v -> {
+            if (!ownsHost()) return;
             ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
             if (ClassicSceneUiState.updateAudio(s.gainIndex, s.beatPulse,
                     s.pulseTempoIndex, (s.pulseShapeIndex + 1) % 3)) onSceneEdited();
@@ -392,28 +431,36 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     }
 
     private boolean startEffectDrag(Button card) {
-        if (card == null || card.getParent() == null) return false;
+        if (card == null || card.getParent() == null || !ownsHost()) return false;
+        if (effectOrder.refresh()) { renderEffectCards(); redraw(); return false; }
+        dragReceipt = captureAction(null);
+        if (dragReceipt == null) return false;
         dragSource = card;
         // Empty local payload; exact source View identity proves ownership.
         ClipData data = ClipData.newPlainText("loft-dj-local-effect", "");
         boolean started = Build.VERSION.SDK_INT >= 24
             ? card.startDragAndDrop(data, new View.DragShadowBuilder(card), card, 0)
             : card.startDrag(data, new View.DragShadowBuilder(card), card, 0);
-        if (!started) dragSource = null;
+        if (!started) {
+            dragSource = null;
+            dragReceipt = null;
+        }
         return started;
     }
 
     private boolean handleEffectDrop(Button target, DragEvent event) {
         if (event == null) return false;
         if (event.getAction() == DragEvent.ACTION_DRAG_STARTED)
-            return dragSource != null && event.getLocalState() == dragSource;
+            return dragSource != null && event.getLocalState() == dragSource &&
+                currentAction(dragReceipt);
         if (event.getAction() == DragEvent.ACTION_DRAG_ENDED) {
             dragSource = null;
+            dragReceipt = null;
             return true;
         }
         if (event.getAction() == DragEvent.ACTION_DROP) {
-            if (dragSource == null || event.getLocalState() != dragSource)
-                return false;
+            if (dragSource == null || event.getLocalState() != dragSource ||
+                !currentAction(dragReceipt)) return false;
             int sourceIndex = -1, targetIndex = -1;
             for (int i = 0; i < cards.length; i++) {
                 if (cards[i] == dragSource) sourceIndex = i;
@@ -432,6 +479,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     }
 
     private void moveSelectedEffect(int direction) {
+        if (!ownsHost()) return;
         ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
         if (effectOrder.moveRelative(ClassicSceneUiState.SCENES[s.scene], direction)) {
             renderEffectCards();
@@ -459,6 +507,7 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
      * Every Intent goes through the original single owner-fenced service.
      */
     private void onSceneEdited() {
+        if (!ownsHost()) return;
         // Persist only after the user's genuine original SceneFragment action.
         // Failure cannot be misreported as a saved preference or disturb OEM data.
         boolean saved = effectSettings.saveExplicit(ClassicSceneUiState.snapshot());
