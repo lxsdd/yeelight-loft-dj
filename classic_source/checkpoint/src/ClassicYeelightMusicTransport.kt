@@ -28,6 +28,7 @@ class ClassicYeelightMusicTransport(
         var listener: ServerSocket? = null,
         var stream: Socket? = null,
         var nextId: Int = 1,
+        var awaitingVerification: Boolean = false,
     )
     private val sessions = peers.associateWith { Session() }
     init {
@@ -41,7 +42,11 @@ class ClassicYeelightMusicTransport(
     }
 
     override fun readMusic(id: String): Boolean? = withPeer(id) { peer ->
-        val value = rpc(id, peer, "get_prop", "[\"music_on\"]", isRead = true)
+        // Only the verified post-STOP read may use the reserved final slot.
+        val phase = if (peer.awaitingVerification) ClassicLanRpcBudget.Phase.VERIFY_STOP
+                    else ClassicLanRpcBudget.Phase.READ
+        peer.awaitingVerification = false
+        val value = rpc(id, peer, "get_prop", "[\"music_on\"]", isRead = true, phase = phase)
         when {
             musicProp0.matches(value) -> false
             musicProp1.matches(value) -> true
@@ -56,7 +61,8 @@ class ClassicYeelightMusicTransport(
         server.soTimeout = 3_500
         peer.listener = server
         // If the ACK is lost, the coordinator quarantines this peer: NO speculative retry.
-        rpc(id, peer, "set_music", "[1,\"$localIp\",${server.localPort}]", isRead = false) == "ok"
+        rpc(id, peer, "set_music", "[1,\"$localIp\",${server.localPort}]", isRead = false,
+            phase = ClassicLanRpcBudget.Phase.START) == "ok"
     }
 
     override fun reverseConnected(id: String): Boolean = withPeer(id) { peer ->
@@ -79,13 +85,24 @@ class ClassicYeelightMusicTransport(
 
     override fun requestStop(id: String): Boolean = withPeer(id) { peer ->
         // Only invoked by coordinator.stop for a session it has confirmed as OWNED.
-        rpc(id, peer, "set_music", "[0]", isRead = false) == "ok"
+        val accepted = rpc(id, peer, "set_music", "[0]", isRead = false,
+            phase = ClassicLanRpcBudget.Phase.STOP) == "ok"
+        if (accepted) peer.awaitingVerification = true
+        accepted
     }
 
     override fun closeReverse(id: String) = withPeer(id) { peer ->
-        try { peer.stream?.close() } finally {
-            peer.stream = null
-            try { peer.listener?.close() } finally { peer.listener = null }
+        var closed = false
+        try {
+            try { peer.stream?.close() } finally {
+                peer.stream = null
+                try { peer.listener?.close() } finally { peer.listener = null }
+            }
+            closed = true
+        } finally {
+            // STOP's confirmed ACK is not proof of music_off. Keep the reserved
+            // verification slot across local reverse-socket close.
+            if (closed && !peer.awaitingVerification) commandBudget.retire(id, peer)
         }
         Unit
     }
@@ -106,12 +123,13 @@ class ClassicYeelightMusicTransport(
         synchronized(peer) { return fn(peer) }
     }
 
-    private fun rpc(id: String, peer: Session, method: String, params: String, isRead: Boolean): String {
+    private fun rpc(id: String, peer: Session, method: String, params: String,
+                    isRead: Boolean, phase: ClassicLanRpcBudget.Phase = ClassicLanRpcBudget.Phase.READ): String {
         val now = clockMs()
         // Extremely conservative budget independent of firmware's unknown global quota.
         // Shared for the whole Android process: stop/restart cannot reset the firmware quota.
         // Even failed/uncertain writes consume a slot, never automatically replay them.
-        if (!commandBudget.admit(id, now))
+        if (!commandBudget.admit(id, now, phase, peer))
             throw ClassicLanFailure(ClassicLanFailure.Kind.LOCAL_BUDGET)
         val requestId = peer.nextId++
         Socket().use { socket ->

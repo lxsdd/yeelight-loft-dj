@@ -37,6 +37,7 @@ val testMains = linkedMapOf(
     "AndroidAudioRecordInput" to "loftdj.classic.AndroidAudioRecordInputTestKt",
     "VisualizerInput" to "loftdj.classic.VisualizerInputTestKt",
     "YeelightReverseMusicTransport" to "loftdj.classic.YeelightReverseMusicTransportTestKt",
+    "LanShutdownBudget" to "loftdj.classic.ClassicLanShutdownBudgetTestKt",
     "CheckpointRuntime" to "io.github.lxsdd.yeelightclassicdj.runtime.CheckpointRuntimeTestKt",
     "PlaybackCaptureInput" to "io.github.lxsdd.yeelightclassicdj.runtime.ClassicPlaybackCaptureInputTestKt",
     "SpatialChoreography" to "loftdj.classic.ClassicSpatialChoreographyTestKt",

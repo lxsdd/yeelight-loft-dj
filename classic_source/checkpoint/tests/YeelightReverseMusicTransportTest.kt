@@ -90,7 +90,7 @@ fun main() {
         return
     }
     FakeBulb(host).use { bulb ->
-        val transport = ClassicYeelightMusicTransport(host, setOf(host), tcpPort=bulb.listener.localPort)
+        val transport = ClassicYeelightMusicTransport(host, setOf(host), tcpPort=bulb.listener.localPort, clockMs={ 1_000L })
         val c = ClassicMusicCoordinator(transport)
         c.register(host,true)
         check(c.start(host)==ClassicMusicCoordinator.State.OWNED) { c.snapshot().toString() }
@@ -106,11 +106,24 @@ fun main() {
         check(actions.count { it.contains("get_prop") }==2) { actions }
     }
     FakeBulb(host,musicAlreadyActive=true).use { bulb ->
-        val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(host,setOf(host),tcpPort=bulb.listener.localPort))
+        val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(host,setOf(host),tcpPort=bulb.listener.localPort, clockMs={ 1_000L }))
         c.register(host,true)
         check(c.start(host)==ClassicMusicCoordinator.State.UNKNOWN_OWNER)
         check(bulb.commands.toList().none { it.contains("\"set_music\"") })
         check(c.stop(host)==ClassicMusicCoordinator.State.UNKNOWN_OWNER)
     }
-    println("PASS Yeelight Color4 private reverse TCP music mode, selection, RGB+brightness, stop, foreign owner, no quota-channel frames")
+    // The same production socket transport now rejects a new Music START if
+    // only one RPC slot remains, rather than orphaning its mandatory STOP.
+    // Prior exact-host fixtures spent 4 + 1 slots in this process.
+    FakeBulb(host).use { bulb ->
+        val transport = ClassicYeelightMusicTransport(host, setOf(host),
+            tcpPort=bulb.listener.localPort, clockMs={ 1_000L })
+        check(!transport.readMusic(host)!!)
+        val c = ClassicMusicCoordinator(transport)
+        c.register(host, true)
+        check(c.start(host) == ClassicMusicCoordinator.State.QUARANTINED)
+        check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.LOCAL_BUDGET)
+        check(bulb.commands.toList().none { it.contains("\"set_music\"") })
+    }
+    println("PASS Yeelight Color4 private reverse TCP music mode, selection, RGB+brightness, stop, foreign owner, reserved shutdown budget")
 }

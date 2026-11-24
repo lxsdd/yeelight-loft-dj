@@ -180,3 +180,25 @@ Kotlin-Runtime, Java-UI) mit 14/32 virtuellen Teilnehmern, Quota, Timeout,
 Fremdbesitz, negativen monotonic Zeiten, Überlauf und gesperrtem Start.
 Öffentliche CI qualifiziert nur Quelle/SDK und kein Pixel-6a-/OEM- oder
 Color4-Geräteverhalten. Keine Chroma-/HA-/Firmware-/Geräteschreibaktion.
+
+
+## 24.11.2026 – Vorbehaltene STOP-/Verifikations-RPCs im Original-Music-Transport
+
+Der produktive TCP-Music-Transport reserviert beim **expliziten** `set_music(1)`-Versuch
+zwei noch freie, pro Zielgerät abgerechnete normale LAN-Befehlsplätze für
+`set_music(0)` und die anschließende `get_prop music_on`-Prüfung. Ein Start
+ohne diese Plätze wird **vor** dem Start-RPC mit `LOCAL_BUDGET` abgelehnt.
+Nur die exakt zugehörige in-memory Socket-Sitzung darf diese Plätze für STOP
+und Post-STOP lesen; eine andere Sitzung kann die Reserve nicht verbrauchen.
+Lokaler Socket-Abbruch gibt eine noch nicht genutzte Reservierung ohne
+Befehlsrückerstattung frei; nach bestätigtem STOP bleibt sie bis zur
+Verifikationsabfrage erhalten. Kein Timer, Retry, automatischer Reconnect,
+Spekulativ-STOP, miIO, Chroma-Fallback oder zusätzlicher LAN-Befehl.
+
+JVM-Regressionen verwenden die echten Kotlin-Produktionsklassen für 1/14/32
+unabhängige Teilnehmer, lokale Budgetknappheit, fremde/stale Owner, STOP vor
+Verifikation, fehlerhaften Abbruch und monotone Zeit. Der vorhandene echte
+Fake-Bulb-TCP-Test prüft zusätzlich, dass bei fehlendem STOP-Budget gerade
+**kein** neuer `set_music(1)`-Befehl entsteht. Es handelt sich nicht um
+physische Color4-/OEM-/Pixel-6a-Abnahme; externe Home-Assistant-Clients
+können das lokale Reservierungssystem nicht respektieren.
