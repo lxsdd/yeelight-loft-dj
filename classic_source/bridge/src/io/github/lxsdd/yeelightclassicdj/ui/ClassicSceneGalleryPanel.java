@@ -34,6 +34,8 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
     private final Button header;
     private final ScrollView details;
     private final Button[] cards = new Button[ClassicSceneUiState.SCENES.length];
+    private final Button[] favoriteSlots =
+        new Button[ClassicEffectSettingsStore.FAVORITE_SLOTS];
     // Stable IDs belong to seven DJ effects, never the opaque OEM scene list.
     private final ClassicEffectOrder effectOrder;
     private final ClassicEffectSettingsStore effectSettings;
@@ -184,6 +186,51 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
         note.setText("In Classic ausgewählte Szene · keine zusätzlichen Lampen freigegeben");
         note.setContentDescription("Vorschau ohne Geräte- oder Szenenschreibzugriff");
         content.addView(note);
+        TextView favoritesHint = new TextView(context);
+        favoritesHint.setText("DJ-Favoriten · tippen zum Laden · halten zum Speichern");
+        favoritesHint.setContentDescription(
+            "Vier eigene DJ-Effektprofile im Testklon; keine originalen Yeelight-Favoriten");
+        content.addView(favoritesHint);
+        LinearLayout favoritesRow = new LinearLayout(context);
+        favoritesRow.setOrientation(HORIZONTAL);
+        for (int i = 0; i < favoriteSlots.length; i++) {
+            final int slot = i;
+            Button choice = new Button(context);
+            choice.setAllCaps(false);
+            choice.setOnClickListener(v -> {
+                if (lease == null) return; // Detached original SceneFragment.
+                if (effectSettings.selectFavorite(slot)) onSceneEdited();
+                else note.setText("Favorit " + (slot + 1) + " ist noch nicht belegt");
+            });
+            choice.setOnLongClickListener(v -> {
+                if (lease == null) return false;
+                final boolean occupied = effectSettings.readFavorite(slot) != null;
+                AlertDialog.Builder confirm = new AlertDialog.Builder(getContext())
+                    .setTitle("DJ-Favorit " + (slot + 1))
+                    .setMessage(occupied ?
+                        "Aktuelles DJ-Effektprofil statt des vorhandenen Favoriten speichern?" :
+                        "Aktuelles DJ-Effektprofil als Favorit speichern?")
+                    .setNegativeButton("Abbrechen", null)
+                    .setPositiveButton("Speichern", (dialog, which) -> {
+                        if (lease == null) return;
+                        boolean saved = effectSettings.saveFavorite(
+                            slot, ClassicSceneUiState.snapshot());
+                        redraw();
+                        if (!saved) note.setText("Favorit konnte nicht gespeichert werden");
+                    });
+                if (occupied) confirm.setNeutralButton("Löschen", (dialog, which) -> {
+                    if (lease == null) return;
+                    boolean cleared = effectSettings.clearFavorite(slot);
+                    redraw();
+                    if (!cleared) note.setText("Favorit konnte nicht gelöscht werden");
+                });
+                confirm.show();
+                return true;
+            });
+            favoriteSlots[i] = choice;
+            favoritesRow.addView(choice, new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        content.addView(favoritesRow);
         for (int rowIndex = 0; rowIndex < 4; rowIndex++) {
             LinearLayout row = new LinearLayout(context);
             row.setOrientation(HORIZONTAL);
@@ -460,6 +507,15 @@ public final class ClassicSceneGalleryPanel extends LinearLayout {
 
     private void redraw() {
         if (effectOrder.refresh()) renderEffectCards();
+        for (int slot = 0; slot < favoriteSlots.length; slot++) {
+            ClassicSceneUiState.Selection favorite = effectSettings.readFavorite(slot);
+            String title = favorite == null ? "Leer" :
+                ClassicSceneUiState.LABELS[favorite.scene];
+            favoriteSlots[slot].setText("★ " + (slot + 1) + " " + title);
+            favoriteSlots[slot].setContentDescription("DJ-Favorit " + (slot + 1) +
+                (favorite == null ? " leer, halten zum Speichern" :
+                    " " + title + ", tippen zum Laden oder halten zum Ändern"));
+        }
         ClassicSceneUiState.Selection s = ClassicSceneUiState.snapshot();
         note.setText(ClassicSceneUiState.LABELS[s.scene] + " · " +
             EXPLANATIONS[s.scene] + " · ohne verifizierte Lampenauswahl nur Vorschau");

@@ -134,6 +134,70 @@ public class ClassicEffectSettingsHarness {
     try {new ClassicEffectSettingsStore(new Ctx("com.yeelight.cherry"));}
     catch(SecurityException expected){blocked=true;}
     check(blocked,"original OEM package cannot be written");
+
+    // A complete four-slot DJ favourite must be available in BOTH original
+    // views, with no OEM favourite-record or database modifications.
+    ctx.mem.accept=true;
+    int preFavorites=ctx.mem.commits;
+    for(int i=0;i<4;i++)
+      check(settings.readFavorite(i)==null,"favorite starts empty");
+    check(ctx.mem.commits==preFavorites,"read/host attach never writes favorite");
+    ClassicSceneUiState.Selection beforeFavorite=ClassicSceneUiState.snapshot();
+    check(!settings.saveFavorite(-1,beforeFavorite) &&
+          !settings.saveFavorite(4,beforeFavorite) &&
+          !settings.clearFavorite(-1) && !settings.clearFavorite(4) &&
+          settings.readFavorite(-1)==null && settings.readFavorite(4)==null,
+          "unknown slot never reaches user prefs");
+    check(!settings.selectFavorite(0),"empty slot cannot change selected scene");
+    check(settings.saveFavorite(0,beforeFavorite),"explicit favorite save");
+    check(ctx.mem.commits==preFavorites+1 &&
+          ctx.mem.map.containsKey("dj-favorite.0"),
+          "one original DJ preference write, no OEM favorite");
+    check(ClassicSceneUiState.update(6,4,true,4,2),"independent scene edit");
+    check(ClassicSceneUiState.updateAudio(3,false,4,0),"independent audio editor");
+    check(ClassicSceneUiState.updateColor(7) &&
+          ClassicSceneUiState.updatePalette(1),"rainbow/colour from editor");
+    ClassicSceneUiState.Selection rainbow=ClassicSceneUiState.snapshot();
+    check(settings.saveFavorite(3,rainbow),"fourth slot preserves whole profile");
+    ClassicEffectSettingsStore musicHost=new ClassicEffectSettingsStore(ctx);
+    musicHost.restoreOnFirstHost();
+    check(ctx.mem.commits==preFavorites+2,"music UI startup remains read-only");
+    check(musicHost.selectFavorite(0),"MusicActivity selects gallery favorite");
+    ClassicSceneUiState.Selection restored=ClassicSceneUiState.snapshot();
+    check(restored.scene==beforeFavorite.scene &&
+          restored.speedIndex==beforeFavorite.speedIndex &&
+          restored.reverse==beforeFavorite.reverse &&
+          restored.trailIndex==beforeFavorite.trailIndex &&
+          restored.rangeIndex==beforeFavorite.rangeIndex &&
+          restored.gainIndex==beforeFavorite.gainIndex &&
+          restored.beatPulse==beforeFavorite.beatPulse &&
+          restored.pulseTempoIndex==beforeFavorite.pulseTempoIndex &&
+          restored.pulseShapeIndex==beforeFavorite.pulseShapeIndex &&
+          restored.colorIndex==beforeFavorite.colorIndex &&
+          restored.paletteIndex==beforeFavorite.paletteIndex,
+          "all favorite scene/colour/rainbow/geometry settings restored");
+    check(musicHost.selectFavorite(3),"music UI loads another independent slot");
+    ClassicSceneUiState.Selection restoredRainbow=ClassicSceneUiState.snapshot();
+    check(restoredRainbow.scene==6 && restoredRainbow.colorIndex==7 &&
+          restoredRainbow.paletteIndex==1 && restoredRainbow.reverse &&
+          restoredRainbow.speedIndex==4 && restoredRainbow.trailIndex==4 &&
+          restoredRainbow.rangeIndex==2 && restoredRainbow.gainIndex==3 &&
+          !restoredRainbow.beatPulse && restoredRainbow.pulseTempoIndex==4 &&
+          restoredRainbow.pulseShapeIndex==0,
+          "full 4th rainbow scene and audio settings loaded");
+    check(ctx.mem.commits==preFavorites+2,"select favorite makes no implicit write");
+    ctx.mem.map.put("dj-favorite.1","v3,1,2,0,2,0,1,1,2,2,99,0");
+    long rev=ClassicSceneUiState.revision();
+    check(musicHost.readFavorite(1)==null && !musicHost.selectFavorite(1) &&
+          ClassicSceneUiState.revision()==rev,
+          "corrupt favorite cannot alter a running DJ profile");
+    check(settings.clearFavorite(0) && musicHost.readFavorite(0)==null &&
+          !musicHost.selectFavorite(0) && musicHost.readFavorite(3)!=null,
+          "explicit deletion leaves other slots untouched");
+    ctx.mem.accept=false;
+    check(!settings.saveFavorite(2,rainbow) &&
+          !settings.clearFavorite(3) && settings.readFavorite(3)!=null,
+          "denied write never claims success or removes existing favorite");
     System.out.println("PASS original-host DJ-only profiles, save, failure, per-scene, no implicit writes");
   }
 }
@@ -177,6 +241,17 @@ class ClassicEffectSettingsPersistenceTest(unittest.TestCase):
             self.assertNotIn("sendBroadcast(",production)
         self.assertIn('private static final String CLONE = "io.lxsdd.yeelightdj"',store)
         self.assertIn("prefs.edit()",store)
+        self.assertIn("static final int FAVORITE_SLOTS = 4", store)
+        self.assertIn("FAVORITE_PREFIX + slot",store)
+        self.assertIn("effectSettings.saveFavorite(",gallery)
+        self.assertIn("effectSettings.clearFavorite(",gallery)
+        self.assertIn("effectSettings.selectFavorite(slot)",gallery)
+        self.assertIn("effectSettings.selectFavorite(slot)",music)
+        self.assertIn("effectSettings.readFavorite(slot)",music)
+        self.assertIn("if (lease == null) return;",gallery)
+        self.assertIn("if (!attached || !effectSettings.selectFavorite(slot)) return;",music)
+        self.assertIn("applyLightSettings();",music)
+        self.assertNotIn("getContentResolver(",store)
         self.assertNotIn("set_music",store)
         self.assertNotIn("SQLiteDatabase",store)
 

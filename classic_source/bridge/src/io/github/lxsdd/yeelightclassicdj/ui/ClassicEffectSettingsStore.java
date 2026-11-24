@@ -13,6 +13,10 @@ final class ClassicEffectSettingsStore {
     private static final String CLONE = "io.lxsdd.yeelightdj";
     private static final String LAST = "last-user-chosen-dj-effect";
     private static final String PREFIX = "dj-effect.";
+    // Additional DJ shortcuts in existing clone-local preference store, not
+    // any OEM FavoriteSceneAdapter, account, scene database or cloud entry.
+    static final int FAVORITE_SLOTS = 4;
+    private static final String FAVORITE_PREFIX = "dj-favorite.";
     private final SharedPreferences prefs;
 
     ClassicEffectSettingsStore(Context context) {
@@ -55,6 +59,37 @@ final class ClassicEffectSettingsStore {
             return readEncoded(prefs.getString(PREFIX +
                 ClassicSceneUiState.SCENES[scene], null), scene);
         } catch (RuntimeException denied) { return null; }
+    }
+
+    /** Four complete optional DJ shortcuts shared by original SceneFragment
+     * and MusicActivity. Read-only host startup never migrates or writes slots.
+     */
+    ClassicSceneUiState.Selection readFavorite(int slot) {
+        if (slot < 0 || slot >= FAVORITE_SLOTS) return null;
+        try {
+            return readEncoded(prefs.getString(FAVORITE_PREFIX + slot, null), -1);
+        } catch (RuntimeException denied) { return null; }
+    }
+
+    boolean selectFavorite(int slot) {
+        ClassicSceneUiState.Selection saved = readFavorite(slot);
+        return saved != null && ClassicSceneUiState.restoreSelection(saved);
+    }
+
+    /** Write only after the user's explicit save/replace confirmation. */
+    boolean saveFavorite(int slot, ClassicSceneUiState.Selection selection) {
+        if (slot < 0 || slot >= FAVORITE_SLOTS || !valid(selection)) return false;
+        try {
+            return prefs.edit().putString(FAVORITE_PREFIX + slot, encode(selection)).commit();
+        } catch (RuntimeException denied) { return false; }
+    }
+
+    /** Explicit deletion uses an invalid empty encoding in our OWN namespace. */
+    boolean clearFavorite(int slot) {
+        if (slot < 0 || slot >= FAVORITE_SLOTS) return false;
+        try {
+            return prefs.edit().putString(FAVORITE_PREFIX + slot, "").commit();
+        } catch (RuntimeException denied) { return false; }
     }
 
     /** Exactly one atomic editor.commit from a user's explicit interaction.

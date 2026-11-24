@@ -65,6 +65,8 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private volatile int lastStopReason = ClassicOriginalLightReport.NONE;
     private final ClassicDjPatternPreviewView preview;
     private final TextView[] choices = new TextView[NAMES.length];
+    private final TextView[] favoriteChips =
+        new TextView[ClassicEffectSettingsStore.FAVORITE_SLOTS];
     private final ClassicEffectOrder effectOrder;
     private final ClassicEffectSettingsStore effectSettings;
     private final LinearLayout chips;
@@ -171,6 +173,27 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         effectsScroll.addView(chips);
         content.addView(effectsScroll);
         renderEffectChips();
+        TextView favoriteHeading = caption(
+            "DJ-Favoriten aus der Classic-Szenengalerie", 12, MUTED);
+        content.addView(favoriteHeading);
+        HorizontalScrollView savedScroll = new HorizontalScrollView(activity);
+        savedScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout savedRow = new LinearLayout(activity);
+        savedRow.setOrientation(HORIZONTAL);
+        for (int i = 0; i < favoriteChips.length; i++) {
+            final int slot = i;
+            TextView chip = caption("★ " + (i + 1) + " Leer", 13, INK);
+            chip.setGravity(Gravity.CENTER);
+            chip.setPadding(dp(12), dp(8), dp(12), dp(8));
+            chip.setClickable(true);
+            chip.setOnClickListener(v -> selectFavorite(slot));
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
+            p.setMargins(0, 0, dp(6), 0);
+            savedRow.addView(chip, p);
+            favoriteChips[i] = chip;
+        }
+        savedScroll.addView(savedRow);
+        content.addView(savedScroll);
 
         preview = new ClassicDjPatternPreviewView(activity);
         LinearLayout.LayoutParams pv = new LinearLayout.LayoutParams(-1, dp(48));
@@ -260,6 +283,18 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         redraw();
         if (!saved) stateNotice.setText(
             "DJ-Effekt gewählt, aber lokale Speicherung fehlgeschlagen.");
+    }
+
+    /** Load a full clone-local DJ profile inside the ORIGINAL MusicActivity.
+     * Never call OEM favourites, create a recorder or start Music transport.
+     */
+    private void selectFavorite(int slot) {
+        if (!attached || !effectSettings.selectFavorite(slot)) return;
+        boolean saved = effectSettings.saveExplicit(ClassicSceneUiState.snapshot());
+        applyLightSettings();
+        redraw();
+        if (!saved) stateNotice.setText(
+            "DJ-Favorit geladen, aber lokale Speicherung fehlgeschlagen.");
     }
 
     /** The original Classic SceneFragment and MusicActivity share this exact
@@ -520,6 +555,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             return;
         }
         if (effectOrder.refresh()) renderEffectChips();
+        for (int slot = 0; slot < favoriteChips.length; slot++) {
+            ClassicSceneUiState.Selection saved = effectSettings.readFavorite(slot);
+            String title = saved == null ? "Leer" :
+                ClassicSceneUiState.LABELS[saved.scene];
+            TextView chip = favoriteChips[slot];
+            chip.setText("★ " + (slot + 1) + " " + title);
+            chip.setEnabled(saved != null);
+            chip.setContentDescription("DJ-Favorit " + (slot + 1) +
+                (saved == null ? ", nicht belegt" : ", " + title + " laden"));
+        }
         ClassicSceneUiState.Selection selected = ClassicSceneUiState.snapshot();
         boolean changed = shownRevision != ClassicSceneUiState.revision() ||
                           selected.scene != activeScene;
