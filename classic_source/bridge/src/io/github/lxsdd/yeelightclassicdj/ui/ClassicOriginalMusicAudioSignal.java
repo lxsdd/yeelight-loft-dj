@@ -69,6 +69,9 @@ public final class ClassicOriginalMusicAudioSignal {
 
     public static synchronized void installAnalyzer(Analyzer next) {
         if (next == null) throw new IllegalArgumentException("Missing original DSP owner");
+        // A repeated layout attach to this SAME OEM Music host must not
+        // erase still-fresh measured PCM, FFT bands, BPM or beat timing.
+        if (owner == next) return;
         owner = next;
         clearSignal();
     }

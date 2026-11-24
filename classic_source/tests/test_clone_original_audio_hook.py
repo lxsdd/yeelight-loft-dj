@@ -82,8 +82,10 @@ public final class OriginalMusicAudioHarness {
     ClassicOriginalMusicAudioSignal.observedOriginalMicRate(new android.media.AudioRecord());
     ClassicOriginalMusicAudioSignal.observedOriginalMicSamples(pcm(1024));
     check(first.pcmCalls == 1,"one real original mic callback");
-    // The previous callback used a genuine monotonic clock; reset ownership
-    // before injecting deterministic synthetic timestamps for source gating.
+    // The previous callback used a genuine monotonic clock. Only an
+    // EXPLICIT test reset may use deterministic synthetic timestamps;
+    // re-installing the same owner MUST preserve live measurements.
+    ClassicOriginalMusicAudioSignal.resetForTest();
     ClassicOriginalMusicAudioSignal.installAnalyzer(first);
     ClassicOriginalMusicAudioSignal.observedPcmAt(pcm(1024),1024,16000,1000);
     ClassicOriginalMusicAudioSignal.Snapshot s =
@@ -91,6 +93,17 @@ public final class OriginalMusicAudioHarness {
     check(s.fresh && s.beat && s.source.equals("MIC"),"mic source and beat");
     check(s.bands[0] == .7f && s.bpm == 120f && s.confidence == .8f,
           "shared DSP reaches original host");
+    // Five OEM delayed layout rechecks for the SAME original MusicActivity
+    // must preserve already-observed PCM, beat and tempo, without closing DSP.
+    for (int i=0;i<5;i++) ClassicOriginalMusicAudioSignal.installAnalyzer(first);
+    s=ClassicOriginalMusicAudioSignal.snapshotAt(1010);
+    check(s.fresh && s.beat && s.bands[0] == .7f && s.bpm == 120f &&
+          first.closeCalls == 0,"repeated layout recheck never drops source");
+    boolean rejected=false;
+    try { ClassicOriginalMusicAudioSignal.installAnalyzer(null); }
+    catch (IllegalArgumentException expected) { rejected=true; }
+    check(rejected && ClassicOriginalMusicAudioSignal.snapshotAt(1010).fresh,
+          "invalid owner cannot clear original source");
     s.bands[0] = 0f;
     check(ClassicOriginalMusicAudioSignal.snapshotAt(1011).bands[0] == .7f,
           "cannot overwrite current bands from a UI snapshot");

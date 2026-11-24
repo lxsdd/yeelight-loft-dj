@@ -59,6 +59,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private int lightEpoch;
     // One process-wide output lease survives Activity recreation and async STOP.
     private long lightSessionToken;
+    // OEM layout rechecks cannot install the same capture observer again.
+    private final ClassicOriginalMusicHostLifecycle hostLifecycle =
+        new ClassicOriginalMusicHostLifecycle();
     private volatile long originalObserverEpoch;
     private volatile String lightStatus = "";
     private volatile boolean lightConfirmed; // Kotlin OWNED group ACK, not a proposed selection
@@ -696,6 +699,9 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     };
 
     public void onHostResumed() {
+        // The genuine MusicActivity's view is checked repeatedly after resume.
+        // Only a real foreground transition may replace its FFT/PCM observer.
+        if (!hostLifecycle.enterResumed()) return;
         // A callback from the previous OEM capture must not revoke a newly
         // resumed Activity or feed its new light session.
         final long observerEpoch = ++originalObserverEpoch;
@@ -721,11 +727,16 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     }
 
     public void onHostPaused() {
+        // A subsequent onDestroy must not stop/detach this already-paused host.
+        if (!hostLifecycle.leaveResumed()) return;
         ++originalObserverEpoch;
         attached = false;
         originalDsp.setFrameObserver(null);
         ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);
-        stopLightOutput(ClassicOriginalLightReport.HOST_PAUSED);
+        // A host that never started DJ lights must not display a fake
+        // completed/stopped light session when it loses focus.
+        if (lightRuntime != null)
+            stopLightOutput(ClassicOriginalLightReport.HOST_PAUSED);
         handler.removeCallbacks(refresh);
         closeSheet(); // original player controls remain visible on return
     }
