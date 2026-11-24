@@ -440,21 +440,26 @@ public final class ClassicOriginalMusicSelection {
         return observedGroupCount >= 0;
     }
 
-    /** Closing OEM GroupMusic rejects further list callbacks, but leaves a
-     * bounded READ-ONLY last-seen count for the resumed original MusicActivity.
-     * No chosen membership, LAN address or ownership survives this transition.
+    /** Closing GroupMusic retires its ListView/gesture session immediately.
+     * The former Music output lease becomes invalid. A separately verified
+     * LAN proof may remain in memory for at most its original 90-second TTL
+     * so the RETURNING original MusicActivity can offer an explicit user
+     * confirmation without silently rescanning, re-handshaking or dropping
+     * the selected lamp cohort. No output starts merely because Back was used.
+     * The read-only count remains visible; OEM member keys are discarded.
      */
     public static synchronized void originalGroupClosed() {
+        if (!groupEntryObserved) return; // Duplicate/foreign close is not a new user action.
         groupEntryObserved = false;
         activeGroupSession = 0L;
-        // A MusicActivity may still display the brief original group count,
-        // but leaving GroupMusic is NOT continuing authorization to send
-        // frames. The running ConsentGuard observes this exact revision and
-        // performs OWNED-only shutdown rather than taking over another peer.
+        // Revoke any former output guard BEFORE the returning MusicActivity
+        // may explicitly request a fresh short-lived lease and confirmation.
+        // An already-running owned session performs OWNED-only shutdown.
         ++outputRevision;
         outputChangeReason = CHANGE_CONTEXT;
-        revokeLan();
-        // The count is safe to show briefly after Back; private OEM keys are not.
+        // Preserve ONLY the previously verified bounded LAN proof in memory:
+        // resolvedOriginalLanIpsAt() still checks its original TTL and owner.
+        // The old GroupMusic host has lost gesture authority permanently.
         originalMemberKeys = ClassicOriginalGroupMemberWitness.unknown();
     }
 

@@ -499,14 +499,24 @@ public final class GroupMemberOrderHarness {
     ClassicOriginalMusicSelection.originalGroupClosed();
     check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(closedLease),
         "Back revokes live Music output lease without any LAN command");
-    check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0 &&
-        ClassicOriginalMusicSelection.leaseForOriginalOutput()==null,
-        "Back clears original LAN targets and cannot create a new lease");
+    check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==1,
+        "Back retains only the existing short-lived verified LAN proof");
+    // Simulate the explicit original MusicActivity start control asking for
+    // its NEW lease. This is not a network send or automatic handoff.
+    ClassicOriginalMusicSelection.OutputLease returnLease=
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(returnLease!=null &&
+        ClassicOriginalMusicSelection.isOutputLeaseCurrent(returnLease) &&
+        !ClassicOriginalMusicSelection.isOutputLeaseCurrent(closedLease),
+        "returning Music UI may explicitly confirm a NEW lease, not resume the stale one");
     check(ClassicOriginalMusicSelection.djIntentCount()==1 &&
         ClassicOriginalMusicSelection.originalGroupMemberCount()==1,
         "Music return retains only a bounded read-only group/count witness");
     check(!closed.markDjMember(lamp,false,closedGeneration),
         "closed original UI cannot mutate the displayed DJ selection");
+    ClassicOriginalMusicSelection.originalGroupClosed();
+    check(ClassicOriginalMusicSelection.isOutputLeaseCurrent(returnLease),
+        "duplicate old close must not invalidate the returning Music UI");
     closedRow.performClick();
     check(expiredClicks[0]==0,"closed original row cannot dispatch an OEM click");
     // A new Activity for THE SAME original group reuses the display-order
@@ -519,8 +529,9 @@ public final class GroupMemberOrderHarness {
     ClassicOriginalMusicSelection.observedOriginalGroupMembers(reopenedOEM.items);
     check(reopened.getItem(0)!=null,"same-room original UI can rebind");
     check(ClassicOriginalMusicSelection.djIntentCount()==0 &&
-        ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
-        "new group session does not inherit a previous DJ/IP authorization");
+        ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0 &&
+        !ClassicOriginalMusicSelection.isOutputLeaseCurrent(returnLease),
+        "new group session does not inherit a prior Music UI DJ/IP authorization");
     check(!closed.markDjMember(lamp,true,closedGeneration) &&
         !closed.markDjGroup(true,closedGeneration) &&
         !closed.requestLanCheck(closedGeneration),
