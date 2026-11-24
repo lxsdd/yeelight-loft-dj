@@ -90,5 +90,74 @@ fun main() {
     check(cancelledEngine.selected() == setOf("a"))
     check(cancelledEngine.stop()["a"] == ClassicMusicCoordinator.State.IDLE)
     check(cancelledTransport.active["b"] != true && cancelledTransport.active["c"] != true)
-    println("PASS DJ bridge: 4-lamp, quiet flow, rate-bound HSV/brightness, foreign owner, all-peer fault stop, stale audio")
+
+    // Production DJ engine: equal RGB+brightness does not become 32 needless
+    // Music writes every 300 ms. The first frame is always issued; identical
+    // frames are held only inside the same confirmed reverse-session generation.
+    for (total in listOf(1, 14, 32)) {
+        val wire = Fake()
+        val own = ClassicMusicCoordinator(wire)
+        val bulbs = (1..total).map { "coalesce$it" }
+        bulbs.forEach { own.register(it, true) }
+        val dj = ClassicDjEngine(own)
+        check(dj.setScene("BEAT"))
+        check(dj.select(bulbs).values.all { it == ClassicMusicCoordinator.State.OWNED })
+        val quiet = doubleArrayOf(0.0, 0.0, 0.0, 0.0)
+        val first = dj.originalFrame(0L, quiet, false, 0.0, 0.0)
+        check(first.sent == bulbs.toSet() && first.failed.isEmpty())
+        for (at in listOf(300L, 600L, 1200L, 4500L)) {
+            val held = dj.originalFrame(at, quiet, false, 0.0, 0.0)
+            check(held.sent.isEmpty() && held.failed.isEmpty())
+        }
+        check(wire.frames.size == total) { "Unchanged frames were repeatedly written: $total" }
+        // A stale timestamp cannot cause an early resend or a hidden retry.
+        check(dj.originalFrame(4500L, quiet, true, 120.0, 0.9).sent.isEmpty())
+        if (total > 1) wire.reject = bulbs[6]
+        // Only a real next frame callback may reassert after 4.8 seconds.
+        // A failed reassert is a real failed reverse write: entire show stops,
+        // while the ambiguous peer is never sent speculative STOP.
+        val reasserted = dj.originalFrame(4800L, quiet, false, 0.0, 0.0)
+        if (total > 1) {
+            check(reasserted.failed == setOf(bulbs[6]))
+            check(dj.uncertainOutput() && dj.selected().isEmpty())
+            check(wire.active[bulbs[6]] == true)
+            check(bulbs.filter { it != bulbs[6] }.all { wire.active[it] == false })
+            val writes = wire.frames.size
+            check(dj.originalFrame(5100L, quiet, true, 120.0, 0.9).sent.isEmpty())
+            check(wire.frames.size == writes)
+            check(dj.stop().isEmpty())
+        } else {
+            check(reasserted.sent == bulbs.toSet() && reasserted.failed.isEmpty())
+            val changed = dj.originalFrame(5100L, quiet, true, 120.0, 0.9)
+            check(changed.sent == bulbs.toSet()) {
+                "An actual beat colour change must bypass duplicate suppression"
+            }
+            check(dj.stop().values.all { it == ClassicMusicCoordinator.State.IDLE })
+            // A new session on the SAME engine cannot inherit stale receipts.
+            check(dj.setScene("BEAT"))
+            check(dj.select(bulbs).values.all { it == ClassicMusicCoordinator.State.OWNED })
+            check(dj.originalFrame(5200L, quiet, false, 0.0, 0.0).sent == bulbs.toSet())
+            check(dj.stop().values.all { it == ClassicMusicCoordinator.State.IDLE })
+        }
+    }
+    // For an ordered spatial show, some lamps visibly change while the
+    // inactive tail remains at 1%. Only that unchanged tail is coalesced;
+    // scanning continues across the full 14/32-member OWNED cohort.
+    for (total in listOf(14, 32)) {
+        val wire = Fake()
+        val own = ClassicMusicCoordinator(wire)
+        val bulbs = (1..total).map { "scan$it" }
+        bulbs.forEach { own.register(it, true) }
+        val dj = ClassicDjEngine(own)
+        check(dj.setScene("SCANNER"))
+        check(dj.select(bulbs).values.all { it == ClassicMusicCoordinator.State.OWNED })
+        check(dj.clockTick(0L).sent == bulbs.toSet())
+        val moved = dj.clockTick(300L)
+        check(moved.failed.isEmpty() && moved.sent.isNotEmpty() && moved.sent.size < total) {
+            "Spatial scanner must update its head but skip the unchanged fleet tail: $total"
+        }
+        check(dj.clockTick(300L).sent.isEmpty())
+        check(dj.stop().values.all { it == ClassicMusicCoordinator.State.IDLE })
+    }
+    println("PASS DJ bridge: 4/14/32 lamps, duplicate-frame coalescing, bounded liveness reassertion, scanner head, fault isolation, stale audio")
 }

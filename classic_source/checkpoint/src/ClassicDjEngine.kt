@@ -11,6 +11,15 @@ class ClassicDjEngine(
                       val bass: Double = 0.0, val mid: Double = 0.0,
                       val presence: Double = 0.0, val treble: Double = 0.0)
     private val active = linkedMapOf<String, Long>()
+    // Cached only after a successful write to the already OWNED reverse socket.
+    // Never reused across device-owner generations or a stopped show.
+    private data class Written(val generation: Long, val rgb: Int,
+                               val brightness: Int, val atMs: Long)
+    private val lastWritten = mutableMapOf<String, Written>()
+    // Reassert unchanged frames only when a later real audio/clock input arrives.
+    // This bounded refresh lets a lost reverse socket become observable rather
+    // than hiding failures forever. No background timer, queue or extra RPC.
+    private val maxUnchangedFrameAgeMs = 4_800L
     // A failed reverse frame has an uncertain remote outcome. This fact must
     // survive engine.stop(), even after every surviving owned peer was stopped.
     private var outputUncertain = false
@@ -41,8 +50,14 @@ class ClassicDjEngine(
             onConfirmed = onConfirmed, allowNextStart = allowNextStart)
         val snapshot = coordinator.snapshot().associateBy { it.id }
         for ((id, state) in states) {
-            if (state == ClassicMusicCoordinator.State.OWNED) active[id] = snapshot.getValue(id).generation
-            else active.remove(id)
+            if (state == ClassicMusicCoordinator.State.OWNED) {
+                val generation = snapshot.getValue(id).generation
+                if (active[id] != generation) lastWritten.remove(id)
+                active[id] = generation
+            } else {
+                active.remove(id)
+                lastWritten.remove(id)
+            }
         }
         return states
     }
@@ -135,10 +150,22 @@ class ClassicDjEngine(
             val (id, generation) = entry
             val look = if (mode == null) frame else
                 spatial.frame(mode, index, snapshot.size, timestampMs, loudness, beat)
-            if (coordinator.frame(id, generation, look.rgb, look.brightness)) sent.add(id)
-            else {
+            val previous = lastWritten[id]
+            // Suppress ONLY exactly unchanged RGB + brightness on this exact
+            // OWNED generation, not changes to spatial motion or beat accents.
+            // A later input after the maximum age is an ordinary bounded
+            // reverse frame attempt, so a dead socket can still fail closed.
+            if (previous != null && previous.generation == generation &&
+                previous.rgb == look.rgb && previous.brightness == look.brightness &&
+                timestampMs >= previous.atMs &&
+                timestampMs - previous.atMs < maxUnchangedFrameAgeMs) continue
+            if (coordinator.frame(id, generation, look.rgb, look.brightness)) {
+                lastWritten[id] = Written(generation, look.rgb, look.brightness, timestampMs)
+                sent.add(id)
+            } else {
                 failed.add(id)
                 active.remove(id)
+                lastWritten.remove(id)
                 // A reverse write may have failed with an uncertain remote
                 // outcome. Never STOP that quarantined peer speculatively.
                 // Do not continue a partial light show on the others.
@@ -149,6 +176,7 @@ class ClassicDjEngine(
             outputUncertain = true
             val survivors = active.keys.toList()
             active.clear() // Fence all later PCM, original and clock frames.
+            lastWritten.clear() // An uncertain socket has no reusable receipts.
             // Only independently confirmed OWNED peers get their own STOP.
             coordinator.stopGroup(survivors)
         }
@@ -196,6 +224,7 @@ class ClassicDjEngine(
     @Synchronized fun stop(): Map<String, ClassicMusicCoordinator.State> {
         val ids = active.keys.toList()
         active.clear()
+        lastWritten.clear()
         analyzer.reset()
         lastAudioMs = -1L
         lastSceneInputMs = -1L
