@@ -706,6 +706,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         // resumed Activity or feed its new light session.
         final long observerEpoch = ++originalObserverEpoch;
         attached = true;
+        try {
         originalDsp.setFrameObserver(new ClassicOriginalMusicAudioSignal.FrameObserver() {
             @Override public void onFrame(ClassicOriginalMusicAudioSignal.Frame frame,long atMs) {
                 if (!attached || observerEpoch != originalObserverEpoch) return;
@@ -724,6 +725,22 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         ClassicOriginalMusicAudioSignal.installAnalyzer(originalDsp);
         handler.removeCallbacks(refresh);
         handler.post(refresh);
+        } catch (RuntimeException | LinkageError unavailable) {
+            // A bridge/DSP linkage failure must never crash the OEM MusicActivity
+            // or leave a failed recheck holding the only capture observer lease.
+            ++originalObserverEpoch;
+            attached = false;
+            try { originalDsp.setFrameObserver(null); }
+            catch (RuntimeException | LinkageError ignored) { }
+            try { ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp); }
+            catch (RuntimeException | LinkageError ignored) { }
+            handler.removeCallbacks(refresh);
+            hostLifecycle.leaveResumed();
+            if (lightRuntime != null)
+                stopLightOutput(ClassicOriginalLightReport.HOST_PAUSED);
+            stateNotice.setText(
+                "Original-Audioanalyse nicht verfügbar · Classic-Musik bleibt bedienbar");
+        }
     }
 
     public void onHostPaused() {
@@ -731,8 +748,12 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         if (!hostLifecycle.leaveResumed()) return;
         ++originalObserverEpoch;
         attached = false;
-        originalDsp.setFrameObserver(null);
-        ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);
+        // Independent best-effort cleanups: a broken optional DSP bridge
+        // must not prevent revocation of its registered global analyzer.
+        try { originalDsp.setFrameObserver(null); }
+        catch (RuntimeException | LinkageError ignored) { }
+        try { ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp); }
+        catch (RuntimeException | LinkageError ignored) { }
         // A host that never started DJ lights must not display a fake
         // completed/stopped light session when it loses focus.
         if (lightRuntime != null)

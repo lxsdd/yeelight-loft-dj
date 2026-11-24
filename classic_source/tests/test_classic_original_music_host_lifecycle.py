@@ -57,6 +57,12 @@ public class OriginalMusicHostLifecycleHarness {
     check(newActivity.enterResumed(),"fresh Activity has independent lease");
     check(!music.leaveResumed(),"stale old Activity cannot release new Activity");
     check(newActivity.leaveResumed(),"new Activity pauses normally");
+    ClassicOriginalMusicHostLifecycle retry = new ClassicOriginalMusicHostLifecycle();
+    check(retry.enterResumed(),"optional DSP observer starts setup");
+    check(retry.leaveResumed(),"setup failure must free old observer lease");
+    check(retry.enterResumed(),"post-failure layout recheck is allowed");
+    check(!retry.enterResumed(),"successful retry must not attach twice");
+    check(retry.leaveResumed(),"successful retry is released on real pause");
     System.out.println("CLASSIC_ORIGINAL_MUSIC_HOST_LIFECYCLE_PASS");
   }
 }
@@ -90,10 +96,17 @@ class OriginalMusicHostLifecycleTest(unittest.TestCase):
         self.assertLess(resume.index("if (!hostLifecycle.enterResumed()) return;"),
                         resume.index("ClassicOriginalMusicAudioSignal.installAnalyzer(originalDsp);"))
         self.assertIn("observerEpoch != originalObserverEpoch",resume)
+        self.assertIn("catch (RuntimeException | LinkageError unavailable)",resume)
+        self.assertIn("hostLifecycle.leaveResumed();",resume)
+        self.assertIn("++originalObserverEpoch;",resume.split(
+            "catch (RuntimeException | LinkageError unavailable)",1)[1])
+        self.assertIn("Original-Audioanalyse nicht verfügbar",resume)
+        self.assertIn("ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp);",resume)
         pause=text.split("public void onHostPaused() {",1)[1]
         self.assertLess(pause.index("if (!hostLifecycle.leaveResumed()) return;"),
                         pause.index("++originalObserverEpoch;"))
         self.assertIn("ClassicOriginalMusicAudioSignal.clearAnalyzer(originalDsp)",pause)
+        self.assertIn("catch (RuntimeException | LinkageError ignored)",pause)
         self.assertIn("if (lightRuntime != null)\n            stopLightOutput(",pause)
         self.assertIn("pauseMusicPanel(a);",provider)
         self.assertIn("existing.onHostResumed();",provider)
