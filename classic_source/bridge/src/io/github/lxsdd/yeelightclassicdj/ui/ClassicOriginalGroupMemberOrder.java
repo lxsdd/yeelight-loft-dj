@@ -42,6 +42,20 @@ public final class ClassicOriginalGroupMemberOrder {
      */
     public static void installGroupAdapter(ListView list, ListAdapter original) {
         if (list == null) return;
+        // A ListView may be rebound while an old row/popup or async LAN scan
+        // still holds its previous wrapper. Invalidate it before changing the
+        // adapter; never expose the stale wrapper as an authorized DJ owner.
+        ListAdapter previous = list.getAdapter();
+        if (previous == original) return;
+        if (previous instanceof OrderedGroupAdapter) {
+            OrderedGroupAdapter old = (OrderedGroupAdapter)previous;
+            if (old.originalList == list) {
+                old.retire();
+                // A new OEM adapter is not proof of identical membership.
+                // Explicit DJ intent survives, but its output lease cannot.
+                ClassicOriginalMusicSelection.originalGroupMembershipChanged();
+            }
+        }
         if (original == null || !CLONE.equals(list.getContext().getPackageName()) ||
             !ORIGINAL_ADAPTER.equals(original.getClass().getName())) {
             list.setAdapter(original);
@@ -52,11 +66,14 @@ public final class ClassicOriginalGroupMemberOrder {
             list.setAdapter(original);
             return;
         }
+        OrderedGroupAdapter replacement = null;
         try {
-            list.setAdapter(new OrderedGroupAdapter(list, original,
-                new ClassicLocalOrderStore(list.getContext()), scope));
+            replacement = new OrderedGroupAdapter(list, original,
+                new ClassicLocalOrderStore(list.getContext()), scope);
+            list.setAdapter(replacement);
         } catch (RuntimeException invalid) {
-            // Fail back to exactly the original adapter and click behavior.
+            // Failed setAdapter must not leak a registered OEM observer.
+            if (replacement != null) replacement.retire();
             list.setAdapter(original);
         }
     }
@@ -71,6 +88,34 @@ public final class ClassicOriginalGroupMemberOrder {
         private boolean verified;
         private boolean revoked;
         private long revision;
+        private boolean observerRegistered;
+        /** A superseded adapter cannot authorize a gesture, an async LAN
+         * result, or a late OEM dataset notification. A new ListView adapter
+         * is a new unverified witness, even for the same apparent room.
+         */
+        private boolean ownsCurrentAdapter() {
+            return !revoked && originalList.getAdapter() == this &&
+                scope.equals(ClassicOriginalMusicSelection.originalGroupDisplayScope());
+        }
+        private boolean acceptsGesture() {
+            return ownsCurrentAdapter() && originalList.isAttachedToWindow();
+        }
+        /** Idempotent: an Android detach and a same-ListView rebind may race.
+         * Remove the observer immediately so retired OEM adapters cannot keep
+         * the UI wrapper alive indefinitely or revoke a new Music lease.
+         */
+        private synchronized void retire() {
+            if (revoked) return;
+            revoked = true; verified = false; revision++;
+            if (observerRegistered) {
+                observerRegistered = false;
+                try { original.unregisterDataSetObserver(observer); }
+                catch (RuntimeException alreadyRemoved) {
+                    // Revoked first; even an unusual OEM adapter may not
+                    // restore the wrapper's callback authority.
+                }
+            }
+        }
         // A positional OEM click must observe source-indexed getItem/getItemId
         // during that one synchronous callback, not the DnD display indices.
         private final ThreadLocal<Boolean> originalClickIndex = new ThreadLocal<>();
@@ -79,8 +124,7 @@ public final class ClassicOriginalGroupMemberOrder {
          * The original J1() hook may not run again before the next OEM bind.
          */
         private synchronized void observedOriginalAdapterChange(boolean invalidated) {
-            if (revoked || !scope.equals(ClassicOriginalMusicSelection.originalGroupDisplayScope()))
-                return;
+            if (!ownsCurrentAdapter()) return;
             boolean wasVerified = verified;
             List<String> previous = new ArrayList<>(sourceIds);
             revision++;
@@ -105,13 +149,11 @@ public final class ClassicOriginalGroupMemberOrder {
                             ClassicLocalOrderStore store, String scope) {
             this.original=original; this.originalList=list; this.store=store; this.scope=scope;
             original.registerDataSetObserver(observer);
+            observerRegistered = true;
             list.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
                 @Override public void onViewAttachedToWindow(View v) {}
                 @Override public void onViewDetachedFromWindow(View v) {
-                    synchronized (OrderedGroupAdapter.this) {
-                        revoked=true; verified=false; revision++;
-                    }
-                    original.unregisterDataSetObserver(observer);
+                    retire();
                 }
             });
         }
@@ -138,7 +180,7 @@ public final class ClassicOriginalGroupMemberOrder {
         @Override public int getViewTypeCount() { return original.getViewTypeCount(); }
 
         private synchronized boolean refresh() {
-            if (revoked || !scope.equals(ClassicOriginalMusicSelection.originalGroupDisplayScope())) {
+            if (!ownsCurrentAdapter()) {
                 verified=false; revision++; return false;
             }
             try {
@@ -188,8 +230,7 @@ public final class ClassicOriginalGroupMemberOrder {
          */
         synchronized boolean dispatchOriginalClick(String key,long expected,View originalView) {
             if (key==null || originalView==null || originalClickIndex.get()!=null ||
-                !originalList.isAttachedToWindow() || originalList.getAdapter()!=this ||
-                !refresh() || revision!=expected) return false;
+                !acceptsGesture() || !refresh() || revision!=expected) return false;
             int visible=shownIds.indexOf(key);
             int actual=sourceIds.indexOf(key);
             if (visible<0 || actual<0 || visible>=original.getCount() ||
@@ -210,12 +251,14 @@ public final class ClassicOriginalGroupMemberOrder {
             }
         }
         synchronized boolean moveTo(String from, String target, long expected) {
-            if (!refresh() || revision != expected || from.equals(target) ||
+            if (!acceptsGesture() || !refresh() || revision != expected ||
+                from.equals(target) ||
                 !shownIds.contains(from) || !shownIds.contains(target)) return false;
             return persist(from,shownIds.indexOf(target));
         }
         synchronized boolean moveRelative(String from,int by,long expected) {
-            if (!refresh() || revision != expected || (by!=-1 && by!=1)) return false;
+            if (!acceptsGesture() || !refresh() || revision != expected ||
+                (by!=-1 && by!=1)) return false;
             int pos=shownIds.indexOf(from);
             if (pos < 0 || pos+by < 0 || pos+by>=shownIds.size()) return false;
             return persist(from,pos+by);
@@ -234,12 +277,13 @@ public final class ClassicOriginalGroupMemberOrder {
         }
         /** A stale drag/list revision cannot enroll any OEM member. */
         synchronized boolean markDjMember(String id, boolean include, long expected) {
-            return refresh() && revision==expected && shownIds.contains(id) &&
+            return acceptsGesture() && refresh() && revision==expected &&
+                shownIds.contains(id) &&
                 ClassicOriginalMusicSelection.markDjIntentFromOriginalAdapter(
                     id,include,sourceIds);
         }
         synchronized boolean markDjGroup(boolean include, long expected) {
-            return refresh() && revision==expected &&
+            return acceptsGesture() && refresh() && revision==expected &&
                 ClassicOriginalMusicSelection.markAllDjIntentFromOriginalAdapter(
                     include,sourceIds);
         }
@@ -257,7 +301,7 @@ public final class ClassicOriginalGroupMemberOrder {
          */
         synchronized boolean stillSameLanCandidate(long expected,
                 List<String> originalIds, List<String> chosen) {
-            return originalList.isAttachedToWindow() && refresh() &&
+            return acceptsGesture() && refresh() &&
                 revision == expected && sourceIds.equals(originalIds) &&
                 chosen != null && !chosen.isEmpty() &&
                 chosen.equals(ClassicOriginalMusicSelection.selectedKeysForLanCheck(
@@ -269,7 +313,7 @@ public final class ClassicOriginalGroupMemberOrder {
          * Only the foreground ORIGINAL GroupMusic host can accept its result.
          */
         synchronized boolean requestLanCheck(long expected) {
-            if (!refresh() || revision != expected) return false;
+            if (!acceptsGesture() || !refresh() || revision != expected) return false;
             final ArrayList<String> originalIds = new ArrayList<>(sourceIds);
             final List<String> chosen =
                 ClassicOriginalMusicSelection.selectedKeysForLanCheck(originalIds,
@@ -316,7 +360,7 @@ public final class ClassicOriginalGroupMemberOrder {
         }
 
         synchronized boolean undo(long expected) {
-            if (!refresh() || revision!=expected ||
+            if (!acceptsGesture() || !refresh() || revision!=expected ||
                 !store.undoLastUserDrop(ClassicOrderPolicy.Surface.GROUP_MEMBERS,
                     scope,sourceIds,shownIds)) return false;
             shownIds=ClassicOrderPolicy.project(sourceIds,

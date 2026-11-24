@@ -55,6 +55,7 @@ public final class GroupMusicModeManagerActivity {
     @Override public void notifyDataSetInvalidated(){
       for(android.database.DataSetObserver observer:new ArrayList<>(observers))observer.onInvalidated();
     }
+    public int observerCount(){return observers.size();}
     public g(Context ctx, String... ids){
       context=ctx;
       for(String id:ids) items.add(new e(id));
@@ -376,6 +377,102 @@ public final class GroupMemberOrderHarness {
         "invalidated OEM dataset revokes the owned Music lease");
     check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
         "invalidated OEM dataset retains no LAN addresses");
+    // Production lifecycle rebind: an old UI host has live rows, a pending
+    // popup/gesture and possibly a completed but not yet accepted LAN scan.
+    owner("room-same-list-rebind");
+    ListView reboundList=new ListView(context);
+    String companion="0x00000000000000dd";
+    g retiredOEM=new g(context,lamp,companion);
+    ClassicOriginalGroupMemberOrder.installGroupAdapter(reboundList,retiredOEM);
+    ClassicOriginalGroupMemberOrder.OrderedGroupAdapter retired=installed(reboundList);
+    check(retiredOEM.observerCount()==1,"original OEM observer attached once");
+    ClassicOriginalMusicSelection.observedOriginalGroupMembers(retiredOEM.items);
+    check(retired.getItem(0)==retiredOEM.getItem(0),"rebind fixture first member");
+    check(retired.moveTo(companion,lamp,retired.revision()),
+        "original DnD works before adapter replacement");
+    check(retired.markDjMember(lamp,true,retired.revision()),
+        "original explicit selection works before adapter replacement");
+    List<String> reboundOriginal=Arrays.asList(lamp,companion);
+    List<String> reboundDisplay=Arrays.asList(companion,lamp);
+    check(ClassicOriginalMusicSelection.acceptLanProof(
+        reboundOriginal,reboundDisplay,witness.resolveAll(justLamp,observed)),
+        "positive pre-rebind user-approved synthetic LAN proof");
+    ClassicOriginalMusicSelection.OutputLease oldRebindLease=
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(oldRebindLease!=null,"rebind fixture source lease active");
+    final int[] staleClickCount={0};
+    reboundList.setOnItemClickListener((parent,row,pos,id)->{staleClickCount[0]++;});
+    View retiredRow=retired.getView(0,null,reboundList);
+    long retiredGeneration=retired.revision();
+    g activeOEM=new g(context,lamp,companion);
+    ClassicOriginalGroupMemberOrder.installGroupAdapter(reboundList,activeOEM);
+    ClassicOriginalGroupMemberOrder.OrderedGroupAdapter active=installed(reboundList);
+    check(retiredOEM.observerCount()==0,"superseded OEM observer unregistered");
+    check(activeOEM.observerCount()==1,"new OEM observer attached exactly once");
+    check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(oldRebindLease),
+        "rebind requires a fresh explicit LAN grant before any lamp output");
+    check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
+        "rebound adapter may not inherit prior IP endpoints");
+    check(ClassicOriginalMusicSelection.djIntentCount()==1,
+        "user DJ intention survives unverified UI rebind");
+    check(active.getItem(0)!=null &&
+        ((e)active.getItem(0)).key.equals(companion),
+        "replacement adapter still projects persisted explicit display order");
+    ClassicOriginalMusicSelection.observedOriginalGroupMembers(activeOEM.items);
+    check(ClassicOriginalMusicSelection.acceptLanProof(
+        reboundOriginal,reboundDisplay,witness.resolveAll(justLamp,observed)),
+        "fresh synthetic scan can reauthorize the current original adapter");
+    ClassicOriginalMusicSelection.OutputLease newRebindLease=
+        ClassicOriginalMusicSelection.leaseForOriginalOutput();
+    check(newRebindLease!=null &&
+        ClassicOriginalMusicSelection.isOutputLeaseCurrent(newRebindLease),
+        "new original adapter owns a real output revision");
+    retiredRow.performClick();
+    check(staleClickCount[0]==0,"rebound former row cannot invoke original action");
+    check(!retired.markDjMember(lamp,false,retiredGeneration),
+        "stale row cannot withdraw a new adapter selection");
+    check(!retired.markDjGroup(true,retiredGeneration),
+        "stale popup cannot opt in the rest of a group");
+    check(!retired.moveTo(lamp,companion,retiredGeneration),
+        "stale DnD cannot overwrite the new adapter order");
+    check(!retired.moveRelative(companion,1,retiredGeneration),
+        "stale relative move cannot reorder the new adapter");
+    check(!retired.undo(retiredGeneration),
+        "stale undo cannot roll back the new adapter order");
+    check(!retired.requestLanCheck(retiredGeneration),
+        "stale popup cannot trigger a read-only LAN discovery");
+    check(!retired.stillSameLanCandidate(
+        retiredGeneration,reboundOriginal,justLamp),
+        "late successful LAN scan cannot authorize retired adapter");
+    check(((e)active.getItem(0)).key.equals(companion),
+        "all stale actions preserve current persisted spatial order");
+    check(ClassicOriginalMusicSelection.djIntentCount()==1 &&
+        ClassicOriginalMusicSelection.isOutputLeaseCurrent(newRebindLease),
+        "stale actions cannot affect current DJ selection or Music lease");
+    retiredOEM.items.set(0,new e("retired-only-mutation"));
+    retiredOEM.notifyDataSetChanged();
+    check(ClassicOriginalMusicSelection.isOutputLeaseCurrent(newRebindLease),
+        "late retired OEM callback cannot revoke a new Music owner");
+    activeOEM.items.set(0,new e("actual-current-mutation"));
+    activeOEM.notifyDataSetChanged();
+    check(!ClassicOriginalMusicSelection.isOutputLeaseCurrent(newRebindLease),
+        "a genuine current-adapter member change still revokes Music");
+    check(ClassicOriginalMusicSelection.resolvedOriginalLanCount()==0,
+        "actual current member mutation revokes previous LAN targets");
+    // Replacing the verified wrapper with an unknown OEM adapter must also
+    // discard observers and all outstanding original DJ capabilities.
+    BaseAdapter foreignReplacement=new BaseAdapter(){
+      public int getCount(){return 0;}
+      public Object getItem(int i){return null;}
+      public long getItemId(int i){return 0;}
+      public View getView(int i,View r,ViewGroup v){return null;}
+    };
+    ClassicOriginalGroupMemberOrder.installGroupAdapter(
+        reboundList,foreignReplacement);
+    check(reboundList.getAdapter()==foreignReplacement &&
+        activeOEM.observerCount()==0,"unknown OEM adapter falls back cleanly");
+    check(!active.markDjGroup(true,active.revision()),
+        "former wrapper cannot authorize a DJ group after unknown rebind");
     // Real original app / unknown adapter ownership must always fall back.
     ListView originalPackage=new ListView(new OriginalContext());
     g unowned=new g(context,"x","y");
