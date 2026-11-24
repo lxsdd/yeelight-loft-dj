@@ -25,7 +25,8 @@ private fun privateHost(): String? {
     return null
 }
 
-private class FakeBulb(private val host: String, private val musicAlreadyActive: Boolean = false) : AutoCloseable {
+private class FakeBulb(private val host: String, private val musicAlreadyActive: Boolean = false,
+                       private val rewriteResponse: ((String, String) -> String)? = null) : AutoCloseable {
     val listener = ServerSocket(0, 5, InetAddress.getByName(host))
     val commands = LinkedBlockingQueue<String>()
     val reverseFrames = LinkedBlockingQueue<String>()
@@ -63,7 +64,8 @@ private class FakeBulb(private val host: String, private val musicAlreadyActive:
                     val response = if (result=="ok") "{\"id\":$id,\"result\":[\"ok\"]}"
                        else if (result=="error") "{\"id\":$id,\"error\":{\"code\":-1}}"
                        else "{\"id\":$id,\"result\":[\"$result\"]}"
-                    s.getOutputStream().write((response+"\r\n").toByteArray(StandardCharsets.US_ASCII))
+                    val answer = rewriteResponse?.invoke(cmd, response) ?: response
+                    s.getOutputStream().write((answer+"\r\n").toByteArray(StandardCharsets.US_ASCII))
                 }
             } catch (_: Exception) { if (!live) return@thread }
         }
@@ -124,6 +126,41 @@ fun main() {
         check(c.start(host) == ClassicMusicCoordinator.State.QUARANTINED)
         check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.LOCAL_BUDGET)
         check(bulb.commands.toList().none { it.contains("\"set_music\"") })
+    }
+    // Real production socket, private host-only fake bulb: a partial or
+    // nested status cannot be mistaken for music_on=0 and start a stranger's
+    // session. Fresh synthetic clock windows prevent cross-fixture budget noise.
+    for ((index, kind) in listOf("truncated", "nested", "foreign").withIndex()) {
+        FakeBulb(host, rewriteResponse = { cmd, result ->
+            if (!cmd.contains("\"get_prop\"")) result else when (kind) {
+                "truncated" -> result.dropLast(1)
+                "nested" -> """{"id":1,"params":{"result":["0"]}}"""
+                else -> """{"method":"props","params":{"id":1,"result":["0"]}}"""
+            }
+        }).use { bulb ->
+            val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(
+                host, setOf(host), tcpPort=bulb.listener.localPort,
+                clockMs={ 200_000L + index * 90_000L }))
+            c.register(host,true)
+            check(c.start(host) == ClassicMusicCoordinator.State.QUARANTINED)
+            check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN)
+            check(bulb.commands.toList().none { it.contains("\"set_music\"") }) {
+                "Unsafe Music START following $kind property reply"
+            }
+        }
+    }
+    // Even a successful physical set_music request is NOT an accepted START
+    // without a complete correlated OK. Never send speculative set_music(0).
+    FakeBulb(host, rewriteResponse = { cmd, result ->
+        if (cmd.contains("\"set_music\"") && cmd.contains("[1,")) result.dropLast(1)
+        else result
+    }).use { bulb ->
+        val c = ClassicMusicCoordinator(ClassicYeelightMusicTransport(
+            host,setOf(host),tcpPort=bulb.listener.localPort,clockMs={ 600_000L }))
+        c.register(host,true)
+        check(c.start(host) == ClassicMusicCoordinator.State.QUARANTINED)
+        check(c.snapshot().single().failure == ClassicMusicCoordinator.Failure.NETWORK_UNCERTAIN)
+        check(bulb.commands.toList().none { it.contains("\"set_music\"") && it.contains("[0]") })
     }
     println("PASS Yeelight Color4 private reverse TCP music mode, selection, RGB+brightness, stop, foreign owner, reserved shutdown budget")
 }

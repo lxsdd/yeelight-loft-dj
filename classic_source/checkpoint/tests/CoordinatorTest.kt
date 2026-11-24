@@ -13,6 +13,7 @@ class Fake : ClassicMusicCoordinator.Transport {
 }
 fun checkState(actual: ClassicMusicCoordinator.State, expected: ClassicMusicCoordinator.State) { check(actual == expected) { "$actual != $expected" } }
 fun main() {
+    strictRpcReplyContractScenarios()
     val t = Fake(); val c = ClassicMusicCoordinator(t)
     (1..4).forEach { c.register("bulb$it", true); t.active["bulb$it"] = false; t.connected["bulb$it"] = true }
     check(c.startGroup((1..4).map { "bulb$it" }).values.all { it == ClassicMusicCoordinator.State.OWNED })
@@ -478,4 +479,41 @@ fun quotaFailureFleetScenarios() {
             check(c.snapshot()[6].failure==kind)
         }
     }
+}
+
+
+/** The SAME production TCP reply verifier runs in every public Kotlin CI.
+ * A partial/trailing/nested response can NEVER claim music_on=0 or a START ACK.
+ */
+private fun strictRpcReplyContractScenarios() {
+    val rpc = ClassicYeelightMusicTransport
+    check(rpc.correlatedReplyId("""{"id":4,"result":["0"]}""") == 4)
+    check(rpc.correlatedReplyId(""" {"id":42, "result":["1"]} """) == 42)
+    check(rpc.parseMusicReply("""{"id":4,"result":["0"]}""") == false)
+    check(rpc.parseMusicReply("""{"id":4,"result":["1"]}""") == true)
+    check(rpc.validatedOkReply("""{"id":4,"result":["ok"]}"""))
+    for (bad in listOf(
+        """{"id":4,"result":["0"]""",
+        """{"id":4,"result":["0"],"extra":"ignored"}""",
+        """{"id":4,"params":{"result":["0"]}}""",
+        """{"id":4,"result":["0"],"result":["1"]}""",
+        """{"id":4,"result":[0]}""",
+        """{"id":4,"result":["ok"]}""",
+        """{"result":["0"],"id":4}""",
+        """{"id":4,"result":["0"],"error":{"code":-1}}"""
+    )) check(rpc.parseMusicReply(bad) == null) { "Unsafe Music OFF admitted: $bad" }
+    for (bad in listOf(
+        """{"id":4,"result":["ok"]""",
+        """{"id":4,"params":{"result":["ok"]}}""",
+        """{"id":4,"result":["ok"],"other":true}""",
+        """{"result":["ok"],"id":4}""",
+        """{"id":4,"result":["0"]}"""
+    )) check(!rpc.validatedOkReply(bad)) { "Unverified Music START ACK admitted: $bad" }
+    for (bad in listOf(
+        """{"method":"props","params":{"id":4,"result":["0"]}}""",
+        """{"params":{"id":4},"method":"props"}""",
+        """{"id":"4","result":["0"]}""",
+        """{"not_id":4,"result":["0"]}""",
+        """{"id":2147483648,"result":["0"]}"""
+    )) check(rpc.correlatedReplyId(bad) == null) { "Nested/foreign RPC id admitted: $bad" }
 }

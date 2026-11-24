@@ -47,11 +47,8 @@ class ClassicYeelightMusicTransport(
                     else ClassicLanRpcBudget.Phase.READ
         peer.awaitingVerification = false
         val value = rpc(id, peer, "get_prop", "[\"music_on\"]", isRead = true, phase = phase)
-        when {
-            musicProp0.matches(value) -> false
-            musicProp1.matches(value) -> true
-            else -> null // unsupported/unknown is NEVER treated as music=off
-        }
+        // An incomplete or forged property reply is NOT evidence that Music is off.
+        parseMusicReply(value)
     }
 
     override fun requestStart(id: String): Boolean = withPeer(id) { peer ->
@@ -142,12 +139,16 @@ class ClassicYeelightMusicTransport(
             // Bound asynchronous property events and response length. Never retry a write.
             repeat(6) {
                 val line = readBoundedLine(reader) ?: throw IOException("Connection closed before matching reply")
-                val match = idPattern.find(line) ?: return@repeat
-                if (match.groupValues[1].toIntOrNull() != requestId) return@repeat
+                // Accept an ID only in the top-level response envelope,
+                // never an "id" embedded in a property notification or message.
+                if (correlatedReplyId(line) != requestId) return@repeat
                 classifyMatchedRpcError(line)?.let { throw ClassicLanFailure(it) }
-                if (isRead) return line
-                if (okPattern.containsMatchIn(line)) return "ok"
-                throw IOException("Yeelight RPC returned no explicit OK")
+                if (isRead) {
+                    if (parseMusicReply(line) != null) return line
+                    throw IOException("Unverified Music state reply")
+                }
+                if (validatedOkReply(line)) return "ok"
+                throw IOException("Unverified Yeelight command acknowledgement")
             }
             throw IOException("No matching Yeelight RPC response")
         }
@@ -166,10 +167,22 @@ class ClassicYeelightMusicTransport(
 
     companion object {
         private val commandBudget = ClassicLanRpcBudget()
-        private val idPattern = Regex("\"id\"\\s*:\\s*(\\d+)")
-        private val okPattern = Regex("\"result\"\\s*:\\s*\\[\\s*\"ok\"\\s*]")
-        private val musicProp0 = Regex(".*\"result\"\\s*:\\s*\\[\\s*\"0\"\\s*].*")
-        private val musicProp1 = Regex(".*\"result\"\\s*:\\s*\\[\\s*\"1\"\\s*].*")
+        // Deliberately narrow protocol acceptance for the one supported
+        // Yeelight Classic RPC response: complete top-level id + result.
+        // Reject partial JSON, duplicate/trailing fields and nested spoofing.
+        // OEM responses with unknown shapes remain uncertain, never OFF/OK.
+        private val idPattern = Regex("""^\s*\{\s*"id"\s*:\s*(\d+)\s*,""")
+        private val okPattern = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"result"\s*:\s*\[\s*"ok"\s*]\s*}\s*$""")
+        private val musicProp0 = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"result"\s*:\s*\[\s*"0"\s*]\s*}\s*$""")
+        private val musicProp1 = Regex("""^\s*\{\s*"id"\s*:\s*\d+\s*,\s*"result"\s*:\s*\[\s*"1"\s*]\s*}\s*$""")
+        internal fun correlatedReplyId(line: String): Int? =
+            idPattern.find(line)?.groupValues?.get(1)?.toIntOrNull()
+        internal fun parseMusicReply(line: String): Boolean? = when {
+            musicProp0.matches(line) -> false
+            musicProp1.matches(line) -> true
+            else -> null
+        }
+        internal fun validatedOkReply(line: String): Boolean = okPattern.matches(line)
         private val errorPattern = Regex("\"error\"\\s*:")
         private val quotaMessage = Regex(
             "\"error\"\\s*:\\s*\\{[^{}]{0,320}\"message\"\\s*:\\s*\"client quota exceeded\"",
