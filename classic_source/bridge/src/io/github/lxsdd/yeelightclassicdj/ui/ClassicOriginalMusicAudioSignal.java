@@ -10,10 +10,6 @@ import android.media.AudioRecord;
 public final class ClassicOriginalMusicAudioSignal {
     static final long FRESH_MS = 1250L;
     private static final int MAX_PCM = 131072;
-    private static final ThreadLocal<int[]> MIC_COUNT =
-        ThreadLocal.withInitial(() -> new int[1]);
-    private static final ThreadLocal<int[]> MIC_RATE =
-        ThreadLocal.withInitial(() -> new int[1]);
 
     public interface Analyzer {
         Frame onPcm(short[] pcm, int valid, int rateHz, long timestampMs);
@@ -115,37 +111,56 @@ public final class ClassicOriginalMusicAudioSignal {
         java.util.Arrays.fill(bands, 0f);
     }
 
-    public static void observedOriginalMicResult(int readCount) {
-        MIC_COUNT.get()[0] = readCount > 0 && readCount <= MAX_PCM ? readCount : 0;
-        MIC_RATE.get()[0] = 0;
-    }
-
-    /** Read the SAME original AudioRecord's format. No new recorder. */
-    public static void observedOriginalMicRate(AudioRecord original) {
-        int rate = 0;
-        try {
-            if (original != null) rate = original.getSampleRate();
-        } catch (RuntimeException | LinkageError ignored) { }
-        MIC_RATE.get()[0] = rate >= 8000 && rate <= 192000 ? rate : 0;
-    }
-
-    public static void observedOriginalMicSamples(short[] originalBuffer) {
-        int valid = MIC_COUNT.get()[0], rate = MIC_RATE.get()[0];
-        MIC_COUNT.get()[0] = 0;
-        MIC_RATE.get()[0] = 0;
-        observedPcmAt(originalBuffer, valid, rate, clockMs());
-    }
-
-    static void observedPcmAt(short[] pcm, int valid, int rate, long nowMs) {
-        if (pcm == null || valid < 1 || valid > MAX_PCM || valid > pcm.length ||
-            rate < 8000 || rate > 192000 || nowMs < 0) return;
+    /**
+     * Same OEM receiver, buffer, offset, requested count, blocking read and
+     * int result. The original call is outside the optional observer catch
+     * so its exception and result semantics are unchanged. No extra capture.
+     * Fence the owner/epoch BEFORE the read, which itself can block.
+     */
+    public static int readOriginalMicAndObserve(AudioRecord original, short[] buffer,
+                                                int offset, int requested) {
         Analyzer current;
         long receiptEpoch;
         synchronized (ClassicOriginalMusicAudioSignal.class) {
             current = owner;
             receiptEpoch = micCaptureEpoch;
         }
-        if (current == null || receiptEpoch < 0L) return;
+        int count = original.read(buffer, offset, requested);
+        if (current == null || receiptEpoch < 0L || count <= 0 || count > MAX_PCM ||
+            buffer == null || offset < 0 || offset > buffer.length ||
+            count > requested || count > buffer.length - offset) return count;
+        try {
+            int rate = original.getSampleRate();
+            if (rate < 8000 || rate > 192000) return count;
+            long nowMs = clockMs();
+            // Never analyze stale samples preceding a nonzero offset.
+            short[] pcm = offset == 0 ? buffer :
+                java.util.Arrays.copyOfRange(buffer, offset, offset + count);
+            observePcmForOwner(current, receiptEpoch, pcm, count, rate, nowMs);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Optional analysis cannot change the OEM read result.
+        }
+        return count;
+    }
+
+    static void observedPcmAt(short[] pcm, int valid, int rate, long nowMs) {
+        Analyzer current;
+        long receiptEpoch;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            current = owner;
+            receiptEpoch = micCaptureEpoch;
+        }
+        observePcmForOwner(current, receiptEpoch, pcm, valid, rate, nowMs);
+    }
+
+    private static void observePcmForOwner(Analyzer current, long receiptEpoch,
+                                           short[] pcm, int valid, int rate, long nowMs) {
+        if (pcm == null || valid < 1 || valid > MAX_PCM || valid > pcm.length ||
+            rate < 8000 || rate > 192000 || nowMs < 0 ||
+            current == null || receiptEpoch < 0L) return;
+        synchronized (ClassicOriginalMusicAudioSignal.class) {
+            if (owner != current || micCaptureEpoch != receiptEpoch) return;
+        }
         try {
             acceptFrame(current, "MIC", current.onPcm(pcm, valid, rate, nowMs),
                         nowMs, receiptEpoch);
@@ -230,8 +245,6 @@ public final class ClassicOriginalMusicAudioSignal {
     }
 
     public static void observedOriginalMicStopped() {
-        MIC_COUNT.remove();
-        MIC_RATE.remove();
         Analyzer closing = null;
         synchronized (ClassicOriginalMusicAudioSignal.class) {
             micCaptureEpoch = advanceEpoch(micCaptureEpoch);
@@ -258,8 +271,6 @@ public final class ClassicOriginalMusicAudioSignal {
     }
 
     static synchronized void resetForTest() {
-        MIC_COUNT.remove();
-        MIC_RATE.remove();
         owner = null;
         clearSignal();
         micCaptureEpoch = fftCaptureEpoch = 0L;

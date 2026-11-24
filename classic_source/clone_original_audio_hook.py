@@ -4,7 +4,8 @@
 Observes the ORIGINAL mic AudioRecord.read([SII) return buffer and the
 ORIGINAL Visualizer.OnDataCaptureListener FFT callback. Never opens a
 second audio capture, invents an audio session ID, sets/starts a device,
-or changes original OEM handler/worker calls. Only source Java is public;
+or changes original OEM handler/worker behavior. The sole microphone read
+is forwarded once through a return-preserving static bridge. Only source Java is public;
 original smali/DEX and runtime audio remain in the owner-private build.
 """
 from pathlib import Path
@@ -22,9 +23,10 @@ PCM_STOP = "Landroid/media/AudioRecord;->stop()V"
 FFT_FORWARD = "Ld4/z;->b([BI)V"
 FFT_RELEASE = "Landroid/media/audiofx/Visualizer;->release()V"
 TARGET = "Lio/github/lxsdd/yeelightclassicdj/ui/ClassicOriginalMusicAudioSignal;"
-COUNT = TARGET + "->observedOriginalMicResult(I)V"
-RATE = TARGET + "->observedOriginalMicRate(Landroid/media/AudioRecord;)V"
-SAMPLES = TARGET + "->observedOriginalMicSamples([S)V"
+READ_TAP = TARGET + "->readOriginalMicAndObserve(Landroid/media/AudioRecord;[SII)I"
+LEGACY_MIC_TAPS = (TARGET + "->observedOriginalMicResult(I)V",
+                   TARGET + "->observedOriginalMicRate(Landroid/media/AudioRecord;)V",
+                   TARGET + "->observedOriginalMicSamples([S)V")
 MIC_STOP = TARGET + "->observedOriginalMicStopped()V"
 FFT = TARGET + "->observedOriginalVisualizerFft([BI)V"
 FFT_STOP = TARGET + "->observedOriginalVisualizerStopped()V"
@@ -51,61 +53,59 @@ def _call_sites(body, descriptor):
         re.escape(descriptor) + r"[ \t]*\r?$", body
     ))
 
-def _recorder_reg(regs):
-    tokens = [x.strip() for x in regs.split(",")]
-    if len(tokens) == 4 and all(re.fullmatch(r"[vp]\d+", x) for x in tokens):
-        return tokens[0]
-    match = re.fullmatch(r"([vp])(\d+)\s+\.\.\s+([vp])(\d+)", regs.strip())
-    if match and match.group(1) == match.group(3) and \
-       int(match.group(4)) - int(match.group(2)) == 3:
-        return match.group(1) + match.group(2)
+def _validate_read_regs(regs, is_range):
+    if is_range:
+        match = re.fullmatch(r"([vp])(\d+)\s+\.\.\s+([vp])(\d+)", regs.strip())
+        if match and match.group(1) == match.group(3) and \
+           int(match.group(4)) - int(match.group(2)) == 3:
+            return
+    else:
+        tokens = [x.strip() for x in regs.split(",")]
+        if len(tokens) == 4 and all(re.fullmatch(r"[vp]\d+", x) for x in tokens):
+            return
     raise GateFailure("CLASSIC_ORIGINAL_AUDIO_READ_REGISTER_DRIFT")
 
-
-def _sample_reg(regs):
-    tokens = [x.strip() for x in regs.split(",")]
-    if len(tokens) == 4 and all(re.fullmatch(r"[vp]\d+", x) for x in tokens):
-        return tokens[1]
-    match = re.fullmatch(r"([vp])(\d+)\s+\.\.\s+([vp])(\d+)", regs.strip())
-    if match and match.group(1) == match.group(3) and \
-       int(match.group(4)) - int(match.group(2)) == 3:
-        return match.group(1) + str(int(match.group(2)) + 1)
-    raise GateFailure("CLASSIC_ORIGINAL_AUDIO_READ_REGISTER_DRIFT")
 
 def patch_mic(text):
     if type(text) is not str or not 0 < len(text) < 1_000_000:
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_INPUT_INVALID")
     _exact_class(text, MIC_OWNER)
-    if any(bridge in text for bridge in (COUNT, RATE, SAMPLES, MIC_STOP)):
+    if any(bridge in text for bridge in (READ_TAP, MIC_STOP, *LEGACY_MIC_TAPS)):
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_ALREADY_PATCHED")
     method = _method(text, "run()V")
     body = method.group()
-    if body.count(PCM_READ) != 1 or body.count(PCM_STOP) != 1:
+    if text.count(PCM_READ) != 1 or text.count(PCM_STOP) != 1 or \
+       body.count(PCM_READ) != 1 or body.count(PCM_STOP) != 1:
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_CALL_DRIFT")
     reads = list(re.finditer(
-        r"(?m)^(?P<indent>[ \t]*)invoke-virtual(?:/range)?[ \t]+"
+        r"(?m)^(?P<indent>[ \t]*)invoke-virtual(?P<range>/range)?[ \t]+"
         r"\{(?P<regs>[^}]+)\},[ \t]*" + re.escape(PCM_READ) +
-        r"[ \t]*\r?\n"
-        r"(?:(?:[ \t]*\.(?:line|local)\b[^\r\n]*\r?\n)|(?:[ \t]*\r?\n))*"
-        r"(?P=indent)move-result[ \t]+(?P<count>[vp]\d+)[ \t]*\r?$",
-        body
+        r"[ \t]*\r?$", body
     ))
     if len(reads) != 1:
-        raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_RESULT_DRIFT")
+        raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_CALL_DRIFT")
     read = reads[0]
-    register = _sample_reg(read.group("regs"))
-    recorder = _recorder_reg(read.group("regs"))
-    result = read.group("count")
-    indent = read.group("indent")
-    insert = (
-        "\n" + indent + "invoke-static/range {" + result +
-        " .. " + result + "}, " + COUNT +
-        "\n" + indent + "invoke-static/range {" + recorder +
-        " .. " + recorder + "}, " + RATE +
-        "\n" + indent + "invoke-static/range {" + register +
-        " .. " + register + "}, " + SAMPLES
-    )
-    changed = body[:read.end()] + insert + body[read.end():]
+    _validate_read_regs(read.group("regs"), bool(read.group("range")))
+    # Owner's SHA-pinned original probe confirmed a discarded read result.
+    # The static bridge preserves register list, argument widths and return.
+    # No new local register is needed even if the OEM discards the result.
+    next_instruction = None
+    for line in body[read.end():].splitlines():
+        stripped = line.strip()
+        if stripped.startswith(".end method"):
+            break
+        if not stripped or stripped.startswith((".", "#", ":")):
+            continue
+        next_instruction = stripped
+        break
+    if next_instruction is None or (
+        next_instruction.startswith("move-result") and
+        not re.fullmatch(r"move-result[ \t]+[vp]\d+", next_instruction)
+    ):
+        raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_RESULT_DRIFT")
+    replacement = read.group().replace("invoke-virtual", "invoke-static", 1)
+    replacement = replacement.replace(PCM_READ, READ_TAP, 1)
+    changed = body[:read.start()] + replacement + body[read.end():]
     stop_calls = _call_sites(changed, PCM_STOP)
     if len(stop_calls) != 1:
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_STOP_DRIFT")
@@ -113,10 +113,11 @@ def patch_mic(text):
     changed = (changed[:stop.end()] + "\n" + stop.group("indent") +
                "invoke-static {}, " + MIC_STOP + changed[stop.end():])
     output = text[:method.start()] + changed + text[method.end():]
-    if any(output.count(bridge) != 1 for bridge in (COUNT, RATE, SAMPLES, MIC_STOP)) or \
-       output.count(PCM_READ) != 1 or output.count(PCM_STOP) != 1:
+    if output.count(READ_TAP) != 1 or output.count(MIC_STOP) != 1 or \
+       output.count(PCM_READ) != 0 or output.count(PCM_STOP) != 1:
         raise GateFailure("CLASSIC_ORIGINAL_AUDIO_MIC_RECHECK_FAILED")
     return output
+
 
 def patch_fft(text, worker):
     if type(text) is not str or type(worker) is not str or \

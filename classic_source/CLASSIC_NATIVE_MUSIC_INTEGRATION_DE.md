@@ -202,3 +202,22 @@ Fake-Bulb-TCP-Test prüft zusätzlich, dass bei fehlendem STOP-Budget gerade
 **kein** neuer `set_music(1)`-Befehl entsteht. Es handelt sich nicht um
 physische Color4-/OEM-/Pixel-6a-Abnahme; externe Home-Assistant-Clients
 können das lokale Reservierungssystem nicht respektieren.
+
+## 24.11.2026 – privater Original-MIC-Build: verworfener Rückgabewert
+
+Owner-lokaler v17-Build auf `46314495` blockierte korrekt mit
+`CLASSIC_ORIGINAL_AUDIO_MIC_RESULT_DRIFT`. Der gesonderte SHA-geprüfte
+private Strukturtest bestätigte genau einen normalen Original-read mit vier
+gültigen Argumentregistern, keinen unmittelbar konsumierten Rückgabewert und
+einen Original-stop. Keine OEM-Instruktionen oder privaten Daten übernommen.
+
+Der bestehende Hook ersetzt nur diesen einen virtuellen read-Aufruf durch
+einen statischen Java-Forwarder mit identischem Receiver, Buffer, Offset,
+Längenargument und int-Rückgabewert. Der Forwarder ruft die Original-API genau
+einmal auf, lässt ihre Rückgabe und Fehler unverändert und beobachtet nur den
+tatsächlich gültigen Ausschnitt; MIC-Owner/Stop-Epoch werden vor dem eventuell
+blockierenden read erfasst. Keine neuen OEM-Register, keine zweite Aufnahme,
+keine Änderung des originalen Stop-/FFT-Pfads. Positiv-/Negativ-Regressionen
+für verworfenen/konsumierten Rückgabewert, Registerform, Teilread/Offset,
+Fehler und Stop während read. Reale private Reassembly und Pixel6a-Abnahme
+bleiben nach dem öffentlichen CI-Beleg erneut erforderlich.

@@ -60,7 +60,8 @@ public final class OriginalMusicAudioHarness {
   static short[] pcm(int n) { short[] d = new short[n]; java.util.Arrays.fill(d,(short)8000); return d; }
   static final class Fake implements ClassicOriginalMusicAudioSignal.Analyzer {
     int pcmCalls, fftCalls, closeCalls, acceptedCalls;
-    boolean throwOnAccepted;
+    boolean throwOnAccepted, throwOnPcm;
+    int lastValid, firstSample;
     CountDownLatch entered, resume;
     public void onCaptureClosed() { closeCalls++; }
     public void onAcceptedFrame(ClassicOriginalMusicAudioSignal.Frame frame, long ms) {
@@ -74,6 +75,9 @@ public final class OriginalMusicAudioHarness {
     }
     public ClassicOriginalMusicAudioSignal.Frame onPcm(short[] x, int n, int hz, long ms) {
       pcmCalls++;
+      lastValid = n;
+      firstSample = x[0];
+      if (throwOnPcm) throw new IllegalStateException("bad DSP");
       check(hz == 16000,"original recorder format");
       if (entered != null) {
         entered.countDown();
@@ -102,9 +106,9 @@ public final class OriginalMusicAudioHarness {
           "without owner, no simulated music");
     Fake first = new Fake();
     ClassicOriginalMusicAudioSignal.installAnalyzer(first);
-    ClassicOriginalMusicAudioSignal.observedOriginalMicResult(1024);
-    ClassicOriginalMusicAudioSignal.observedOriginalMicRate(new android.media.AudioRecord());
-    ClassicOriginalMusicAudioSignal.observedOriginalMicSamples(pcm(1024));
+    android.media.AudioRecord rec = new android.media.AudioRecord();
+    check(ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(rec,pcm(1024),0,1024) == 1024 &&
+          rec.readCalls == 1,"one unchanged original read and return value");
     check(first.pcmCalls == 1,"one real original mic callback");
     // The previous callback used a genuine monotonic clock. Only an
     // EXPLICIT test reset may use deterministic synthetic timestamps;
@@ -242,6 +246,48 @@ public final class OriginalMusicAudioHarness {
       ClassicOriginalMusicAudioSignal.clearAnalyzer(racing);
     }
 
+    // Actual bridge: ignored return shape, partial read, offset and failure.
+    ClassicOriginalMusicAudioSignal.resetForTest();
+    Fake tap = new Fake();
+    ClassicOriginalMusicAudioSignal.installAnalyzer(tap);
+    android.media.AudioRecord reader = new android.media.AudioRecord();
+    short[] window = new short[]{91,92,100,101,102,93,94};
+    reader.result = 3;
+    check(ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(reader,window,2,4)==3 &&
+          reader.readCalls==1 && reader.lastBuffer==window &&
+          reader.lastOffset==2 && reader.lastSize==4 &&
+          tap.pcmCalls==1 && tap.lastValid==3 && tap.firstSample==100,
+          "exact arguments, partial nonzero-offset read and returned count");
+    for (int bad : new int[]{0,-3,5,8}) {
+      reader.result=bad;
+      check(ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(reader,window,2,4)==bad,
+            "failed or out-of-range OEM result is unchanged");
+    }
+    check(tap.pcmCalls==1,"invalid reads do not reach DSP");
+    reader.result=3;
+    reader.rateFailure=true;
+    check(ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(reader,window,2,4)==3 &&
+          tap.pcmCalls==1,"optional rate failure preserves result");
+    reader.rateFailure=false;
+    tap.throwOnPcm=true;
+    check(ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(reader,window,2,4)==3 &&
+          tap.pcmCalls==2,"optional DSP failure preserves result");
+    tap.throwOnPcm=false;
+    RuntimeException originalError=new IllegalStateException("original read failure");
+    reader.failure=originalError;
+    try {
+      ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(reader,window,2,4);
+      throw new AssertionError("original exception swallowed");
+    } catch (RuntimeException e) { check(e==originalError,"original exception propagated"); }
+    reader.failure=null;
+    reader.beforeReturn=() -> ClassicOriginalMusicAudioSignal.observedOriginalMicStopped();
+    check(ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(reader,window,2,4)==3 &&
+          tap.pcmCalls==2,"stop during original read fences late DSP");
+    reader.beforeReturn=null;
+    ClassicOriginalMusicAudioSignal.clearAnalyzer(tap);
+    int prior=reader.readCalls;
+    check(ClassicOriginalMusicAudioSignal.readOriginalMicAndObserve(reader,window,2,4)==3 &&
+          reader.readCalls==prior+1 && tap.pcmCalls==2,"no owner still executes one original read");
     System.out.println("REAL_ORIGINAL_AUDIO_SIGNAL_JAVA_PRODUCTION_PASS");
   }
 }
@@ -250,23 +296,35 @@ public final class OriginalMusicAudioHarness {
 class OriginalAudioSourceContract(unittest.TestCase):
     def test_pinned_oem_mic_read_and_stop(self):
         changed = hook.patch_mic(MIC)
-        self.assertIn("invoke-static/range {v16 .. v16}, " + hook.COUNT, changed)
-        self.assertIn("invoke-static/range {v6 .. v6}, " + hook.SAMPLES, changed)
-        self.assertLess(changed.index(hook.COUNT), changed.index(hook.RATE))
-        self.assertLess(changed.index(hook.RATE), changed.index(hook.SAMPLES))
-        self.assertIn("invoke-static/range {v5 .. v5}, " + hook.RATE, changed)
+        self.assertIn("invoke-static {v5, v6, v0, v1}, " + hook.READ_TAP, changed)
         self.assertIn("invoke-static {}, " + hook.MIC_STOP, changed)
-        self.assertEqual(changed.count(hook.PCM_READ), 1)
+        self.assertEqual(changed.count(hook.PCM_READ), 0)
+        self.assertEqual(changed.count(hook.READ_TAP), 1)
         self.assertEqual(changed.count(hook.PCM_STOP), 1)
         self.assertIn(".locals 22", changed)
+        restored = changed.replace("invoke-static {v5, v6, v0, v1}, " + hook.READ_TAP,
+                                   "invoke-virtual {v5, v6, v0, v1}, " + hook.PCM_READ)
+        restored = restored.replace("\n    invoke-static {}, " + hook.MIC_STOP, "")
+        self.assertEqual(restored, MIC)
         with self.assertRaises(GateFailure):
             hook.patch_mic(changed)
 
+    def test_owner_observed_discarded_mic_result(self):
+        original = MIC.replace("    move-result v16\n", "")
+        changed = hook.patch_mic(original)
+        self.assertNotIn("move-result", changed)
+        self.assertIn("invoke-static {v5, v6, v0, v1}, " + hook.READ_TAP, changed)
+        restored = changed.replace("invoke-static {v5, v6, v0, v1}, " + hook.READ_TAP,
+                                   "invoke-virtual {v5, v6, v0, v1}, " + hook.PCM_READ)
+        restored = restored.replace("\n    invoke-static {}, " + hook.MIC_STOP, "")
+        self.assertEqual(restored, original)
+
     def test_range_original_registers_supported(self):
-        s = MIC.replace("{v5, v6, v0, v1}", "{v17 .. v20}")
+        s = MIC.replace("invoke-virtual {v5, v6, v0, v1}",
+                        "invoke-virtual/range {v17 .. v20}")
         changed = hook.patch_mic(s)
-        self.assertIn("invoke-static/range {v17 .. v17}, " + hook.RATE, changed)
-        self.assertIn("invoke-static/range {v18 .. v18}, " + hook.SAMPLES, changed)
+        self.assertIn("invoke-static/range {v17 .. v20}, " + hook.READ_TAP, changed)
+        self.assertIn("move-result v16", changed)
 
     def test_mic_fail_closed_against_unknown_oem(self):
         corruptions = [
@@ -278,6 +336,8 @@ class OriginalAudioSourceContract(unittest.TestCase):
             MIC.replace("    return-void", "    invoke-virtual {v5, v6, v0, v1}, "
                         + hook.PCM_READ + "\n    move-result v2\n    return-void"),
             MIC.replace("{v5, v6, v0, v1}", "{v5, v6, v0}"),
+            MIC.replace("invoke-virtual {v5, v6, v0, v1}", "invoke-virtual/range {v5, v6, v0, v1}"),
+            MIC.replace("invoke-virtual {v5, v6, v0, v1}", "invoke-static {v5, v6, v0, v1}"),
         ]
         for defect in corruptions:
             with self.subTest(case=defect[:55]), self.assertRaises(GateFailure):
@@ -375,8 +435,24 @@ class OriginalAudioSourceContract(unittest.TestCase):
             target=Path(d)/"OriginalMusicAudioHarness.java"
             target.write_text(JAVA_HARNESS,encoding="utf-8")
             stub=Path(d)/"AudioRecord.java"
-            stub.write_text("package android.media; public class AudioRecord { "
-                            "public int getSampleRate() { return 16000; } }", encoding="utf-8")
+            stub.write_text("""package android.media;
+public class AudioRecord {
+  public int result=1024, readCalls, lastOffset, lastSize;
+  public short[] lastBuffer;
+  public boolean rateFailure;
+  public RuntimeException failure;
+  public Runnable beforeReturn;
+  public int read(short[] data,int offset,int size) {
+    readCalls++; lastBuffer=data; lastOffset=offset; lastSize=size;
+    if(failure!=null) throw failure;
+    if(beforeReturn!=null) beforeReturn.run();
+    return result;
+  }
+  public int getSampleRate() {
+    if(rateFailure) throw new IllegalStateException("rate");
+    return 16000;
+  }
+}""", encoding="utf-8")
             c=subprocess.run(["javac","--release","8","-d",d,str(src),str(target),str(stub)],
                 capture_output=True,text=True,timeout=30)
             self.assertEqual(c.returncode,0,c.stderr)

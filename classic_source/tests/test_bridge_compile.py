@@ -434,7 +434,8 @@ public class HorizontalScrollView extends android.view.View {
 # This stub checks only Java source ABI at its actual constructor boundary.
 STUBS.update({
 'android/media/AudioRecord.java': '''package android.media;
-public class AudioRecord { public int getSampleRate() { return 16000; } }''',
+public class AudioRecord { public int getSampleRate() { return 16000; }
+ public int read(short[] data,int offset,int size) { return 0; } }''',
 'io/github/lxsdd/yeelightclassicdj/runtime/ClassicOriginalDspAnalysis.java':
 '''package io.github.lxsdd.yeelightclassicdj.runtime;
 import io.github.lxsdd.yeelightclassicdj.ui.ClassicOriginalMusicAudioSignal;
