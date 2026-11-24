@@ -21,7 +21,15 @@ class GroupAdapterOrderingSourceTests(unittest.TestCase):
         self.assertIn("originalClickIndex.set(Boolean.TRUE)",java)
         self.assertIn("originalClickIndex.remove()",java)
         self.assertIn("listener.onItemClick(originalList,originalView,actual,",java)
-        self.assertIn("originalList.getAdapter()!=this",java)
+        # The ownership fence is shared by row clicks, DnD, popup actions,
+        # asynchronous LAN callbacks and late OEM observer notifications.
+        # Preserve the behavioral contract, not the previous inlined spelling.
+        self.assertIn("originalList.getAdapter() == this",java)
+        self.assertIn("!acceptsGesture()",java)
+        self.assertIn("if (!ownsCurrentAdapter()) return;",java)
+        self.assertIn("old.retire();",java)
+        self.assertIn("original.unregisterDataSetObserver(observer)",java)
+        self.assertIn("ClassicOriginalMusicSelection.originalGroupMembershipChanged();",java)
         self.assertIn("sourcePosition!=sourceIds.indexOf(stable)",java)
         self.assertIn("ClassicOriginalMusicSelection.originalGroupRowAction();",java)
         self.assertIn("static synchronized void originalGroupRowAction()",(
