@@ -453,6 +453,8 @@ public class CheckpointRuntime {
  public void startOriginalAudio(List<String> targets,DjRuntime.Listener listener,\n     DjRuntime.ConsentGuard consent){}
  public void startOriginalTimedScene(List<String> targets,DjRuntime.Listener listener,\n     DjRuntime.ConsentGuard consent){}
  public boolean submitOriginalFrame(ClassicOriginalMusicAudioSignal.Frame frame){return true;}
+ // The production Kotlin runtime supplies this fixed non-identifying diagnosis.
+ public String lanFailureCode(){return "NONE";}
  public void stop(){}
 }'''
 })
