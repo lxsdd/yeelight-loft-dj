@@ -48,6 +48,7 @@ public final class ClassicMusicInlineControls extends LinearLayout {
     private final LinearLayout content;
     private final TextView originalMusicSelectionStatus;
     private final TextView description;
+    private final TextView previewCohortStatus;
     private final TextView stateNotice;
     private final TextView lightControl;
     private final Object lightGuard = new Object();
@@ -199,11 +200,18 @@ public final class ClassicMusicInlineControls extends LinearLayout {
         content.addView(savedScroll);
 
         preview = new ClassicDjPatternPreviewView(activity);
-        LinearLayout.LayoutParams pv = new LinearLayout.LayoutParams(-1, dp(48));
+        // The selected 14/32+ positions occupy responsive rows, not a fake
+        // eight-cell strip. The sheet scrolls without covering original OEM UI.
+        LinearLayout.LayoutParams pv = new LinearLayout.LayoutParams(-1, dp(84));
         pv.setMargins(0, dp(9), 0, dp(5));
         content.addView(preview, pv);
         preview.setContentDescription(
-            "Animierte theoretische Lichtfolge; keine echten Lampen, Audiodaten oder Gerätepositionen");
+            "Schematische Lichtfolge; weder physische Geräteposition noch gemessener Lampenzustand");
+        previewCohortStatus = caption(
+            ClassicDjPreviewCohort.from(0, 0, false).label(), 12, MUTED);
+        previewCohortStatus.setContentDescription(
+            "Anzahl und Nachweisart der originalen Classic-DJ-Auswahl");
+        content.addView(previewCohortStatus);
 
         description = caption("", 13, INK);
         content.addView(description);
@@ -589,14 +597,15 @@ public final class ClassicMusicInlineControls extends LinearLayout {
                 new int[]{60, 90, 120, 150, 180}[selected.pulseTempoIndex],
                 ClassicSceneUiState.COLORS[selected.colorIndex],
                 selected.paletteIndex == 1,
-                ClassicSceneUiState.SPEEDS[selected.speedIndex], selected.reverse);
+                ClassicSceneUiState.SPEEDS[selected.speedIndex], selected.reverse,
+                ClassicSceneUiState.TRAILS[selected.trailIndex]);
             String explanation = ClassicDjEffectPreview.explanation(
                 ClassicSceneUiState.SCENES[selected.scene], selected.beatPulse);
             description.setText(explanation +
                 (selected.scene >= 3 ? " · Farbe " +
                     (selected.scene >= 4 && selected.paletteIndex == 1 ?
                         "Regenbogen" : ClassicSceneUiState.COLOR_NAMES[selected.colorIndex]) : "") +
-                " · Vorschau ohne Lampen");
+                " · nur Effektvorschau, keine Rückmeldung der Lampen");
             header.setText("Licht-Effekte  ·  " + NAMES[selected.scene] + "    ﹀");
             // A SceneFragment edit updates the currently OWNED real effect too.
             // Neither changing scene nor reading state starts a new capture.
@@ -615,6 +624,17 @@ public final class ClassicMusicInlineControls extends LinearLayout {
             ClassicOriginalMusicSelection.djIntentCount();
         int verifiedLan = runningOutput ? live.size() :
             ClassicOriginalMusicSelection.resolvedOriginalLanCount();
+        // Before OWNED acknowledgement, only explicit DJ intent is displayed;
+        // after exact ACK the count represents Music connections, never an
+        // optical verification. No OEM IDs, addresses or coordinates are read.
+        ClassicDjPreviewCohort.Snapshot previewCohort =
+            ClassicDjPreviewCohort.from(marked,
+                runningOutput && live != null ? live.size() : 0,
+                runningOutput && lightConfirmed);
+        preview.setCohort(previewCohort);
+        previewCohortStatus.setText(previewCohort.label());
+        preview.setContentDescription(previewCohort.label() +
+            " · schematische Reihenfolge, kein Grundriss oder Lampenfeedback");
         if (shownDeviceWitness != witnessed || shownGroupCount != members ||
             shownVerifiedIdentityCount != verifiedIds || shownDjIntentCount != marked ||
             shownLanVerifiedCount != verifiedLan || shownLightRunning != runningOutput ||

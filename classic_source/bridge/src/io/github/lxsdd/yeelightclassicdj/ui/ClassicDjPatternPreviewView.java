@@ -9,14 +9,17 @@ import android.os.SystemClock;
 import android.view.View;
 
 /**
- * Eight abstract preview cells. Never count, enumerate or address real bulbs.
+ * Dynamic, bounded drawing of the count explicitly selected in original
+ * Classic MusicActivity. A missing selection uses eight labeled placeholders.
+ * Never enumerate or address real bulbs, and never infer physical placement.
  * SPECTRUM / AMBIENT / BEAT / beat-PULSE animate ONLY when a real
  * original OEM microphone/Visualizer frame has been observed; otherwise
  * frequency/beat strength remains zero, never invented.
  * This is animation only: no OEM, microphone, LAN, scene or device side effects.
  */
 public final class ClassicDjPatternPreviewView extends View {
-    private static final int CELLS = 8;
+    private static final int PLACEHOLDER_CELLS =
+        ClassicDjPreviewCohort.PLACEHOLDER_CELLS;
     private static final int PINK = Color.rgb(255, 46, 121);
     private static final int EMPTY = Color.rgb(255, 229, 240);
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -27,7 +30,10 @@ public final class ClassicDjPatternPreviewView extends View {
     private int previewRgb = PINK;
     private boolean rainbow;
     private int spatialSpeed = 100;
+    private int spatialTrail = 4;
     private boolean reverse;
+    private ClassicDjPreviewCohort.Snapshot cohort =
+        ClassicDjPreviewCohort.from(0, 0, false);
     private ClassicOriginalMusicAudioSignal.Snapshot originalFrame;
 
     public ClassicDjPatternPreviewView(Context context) { super(context); }
@@ -36,12 +42,19 @@ public final class ClassicDjPatternPreviewView extends View {
         setMode(selected, beat, bpm, PINK);
     }
     public void setMode(int selected, boolean beat, int bpm, int rgb) {
-        setMode(selected, beat, bpm, rgb, false, 100, false);
+        setMode(selected, beat, bpm, rgb, false, 100, false, 4);
     }
     public void setMode(int selected, boolean beat, int bpm, int rgb,
                         boolean rainbow, int speed, boolean reverse) {
+        setMode(selected, beat, bpm, rgb, rainbow, speed, reverse, 4);
+    }
+
+    /** Preview consumes the SAME original-scene spatial options as OWNED output. */
+    public void setMode(int selected, boolean beat, int bpm, int rgb,
+                        boolean rainbow, int speed, boolean reverse, int trail) {
         if (selected < 0 || selected > 6 || bpm < 40 || bpm > 240 ||
-            rgb < 0 || rgb > 0xFFFFFF || speed < 25 || speed > 400) return;
+            rgb < 0 || rgb > 0xFFFFFF || speed < 25 || speed > 400 ||
+            trail < 1 || trail > 8) return;
         mode = selected;
         beatPulse = beat;
         pulseTempo = bpm;
@@ -49,7 +62,17 @@ public final class ClassicDjPatternPreviewView extends View {
         this.rainbow = rainbow;
         spatialSpeed = speed;
         this.reverse = reverse;
+        spatialTrail = trail;
         invalidate();
+    }
+
+    /** The original UI supplies only a count/provenance, NEVER model IDs or IPs. */
+    public void setCohort(ClassicDjPreviewCohort.Snapshot current) {
+        if (current == null || current.cells < 1) return;
+        if (cohort.cells != current.cells || cohort.proof != current.proof) {
+            cohort = current;
+            invalidate();
+        }
     }
 
     /** True source provenance only: data already captured by original Classic. */
@@ -58,11 +81,11 @@ public final class ClassicDjPatternPreviewView extends View {
         invalidate();
     }
 
-    /** Same palette geometry as the owned output, on eight imaginary cells. */
-    private int rainbowRgb(int index, long timestampMs) {
-        int position = reverse ? CELLS - 1 - index : index;
+    /** Same modular rainbow geometry as the owned, dynamically sized output. */
+    private int rainbowRgb(int index, int count, long timestampMs) {
+        int position = reverse ? count - 1 - index : index;
         long phase = (timestampMs / 45L % 360L) * spatialSpeed / 100L;
-        double hue = ((position * 360L / CELLS + phase) % 360L) / 60.0;
+        double hue = ((position * 360L / count + phase) % 360L) / 60.0;
         int x = (int) (255.0 * (1.0 - Math.abs(hue % 2.0 - 1.0)));
         int red, green, blue;
         switch ((int) hue) {
@@ -80,24 +103,34 @@ public final class ClassicDjPatternPreviewView extends View {
         super.onDraw(canvas);
         int w = getWidth(), h = getHeight();
         if (w <= 0 || h <= 0) return;
-        float gap = w * .018f;
-        float cell = (w - gap * (CELLS - 1)) / CELLS;
-        float radius = Math.min(h / 2f, cell / 2f);
+        int count = cohort.cells;
+        // Responsive rows preserve EVERY selected position: 14 means 14,
+        // 32 means 32. No fixed four/eight-lamp limit or fake device positions.
+        int columns = Math.max(1, Math.min(count,
+            (int) Math.ceil(Math.sqrt((double) count * w / h))));
+        int rows = 1 + (count - 1) / columns;
+        float gap = Math.min(2f, Math.min(w / (columns * 9f),
+            h / (rows * 9f)));
+        float cellWidth = (w - gap * (columns - 1)) / columns;
+        float cellHeight = (h - gap * (rows - 1)) / rows;
+        if (cellWidth <= 0f || cellHeight <= 0f) return;
+        float radius = Math.min(cellHeight / 2f, cellWidth / 2f);
         long clock = SystemClock.elapsedRealtime();
         ClassicOriginalMusicAudioSignal.Snapshot source = originalFrame;
-        for (int i = 0; i < CELLS; i++) {
-            float left = i * (cell + gap);
-            bounds.set(left, 2f, left + cell, h - 2f);
+        for (int i = 0; i < count; i++) {
+            int col = i % columns, row = i / columns;
+            float left = col * (cellWidth + gap), top = row * (cellHeight + gap);
+            bounds.set(left, top, left + cellWidth, top + cellHeight);
             paint.setColor(EMPTY);
             canvas.drawRoundRect(bounds, radius, radius, paint);
-            float timed = ClassicDjPatternMath.level(mode, i, clock,
-                beatPulse, pulseTempo);
-            float intensity = ClassicDjPatternMath.reactiveLevel(mode, i, timed,
-                beatPulse, source != null && source.fresh,
+            float timed = ClassicDjPatternMath.previewLevel(mode, i, count, clock,
+                beatPulse, pulseTempo, spatialSpeed, reverse, spatialTrail);
+            float intensity = ClassicDjPatternMath.reactiveLevel(mode, i, count,
+                timed, beatPulse, source != null && source.fresh,
                 source == null ? 0f : source.level,
                 source == null ? new float[4] : source.bands,
                 source != null && source.beat);
-            int rgb = rainbow && mode >= 4 ? rainbowRgb(i, clock) : previewRgb;
+            int rgb = rainbow && mode >= 4 ? rainbowRgb(i, count, clock) : previewRgb;
             paint.setColor(Color.argb(40 + Math.round(215f * intensity),
                 Color.red(rgb), Color.green(rgb), Color.blue(rgb)));
             canvas.drawRoundRect(bounds, radius, radius, paint);

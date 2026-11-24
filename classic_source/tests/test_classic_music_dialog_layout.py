@@ -76,7 +76,7 @@ class ClassicMusicSheetRegression(unittest.TestCase):
         self.assertIn("originalMusicSelectionStatus.setText(", INLINE)
         self.assertIn("Nur Simulation", INLINE)
         self.assertIn("keine Lampe wird angesteuert", INLINE)
-        self.assertIn("Eight abstract preview cells", PATTERN)
+        self.assertIn("Dynamic, bounded drawing of the count", PATTERN)
         self.assertNotIn("getRemoteDeviceList(", INLINE)
         self.assertNotIn("new String[0]", INLINE)
         self.assertIn("if (!ips.isEmpty())", SERVICE)

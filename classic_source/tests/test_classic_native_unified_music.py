@@ -56,8 +56,8 @@ public class UnifiedPreviewHarness {
    float[] bands = new float[]{.15f,.70f,.28f,.42f};
    yes(ClassicDjPatternMath.reactiveLevel(0,1,.10f,true,true,.6f,bands,false)==.70f,
        "spectrum uses real observed FFT bands");
-   yes(ClassicDjPatternMath.reactiveLevel(0,2,.30f,true,false,0f,bands,false)==.30f,
-       "inactive scene cannot claim audio provenance");
+   yes(ClassicDjPatternMath.reactiveLevel(0,2,.30f,true,false,0f,bands,false)==0f,
+       "missing original FFT cannot fabricate a spectrum");
    yes(ClassicDjPatternMath.reactiveLevel(2,0,.46f,true,false,0f,bands,false)==0f,
        "beat never fabricated without original source");
    yes(ClassicDjPatternMath.reactiveLevel(2,0,.46f,true,true,.68f,bands,true)==1f,
@@ -91,8 +91,8 @@ class UnifiedMusicNativeContract(unittest.TestCase):
             self.assertIn("UNIFIED_PREVIEW_JAVA_PRODUCTION_MATH_PASS", run.stdout)
 
     def test_android_view_consumes_only_pure_preview_math(self):
-        self.assertIn("ClassicDjPatternMath.level(mode, i, clock", VIEW)
-        self.assertIn("ClassicDjPatternMath.reactiveLevel(mode, i, timed", VIEW)
+        self.assertIn("ClassicDjPatternMath.previewLevel(mode, i, count, clock", VIEW)
+        self.assertIn("ClassicDjPatternMath.reactiveLevel(mode, i, count,", VIEW)
         self.assertIn("ClassicOriginalMusicAudioSignal.snapshot()", INLINE)
         self.assertIn("ClassicSceneUiState.snapshot()", INLINE)
         self.assertIn("ClassicOriginalMusicSelection.originalGroupMemberCount()", INLINE)

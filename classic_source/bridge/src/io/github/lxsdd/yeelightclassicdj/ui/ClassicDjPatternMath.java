@@ -1,8 +1,10 @@
 package io.github.lxsdd.yeelightclassicdj.ui;
 
 /**
- * Pure deterministic source-only preview geometry. These eight abstract cells
- * are NOT the number, position or state of actual Yeelight lamps. No microphone,
+ * Pure deterministic preview geometry. The legacy eight placeholder cells
+ * are NOT a real bulb count; dynamic versions use the actual user-selected
+ * original Classic cohort size (never infer physical position or state).
+ * No microphone,
  * original OEM audio-session data, permissions, networking or device writes.
  */
 final class ClassicDjPatternMath {
@@ -17,13 +19,25 @@ final class ClassicDjPatternMath {
                                boolean beatPulse, boolean fresh,
                                float measuredLevel, float[] measuredBands,
                                boolean measuredOnset) {
-        if (index < 0 || index >= CELLS ||
+        return reactiveLevel(scene, index, CELLS, timedLevel, beatPulse,
+            fresh, measuredLevel, measuredBands, measuredOnset);
+    }
+
+    /** Preview follows the ACTUAL selected display cohort, not a fixed
+     * 4/8-lamp group. A missing original source cannot invent measured
+     * spectrum, ambient level or beat-based lighting.
+     */
+    static float reactiveLevel(int scene, int index, int count, float timedLevel,
+                               boolean beatPulse, boolean fresh,
+                               float measuredLevel, float[] measuredBands,
+                               boolean measuredOnset) {
+        if (count < 1 || index < 0 || index >= count ||
             !Float.isFinite(timedLevel) || !Float.isFinite(measuredLevel) ||
             timedLevel < 0f || timedLevel > 1f ||
             measuredLevel < 0f || measuredLevel > 1f ||
             measuredBands == null || measuredBands.length != 4) return 0f;
-        if (!fresh) return scene == 2 || (scene == 3 && beatPulse) ?
-            0f : timedLevel;
+        if (!fresh) return scene == 3 && !beatPulse ||
+                scene == 4 || scene == 5 || scene == 6 ? timedLevel : 0f;
         switch (scene) {
             case 0: return clamp(measuredBands[index % 4]);
             case 1: return clamp(.10f + .65f * measuredLevel);
@@ -38,6 +52,52 @@ final class ClassicDjPatternMath {
 
     private static float clamp(float v) {
         return Float.isFinite(v) ? Math.max(0f, Math.min(1f, v)) : 0f;
+    }
+
+    /**
+     * Draw a spatial preview for every selected original Classic member.
+     * The scanner/meteor/wave interpolation mirrors the production
+     * ClassicSpatialChoreography geometry and stored speed, trail, reverse
+     * choices. This method owns NO selected ID, Music socket or device state.
+     */
+    static float previewLevel(int scene, int index, int count, long time,
+                              boolean beatPulse, int tempo, int speedPercent,
+                              boolean reverse, int trailLength) {
+        if (count < 1 || index < 0 || index >= count || time < 0L ||
+            speedPercent < 25 || speedPercent > 400 ||
+            trailLength < 1 || trailLength > 8) return 0f;
+        if (scene < 4) return level(scene, index % CELLS, time, beatPulse, tempo);
+        int position = reverse ? count - 1 - index : index;
+        switch (scene) {
+            case 4: {
+                long span = Math.max(1L, (long) count - 1L);
+                long cycle = span * 2L;
+                long step = Math.max(1L, 21000L / speedPercent);
+                double phase = (time % (cycle * step)) / (double) step;
+                double head = phase <= span ? phase : cycle - phase;
+                double distance = Math.abs(position - head);
+                return distance <= 1.0 ?
+                    clamp((float) (1.0 - .78 * distance)) :
+                    distance <= trailLength ?
+                        clamp((float) (.22 * Math.exp(-(distance - 1.0) * 1.5))) :
+                        0f;
+            }
+            case 5: {
+                long cycle = (long) count + trailLength;
+                long step = Math.max(1L, 16500L / speedPercent);
+                double head = (time % (cycle * step)) / (double) step;
+                double age = head - position;
+                if (age < -1.0 || age > trailLength) return 0f;
+                return clamp((float) (age < 0.0 ?
+                    1.0 + age : Math.exp(-age * (3.0 / trailLength))));
+            }
+            case 6: {
+                double phase = time * speedPercent / 50000.0 -
+                    position * (2.8 / trailLength);
+                return clamp((float) (.5 + .5 * Math.sin(phase)));
+            }
+            default: return 0f;
+        }
     }
 
     static float level(int scene, int position, long time, boolean beat, int tempo) {
