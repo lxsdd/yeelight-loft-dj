@@ -1,7 +1,7 @@
 """Fail-closed source gate: native Classic Kotlin must be exercised by CI.
 
 No SDK, OEM byte, hardware, Gradle execution or network call occurs in this
-test; actual Kotlin compilation and fourteen main-method regressions run in Android CI.
+test; actual Kotlin compilation and fifteen main-method regressions run in Android CI.
 """
 import re
 from pathlib import Path
@@ -14,6 +14,7 @@ MAIN_CLASSES = (
     "CoordinatorTestKt", "CancelDuringStartTestKt", "BeatAnalyzerTestKt",
     "LiveLightStyleTestKt", "DjEngineTestKt", "PcmBandsTestKt", "CaptureSessionTestKt",
     "AndroidAudioRecordInputTestKt", "YeelightReverseMusicTransportTestKt",
+    "ClassicLanShutdownBudgetTestKt",
     "CheckpointRuntimeTestKt", "ClassicPlaybackCaptureInputTestKt",
     "ClassicSpatialChoreographyTestKt", "VisualizerInputTestKt",
     "ClassicOriginalDspAnalysisTestKt",
@@ -33,7 +34,7 @@ class NativeKotlinCITests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertIn("contents: read", workflow)
 
-    def test_all_fourteen_production_jvm_programs_and_owned_sources_wired(self):
+    def test_all_fifteen_production_jvm_programs_and_owned_sources_wired(self):
         build = (PROJECT / "build.gradle.kts").read_text(encoding="utf-8")
         settings = (PROJECT / "settings.gradle.kts").read_text(encoding="utf-8")
         self.assertIn('kotlin("jvm") version "2.2.20"', build)
